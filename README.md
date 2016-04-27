@@ -10,7 +10,8 @@ Test-StorageHealth command in this module includes several sections, including:
 
 # To install module from PowerShell gallery
 Powershell gallery: https://www.powershellgallery.com/packages/Cloud.Health
-Note: Installing items from the Gallery requires the latest version of the PowerShellGet module, which is available in Windows 10, in Windows Management Framework (WMF) 5.0, or in the MSI-based installer (for PowerShell 3 and 4). 
+Note: Installing items from the Gallery requires the latest version of the PowerShellGet module, which is available in Windows 10, in Windows Management Framework (WMF) 5.0, or in the MSI-based installer (for PowerShell 3 and 4).
+
 Install the module by running following command in powershell
 ``` PowerShell
 Install-Module Cloud.Health -Verbose
@@ -56,5 +57,5 @@ Test-StorageHealth -IncludeEvents:$false
 ```
 
 # What to expect next ?
-A lot of improvements and new cmdlets to better guage and analyze the cloud health.
+A lot of improvements and new cmdlets to analyze the cloud health.
 Provide feedback on what you'd like to see.
