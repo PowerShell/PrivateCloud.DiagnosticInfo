@@ -25,6 +25,9 @@ Update-Module Cloud.Health -Verbose
 2. Extract directory Cloud.Health to the correct modules path pointed by $env:PSModulePath
 3. Start using the cmdlet(s) made available via this module
 ``` PowerShell
+Invoke-WebRequest -Uri "https://github.com/PowerShell/Cloud.Health/archive/master.zip" -outfile "$env:TEMP\master.zip" -Verbose
+Expand-Archive -Path "$env:TEMP\master.zip" -DestinationPath "$env:TEMP" -Force -Verbose
+Copy-Item -Recurse -Path "$env:TEMP\Cloud.Health-master\Cloud.Health" -Destination "$env:PSModulePath".Split(";")[0] -Force -Verbose
 Import-Module Cloud.Health -Verbose
 Get-Command -Module Cloud.Health
 Get-Help Test-StorageHealth
