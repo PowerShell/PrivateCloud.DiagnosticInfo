@@ -136,7 +136,7 @@ param(
 
     Function NCount { 
         Param ([object] $Item) 
-        If ($Item -eq $Null) {
+        If ($null -eq $Item) {
             $Result = 0
         } else {
             If ($Item.GetType().BaseType.Name -eq "Array") {
@@ -150,7 +150,7 @@ param(
 
     Function VolumeToPath {
         Param ([String] $Volume) 
-        if ($Associations -eq $null) { ShowError("No device associations present.") }
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
         $Result = ""
         $Associations | Foreach-Object {
             If ($_.VolumeID -eq $Volume) { $Result = $_.CSVPath }
@@ -160,7 +160,7 @@ param(
 
     Function VolumeToCSV {
         Param ([String] $Volume) 
-        if ($Associations -eq $null) { ShowError("No device associations present.") }
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
         $Result = ""
         $Associations | Foreach-Object {
             If ($_.VolumeID -eq $Volume) { $Result = $_.CSVVolume }
@@ -170,7 +170,7 @@ param(
 
     Function VolumeToShare {
         Param ([String] $Volume) 
-        if ($Associations -eq $null) { ShowError("No device associations present.") }
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
         $Result = ""
         $Associations | Foreach-Object {
             If ($_.VolumeID -eq $Volume) { $Result = $_.ShareName }
@@ -180,7 +180,7 @@ param(
 
     Function VolumeToResiliency {
         Param ([String] $Volume) 
-        if ($Associations -eq $null) { ShowError("No device associations present.") }
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
         $Result = ""
         $Associations | Foreach-Object {
             If ($_.VolumeID -eq $Volume) { 
@@ -197,7 +197,7 @@ param(
 
     Function VolumeToColumns {
         Param ([String] $Volume) 
-        if ($Associations -eq $null) { ShowError("No device associations present.") }
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
         $Result = ""
         $Associations | Foreach-Object {
             If ($_.VolumeID -eq $Volume) { $Result = $_.VDColumns }
@@ -207,7 +207,7 @@ param(
 
     Function CSVToShare {
         Param ([String] $Volume) 
-        if ($Associations -eq $null) { ShowError("No device associations present.") }
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
         $Result = ""
         $Associations | Foreach-Object {
             If ($_.CSVVolume -eq $Volume) { $Result = $_.ShareName }
@@ -217,7 +217,7 @@ param(
 
     Function CSVToPool {
         Param ([String] $Volume) 
-        if ($Associations -eq $null) { ShowError("No device associations present.") }
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
         $Result = ""
         $Associations | Foreach-Object {
             If ($_.CSVVolume -eq $Volume) { $Result = $_.PoolName }
@@ -227,7 +227,7 @@ param(
 
     Function CSVToNode {
         Param ([String] $Volume) 
-        if ($Associations -eq $null) { ShowError("No device associations present.") }
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
         $Result = ""
         $Associations | Foreach-Object {
             If ($_.CSVVolume -eq $Volume) { $Result = $_.CSVNode }
@@ -264,10 +264,10 @@ param(
     If ($Read -and -not $PathOK) { ShowError ("Path not found: $Path") }
     If (-not $Read) {
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse | Out-Null
-        md -ErrorAction SilentlyContinue $Path | Out-Null
+        MKDIR -ErrorAction SilentlyContinue $Path | Out-Null
     } 
     $PathObject = Get-Item $Path
-    If ($PathObject -eq $null) { ShowError ("Invalid Path: $Path") }
+    If ($null -eq $PathObject) { ShowError ("Invalid Path: $Path") }
     $Path = $PathObject.FullName
 
     If ($Path.ToUpper().EndsWith(".ZIP")) {
@@ -349,7 +349,7 @@ param(
     } else {
         Try { $Cluster = Get-Cluster -Name $ClusterName }
         Catch { ShowError("Cluster could not be contacted. `nError="+$_.Exception.Message) }
-        If ($Cluster -eq $Null) { ShowError("Server is not in a cluster") }
+        If ($null -eq $Cluster) { ShowError("Server is not in a cluster") }
         $Cluster | Export-Clixml ($Path + "GetCluster.XML")
     }
 
@@ -369,7 +369,7 @@ param(
     }
 
     $ScaleOutServers = $ClusterGroups | Where-Object GroupType -like "ScaleOut*"
-    If ($ScaleOutServers -eq $Null) { ShowError("No Scale-Out File Server cluster roles found") }
+    If ($null -eq $ScaleOutServers) { ShowError("No Scale-Out File Server cluster roles found") }
     $ScaleOutName = $ScaleOutServers[0].Name+"."+$Cluster.Domain
     "Scale-Out File Server Name : $ScaleOutName"
 
@@ -861,7 +861,7 @@ param(
         $Associations = $AssocJob | Wait-Job | Receive-Job
         $AssocJob | Remove-Job
 
-        if ($Associations -eq $null) {
+        if ($null -eq $Associations) {
             ShowError("Unable to get object associations")
         }
 
@@ -1163,7 +1163,7 @@ param(
         If ($Files) {
 
             $Total1 = $Files.Count
-            $E = "" | Select-Object MachineName, LogName, EventID, Count
+            #$E = "" | Select-Object MachineName, LogName, EventID, Count
             $ErrorFound = $false
             $Count1 = 0
 
