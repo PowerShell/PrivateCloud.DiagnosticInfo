@@ -334,8 +334,8 @@ param(
     }
 
     Function StartMonitoring {
-        Write-Output "Entered continuous monitoring mode. Storage Infrastucture information will be refreshed every 3-6 minutes" -ForegroundColor Yellow    
-        Write-Output "Press Ctrl + C to stop monitoring" -ForegroundColor Yellow
+        Write-Host "Entered continuous monitoring mode. Storage Infrastucture information will be refreshed every 3-6 minutes" -ForegroundColor Yellow    
+        Write-Host "Press Ctrl + C to stop monitoring" -ForegroundColor Yellow
 
         Try { $ClusterName = (Get-Cluster -Name $ClusterName).Name }
         Catch { ShowError("Cluster could not be contacted. `nError="+$_.Exception.Message) }
@@ -580,6 +580,52 @@ param(
             ShowWarning("Deduplication PowerShell not installed on cluster node.")
         }
     }
+
+
+    # Gather nodes view of storage and build all the associations
+
+    If (-not $Read) {
+        $SNVJob = Start-Job -ArgumentList $ClusterName {
+            param ($ClusterName)
+            If (-not (Get-Cluster -Name $ClusterName | Select S2DEnabled -ErrorAction SilentlyContinue).S2DEnabled) {
+                $storageEnclosures = Get-StorageEnclosure -CimSession $ClusterName
+                $allPhysicalDisks  = Get-PhysicalDisk -CimSession $ClusterName
+                $physicaldiskSNV   = Invoke-Command -ComputerName $ClusterName {Get-PhysicalDiskStorageNodeView}
+        
+                $SNV = @()               
+
+                Foreach ($phyDisk in $physicaldiskSNV) {
+                    $SNVObject = New-Object -TypeName System.Object                       
+                    $pdIndex = $phyDisk.PhysicalDiskObjectId.IndexOf("PD:")
+                    $pdLength = $phyDisk.PhysicalDiskObjectId.Length
+                    $pdID = $phyDisk.PhysicalDiskObjectId.Substring($pdIndex+3, $pdLength-($pdIndex+4))  
+                    $PDUID = ($allPhysicalDisks | Where-Object ObjectID -Match $pdID).UniqueID
+            
+                    If (-not ($allPhysicalDisks | Where-Object UniqueId -eq $PDUID | Get-VirtualDisk)) {
+                        continue
+                    }
+                    Else {
+                        $SNVObject | Add-Member -Type NoteProperty -Name PhysicalDiskUID -Value $PDUID                
+                    }
+                    $nodeIndex = $phyDisk.StorageNodeObjectId.IndexOf("SN:")
+                    $nodeLength = $phyDisk.StorageNodeObjectId.Length
+                    $storageNodeName = $phyDisk.StorageNodeObjectId.Substring($nodeIndex+3, $nodeLength-($nodeIndex+4))  
+                    $pd = $allPhysicalDisks | Where-Object UniqueID -eq $PDUID
+
+                    $SNVObject | Add-Member -Type NoteProperty -Name StorageNode -Value $storageNodeName
+                    $SNVObject | Add-Member -Type NoteProperty -Name StoragePool -Value (($pd | Get-StoragePool | Where-Object IsPrimordial -eq $false).FriendlyName)
+                    $SNVObject | Add-Member -Type NoteProperty -Name MPIOPolicy -Value $phyDisk.LoadBalancePolicy
+                    $SNVObject | Add-Member -Type NoteProperty -Name MPIOState -Value $phyDisk.IsMPIOEnabled
+                    $SNVObject | Add-Member -Type NoteProperty -Name PathID -Value $phyDisk.PathID
+                    $SNVObject | Add-Member -Type NoteProperty -Name PathState -Value $phyDisk.PathState            
+                    $SNVObject | Add-Member -Type NoteProperty -Name StorageEnclosure -Value $pd.PhysicalLocation
+                    $SNV += $SNVObject
+                }
+            }
+            Write-Output $SNV
+        }        
+    }
+
 
     # Gather association between pool, virtualdisk, volume, share.
     # This is first used at Phase 4 and is run asynchronously since
@@ -1029,33 +1075,40 @@ param(
 
     if ($Read) {
         $Associations = Import-Clixml ($Path + "GetAssociations.XML")
+        $SNVView = Import-Clixml ($Path + "GetStorageNodeView.XML")
     } else {
-
         "`nCollecting device associations..."
 
         $Associations = $AssocJob | Wait-Job | Receive-Job
         $AssocJob | Remove-Job
-
         if ($null -eq $Associations) {
             ShowError("Unable to get object associations")
         }
-
         $Associations | Export-Clixml ($Path + "GetAssociations.XML")
+
+        If (-not (Get-Cluster -Name $ClusterName | Select S2DEnabled -ErrorAction SilentlyContinue).S2DEnabled) {
+            $SNVView = $SNVJob | Wait-Job | Receive-Job
+            $SNVJob | Remove-Job
+            if ($null -eq $SNVView) {
+                ShowError("Unable to get nodes storage view associations")
+            }
+            $SNVView | Export-Clixml ($Path + "GetStorageNodeView.XML")
+        }
     }
 
     #
     # Phase 4
     #
 
-    "`n[Health Report]"
-    "Volumes with status, total size and available size, sorted by Available Size" 
+    "`n[Health Report]" 
+    "`nVolumes with status, total size and available size, sorted by Available Size" 
     "Notes: Sizes shown in gigabytes (GB). * means multiple shares on that volume"
 
     $Volumes | Where-Object FileSystem -eq CSVFS | Sort-Object SizeRemaining | 
     Format-Table -AutoSize @{Expression={$poolName = CSVToPool(VolumeToCSV($_.Path)); "[$(PoolOperationalStatus($poolName))/$(PoolHealthStatus($poolName))] " + $poolName};Label="[OpStatus/Health] Pool"}, 
-    @{Expression={(PoolHealthyPDs(CSVToPool(VolumeToCSV($_.Path))))};Label="HealthyPhysicalDisks"}, 
+    @{Expression={(PoolHealthyPDs(CSVToPool(VolumeToCSV($_.Path))))};Label="HealthyPhysicalDisks"; Align="Center"}, 
     @{Expression={$vd = CSVToVD(VolumeToCSV($_.Path));  "[$(VDOperationalStatus($vd))/$(VDHealthStatus($vd))] "+$vd};Label="[OpStatus/Health] VirtualDisk"}, 
-    @{Expression={$csvVolume = VolumeToCSV($_.Path); "[" + $_.HealthStatus + "} " + $csvVolume};Label="[Health] CSV Volume"},
+    @{Expression={$csvVolume = VolumeToCSV($_.Path); "[" + $_.HealthStatus + "] " + $csvVolume};Label="[Health] CSV Volume"},
     @{Expression={$csvName = CSVToName(VolumeToCSV($_.Path)); $csvStatus = (Get-ClusterSharedVolume -Name $csvName -Cluster $ClusterName).State;  " [$csvStatus] " + $csvName};Label="[Status] CSV Name"}, 
     @{Expression={$csvOwner = CSVToNode(VolumeToCSV($_.Path)); $ownerState = (Get-ClusterNode -Name $csvOwner -Cluster $ClusterName).State; " [$ownerState] " + $csvOwner};Label="[State] Volume Owner"},   
     @{Expression={VolumeToShare($_.Path)};Label="Share Name"}, 
@@ -1070,7 +1123,7 @@ param(
 
         $DedupVolumes | Sort-Object SavingsRate -Descending | 
         Format-Table -AutoSize @{Expression={$poolName = CSVToPool(VolumeToCSV($_.VolumeId)); "[$(PoolOperationalStatus($poolName))/$(PoolHealthStatus($poolName))] " + $poolName};Label="[OpStatus/Health] Pool"}, 
-        @{Expression={$healthyPDS = (PoolHealthyPDs(CSVToPool(VolumeToCSV($_.VolumeId)))); $healthyPDS};Label="HealthyPhysicalDisks"}, 
+        @{Expression={$healthyPDS = (PoolHealthyPDs(CSVToPool(VolumeToCSV($_.VolumeId)))); $healthyPDS};Label="HealthyPhysicalDisks"; Align="Center"}, 
         @{Expression={$vd = CSVToVD(VolumeToCSV($_.VolumeId)); "[$(VDOperationalStatus($vd))/$(VDHealthStatus($vd))] " + $vd};Label="[OpStatus/Health] VirtualDisk"}, 
         @{Expression={VolumeToCSV($_.VolumeId)};Label="Volume "},
         @{Expression={VolumeToShare($_.VolumeId)};Label="Share"},
@@ -1082,7 +1135,18 @@ param(
         @{Expression={"{0:N2}" -f ($_.FreeSpace/$_.Capacity*100)};Label="Free%";Width=11;Align="Right"},
         @{Expression={"{0:N0}" -f ($_.InPolicyFilesCount)};Label="Files";Width=11;Align="Right"}
     }
-
+    
+    If ($SNVView) {
+        "`n[Storage Node view]"
+        $SNVView | Format-Table -AutoSize @{Expression = {$_.StorageNode}; Label = "StorageNode"; Align = "Left"},
+        @{Expression = {$_.StoragePool}; Label = "StoragePool"; Align = "Left"},
+        @{Expression = {$_.MPIOPolicy}; Label = "MPIOPolicy"; Align = "Left"},
+        @{Expression = {$_.MPIOState}; Label = "MPIOState"; Align = "Left"},
+        @{Expression = {$_.PathID}; Label = "PathID"; Align = "Left"},
+        @{Expression = {$_.PathState}; Label = "PathState"; Align = "Left"},
+        @{Expression = {$_.PhysicalDiskUID}; Label = "PhysicalDiskUID"; Align = "Left"},
+        @{Expression = {$_.StorageEnclosure}; Label = "StorageEnclosureLocation"; Align = "Left"} 
+    }
 
     "`n[Capacity Report]"
     "Physical disks by Enclosure, Media Type and Health Status, with total and unallocated space" 
