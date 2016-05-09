@@ -17,35 +17,36 @@
         To provide feedback and contribute visit https://github.com/PowerShell/Cloud.Health
 
     .EXAMPLE 
-       Test-StorageHealth
+       Get-PrivateCloudStorageHealth
  
        Reports on overall storage cluster health, capacity, performance and events.
        Uses the default temporary working folder at C:\Users\<user>\HealthTest
        Saves the zipped results at C:\Users\<user>\HealthTest-<cluster>-<date>.ZIP
 
     .EXAMPLE 
-       Test-StorageHealth -WriteToPath C:\Test
+       Get-PrivateCloudStorageHealth -WriteToPath C:\Test
  
        Reports on overall storage cluster health, capacity, performance and events.
        Uses the specified folder as the temporary working folder
 
     .EXAMPLE 
-       Test-StorageHealth -ClusterName Cluster1
+       Get-PrivateCloudStorageHealth -ClusterName Cluster1
  
        Reports on overall storage cluster health, capacity, performance and events.
        Targets the storage cluster specified.
 
     .EXAMPLE 
-       Test-StorageHealth -ReadFromPath C:\Test
+       Get-PrivateCloudStorageHealth -ReadFromPath C:\Test
  
        Reports on overall storage cluster health, capacity, performance and events.
        Results are obtained from the specified folder, not from a live cluster.
 
 #> 
 
-function Test-StorageHealth
+function Get-PrivateCloudStorageHealth
 {
 [CmdletBinding(DefaultParameterSetName="Write")]
+[OutputType([String])]
 
 param(
     [parameter(ParameterSetName="Write", Position=0, Mandatory=$false)]
@@ -334,8 +335,8 @@ param(
     }
 
     Function StartMonitoring {
-        Write-Host "Entered continuous monitoring mode. Storage Infrastucture information will be refreshed every 3-6 minutes" -ForegroundColor Yellow    
-        Write-Host "Press Ctrl + C to stop monitoring" -ForegroundColor Yellow
+        Write-Output "Entered continuous monitoring mode. Storage Infrastucture information will be refreshed every 3-6 minutes" -ForegroundColor Yellow    
+        Write-Output "Press Ctrl + C to stop monitoring" -ForegroundColor Yellow
 
         Try { $ClusterName = (Get-Cluster -Name $ClusterName).Name }
         Catch { ShowError("Cluster could not be contacted. `nError="+$_.Exception.Message) }
@@ -586,42 +587,40 @@ param(
 
     If (-not $Read) {
         $SNVJob = Start-Job -ArgumentList $ClusterName {
-            param ($ClusterName)
-            If (-not (Get-Cluster -Name $ClusterName | Select S2DEnabled -ErrorAction SilentlyContinue).S2DEnabled) {
-                $storageEnclosures = Get-StorageEnclosure -CimSession $ClusterName
-                $allPhysicalDisks  = Get-PhysicalDisk -CimSession $ClusterName
-                $physicaldiskSNV   = Invoke-Command -ComputerName $ClusterName {Get-PhysicalDiskStorageNodeView}
-        
-                $SNV = @()               
-
-                Foreach ($phyDisk in $physicaldiskSNV) {
-                    $SNVObject = New-Object -TypeName System.Object                       
-                    $pdIndex = $phyDisk.PhysicalDiskObjectId.IndexOf("PD:")
-                    $pdLength = $phyDisk.PhysicalDiskObjectId.Length
-                    $pdID = $phyDisk.PhysicalDiskObjectId.Substring($pdIndex+3, $pdLength-($pdIndex+4))  
-                    $PDUID = ($allPhysicalDisks | Where-Object ObjectID -Match $pdID).UniqueID
+        param ($ClusterName)
+            $storageEnclosures = Get-StorageEnclosure -CimSession $ClusterName
+            $allPhysicalDisks  = Get-PhysicalDisk -CimSession $ClusterName
+            $physicaldiskSNV   = Invoke-Command -ComputerName $ClusterName {Get-PhysicalDiskStorageNodeView}
             
-                    If (-not ($allPhysicalDisks | Where-Object UniqueId -eq $PDUID | Get-VirtualDisk)) {
-                        continue
-                    }
-                    Else {
-                        $SNVObject | Add-Member -Type NoteProperty -Name PhysicalDiskUID -Value $PDUID                
-                    }
-                    $nodeIndex = $phyDisk.StorageNodeObjectId.IndexOf("SN:")
-                    $nodeLength = $phyDisk.StorageNodeObjectId.Length
-                    $storageNodeName = $phyDisk.StorageNodeObjectId.Substring($nodeIndex+3, $nodeLength-($nodeIndex+4))  
-                    $pd = $allPhysicalDisks | Where-Object UniqueID -eq $PDUID
-
-                    $SNVObject | Add-Member -Type NoteProperty -Name StorageNode -Value $storageNodeName
-                    $SNVObject | Add-Member -Type NoteProperty -Name StoragePool -Value (($pd | Get-StoragePool | Where-Object IsPrimordial -eq $false).FriendlyName)
-                    $SNVObject | Add-Member -Type NoteProperty -Name MPIOPolicy -Value $phyDisk.LoadBalancePolicy
-                    $SNVObject | Add-Member -Type NoteProperty -Name MPIOState -Value $phyDisk.IsMPIOEnabled
-                    $SNVObject | Add-Member -Type NoteProperty -Name PathID -Value $phyDisk.PathID
-                    $SNVObject | Add-Member -Type NoteProperty -Name PathState -Value $phyDisk.PathState            
-                    $SNVObject | Add-Member -Type NoteProperty -Name StorageEnclosure -Value $pd.PhysicalLocation
-                    $SNV += $SNVObject
+            $SNV = @()               
+            
+            Foreach ($phyDisk in $physicaldiskSNV) {
+                $SNVObject = New-Object -TypeName System.Object                       
+                $pdIndex = $phyDisk.PhysicalDiskObjectId.IndexOf("PD:")
+                $pdLength = $phyDisk.PhysicalDiskObjectId.Length
+                $pdID = $phyDisk.PhysicalDiskObjectId.Substring($pdIndex+3, $pdLength-($pdIndex+4))  
+                $PDUID = ($allPhysicalDisks | Where-Object ObjectID -Match $pdID).UniqueID
+            
+                If (-not ($allPhysicalDisks | Where-Object UniqueId -eq $PDUID | Get-VirtualDisk)) {
+                    continue
                 }
-            }
+                Else {
+                    $SNVObject | Add-Member -Type NoteProperty -Name PhysicalDiskUID -Value $PDUID                
+                }
+                $nodeIndex = $phyDisk.StorageNodeObjectId.IndexOf("SN:")
+                $nodeLength = $phyDisk.StorageNodeObjectId.Length
+                $storageNodeName = $phyDisk.StorageNodeObjectId.Substring($nodeIndex+3, $nodeLength-($nodeIndex+4))  
+                $pd = $allPhysicalDisks | Where-Object UniqueID -eq $PDUID
+            
+                $SNVObject | Add-Member -Type NoteProperty -Name StorageNode -Value $storageNodeName
+                $SNVObject | Add-Member -Type NoteProperty -Name StoragePool -Value (($pd | Get-StoragePool | Where-Object IsPrimordial -eq $false).FriendlyName)
+                $SNVObject | Add-Member -Type NoteProperty -Name MPIOPolicy -Value $phyDisk.LoadBalancePolicy
+                $SNVObject | Add-Member -Type NoteProperty -Name MPIOState -Value $phyDisk.IsMPIOEnabled
+                $SNVObject | Add-Member -Type NoteProperty -Name PathID -Value $phyDisk.PathID
+                $SNVObject | Add-Member -Type NoteProperty -Name PathState -Value $phyDisk.PathState            
+                $SNVObject | Add-Member -Type NoteProperty -Name StorageEnclosure -Value $pd.PhysicalLocation
+                $SNV += $SNVObject
+            }            
             Write-Output $SNV
         }        
     }
@@ -1086,14 +1085,13 @@ param(
         }
         $Associations | Export-Clixml ($Path + "GetAssociations.XML")
 
-        If (-not (Get-Cluster -Name $ClusterName | Select S2DEnabled -ErrorAction SilentlyContinue).S2DEnabled) {
-            $SNVView = $SNVJob | Wait-Job | Receive-Job
-            $SNVJob | Remove-Job
-            if ($null -eq $SNVView) {
-                ShowError("Unable to get nodes storage view associations")
-            }
-            $SNVView | Export-Clixml ($Path + "GetStorageNodeView.XML")
+        
+        $SNVView = $SNVJob | Wait-Job | Receive-Job
+        $SNVJob | Remove-Job
+        if ($null -eq $SNVView) {
+            ShowError("Unable to get nodes storage view associations")
         }
+        $SNVView | Export-Clixml ($Path + "GetStorageNodeView.XML")        
     }
 
     #
@@ -1688,4 +1686,7 @@ param(
     Stop-Transcript
 }
 
-New-Alias -Name TestSH -Value Test-StorageHealth -Description "Report on Storage Cluster Health"
+New-Alias -Name getpcsh -Value Get-PrivateCloudStorageHealth -Description "Report on Storage Cluster Health"
+New-Alias -Name Test-StorageHealth -Value Get-PrivateCloudStorageHealth -Description "Report on Storage Cluster Health"
+
+Export-ModuleMember -Alias * -Function *
