@@ -14,7 +14,7 @@
        Results are saved to a folder (default C:\Users\<user>\HealthTest) for later review and replay.
 
     .LINK 
-        To provide feedback and contribute visit https://github.com/PowerShell/Cloud.Health
+        To provide feedback and contribute visit https://github.com/PowerShell/PrivateCloud.Health
 
     .EXAMPLE 
        Get-PrivateCloudStorageHealth
