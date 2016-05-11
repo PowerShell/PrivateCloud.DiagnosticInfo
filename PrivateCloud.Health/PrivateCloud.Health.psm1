@@ -327,7 +327,7 @@ param(
 
     $OS = Get-CimInstance -ClassName Win32_OperatingSystem
     If ([uint64]$OS.BuildNumber -lt 9600) { 
-        ShowError("Wrong OS Version - Need at least Windows Server 2012 R2 or Windows 8.1. You are running '" + $OS.Name + "'”) 
+        ShowError("Wrong OS Version - Need at least Windows Server 2012 R2 or Windows 8.1. You are running - " + $OS.Name) 
     }
  
     If (-not (Get-Command -Module FailoverClusters)) { 
@@ -749,7 +749,7 @@ param(
     # SMB share health
 
     If ($Read) {
-        $SmbShares = Import-Clixml ($Path + "GetSmbShare.XML")
+        #$SmbShares = Import-Clixml ($Path + "GetSmbShare.XML")
         $ShareStatus = Import-Clixml ($Path + "ShareStatus.XML")
     } else {
         Try { $SmbShares = Get-SmbShare -CimSession $AccessNode }
@@ -1040,7 +1040,15 @@ param(
     "Devices and drivers by Model and Driver Version per cluster node" 
 
     If ($Read) {
-        $Drivers = Import-Clixml ($Path + "GetDrivers.XML") 
+        $clusterNodeNames = (Get-ClusterNode -Cluster $ClusterName).Name
+        foreach ($node in $clusterNodeNames) {
+            "`nCluster Node: $node"
+            $Drivers = Import-Clixml ($Path + $node + "_GetDrivers.XML")
+            $RelevantDrivers = $Drivers | Where-Object { ($_.DeviceName -like "LSI*") -or ($_.DeviceName -like "Mellanox*") -or ($_.DeviceName -like "Chelsio*") } | 
+            Group-Object DeviceName, DriverVersion | 
+            Select-Object @{Expression={$_.Name};Label="Device Name, Driver Version"}
+            $RelevantDrivers
+        }         
     } else {
         $clusterNodeNames = (Get-ClusterNode -Cluster $ClusterName).Name
         foreach ($node in $clusterNodeNames) { 
