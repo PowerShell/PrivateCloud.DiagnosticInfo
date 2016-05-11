@@ -1,4 +1,4 @@
-# Cloud.Health
+# PrivateCloud.Health
 # Overview
 This module is used to check the health, diagnostics and capacity of a private clouds. It assumes private cloud deployment with compute and/or storage clusters running Windows Server 2012 R2 or Windows Server 2016.The module has diagnostic commands like Test-StorageHealth which performs specific health checks for Failover Clustering (Cluster, Resources, Networks, Nodes), Storage Spaces (Physical Disks, Enclosures, Virtual Disks), Cluster Shared Volumes, SMB File Shares and Deduplication. Sources available at Github ( http://github.com/Powershell/PrivateCloud.Health) and download available via Powershell Gallery at (https://www.powershellgallery.com/packages/PrivateCloud.Health)
 
