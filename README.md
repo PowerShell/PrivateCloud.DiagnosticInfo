@@ -1,6 +1,6 @@
 # Cloud.Health
 # Overview
-This module is used to check the health, diagnostics and capacity of a private clouds. It assumes private cloud deployment with compute and/or storage clusters running Windows Server 2012 R2 or Windows Server 2016.The module has diagnostic commands like Test-StorageHealth which performs specific health checks for Failover Clustering (Cluster, Resources, Networks, Nodes), Storage Spaces (Physical Disks, Enclosures, Virtual Disks), Cluster Shared Volumes, SMB File Shares and Deduplication. Sources available at Github ( http://github.com/Powershell/Cloud.Health) and download available via Powershell Gallery at (https://www.powershellgallery.com/packages/Cloud.Health)
+This module is used to check the health, diagnostics and capacity of a private clouds. It assumes private cloud deployment with compute and/or storage clusters running Windows Server 2012 R2 or Windows Server 2016.The module has diagnostic commands like Test-StorageHealth which performs specific health checks for Failover Clustering (Cluster, Resources, Networks, Nodes), Storage Spaces (Physical Disks, Enclosures, Virtual Disks), Cluster Shared Volumes, SMB File Shares and Deduplication. Sources available at Github ( http://github.com/Powershell/PrivateCloud.Health) and download available via Powershell Gallery at (https://www.powershellgallery.com/packages/PrivateCloud.Health)
 
 Test-StorageHealth command in this module includes several sections, including:
 1. Reporting of Storage Health, plus details on unhealthy components. 
@@ -9,26 +9,26 @@ Test-StorageHealth command in this module includes several sections, including:
 4. Collection of event logs from all cluster nodes and Summary Error Report. 
 
 # To install module from PowerShell gallery
-Powershell gallery: https://www.powershellgallery.com/packages/Cloud.Health
+Powershell gallery: https://www.powershellgallery.com/packages/PrivateCloud.Health
 Note: Installing items from the Gallery requires the latest version of the PowerShellGet module, which is available in Windows 10, in Windows Management Framework (WMF) 5.0, or in the MSI-based installer (for PowerShell 3 and 4).
 
-Install the module by running following command in powershell
+Install the module by running following command in PowerShell with administrator priviledges
 ``` PowerShell
-Install-Module Cloud.Health -Verbose
+Install-Module PrivateCloud.Health -Verbose
 ```
-Update the module by running following command in powershell
+Update the module by running following command in PowerShell
 ``` PowerShell
-Update-Module Cloud.Health -Verbose
+Update-Module PrivateCloud.Health -Verbose
 ```
 # To install module from GitHub
-Download the latest module from github - https://github.com/PowerShell/Cloud.Health/archive/master.zip and extract directory Cloud.Health to the correct powershell modules path pointed by $env:PSModulePath
+Download the latest module from github - https://github.com/PowerShell/PrivateCloud.Health/archive/master.zip and extract directory Cloud.Health to the correct powershell modules path pointed by $env:PSModulePath
 
 ``` PowerShell
-Invoke-WebRequest -Uri "https://github.com/PowerShell/Cloud.Health/archive/master.zip" -outfile "$env:TEMP\master.zip" -Verbose
+Invoke-WebRequest -Uri "https://github.com/PowerShell/PrivateCloud.Health/archive/master.zip" -outfile "$env:TEMP\master.zip" -Verbose
 Expand-Archive -Path "$env:TEMP\master.zip" -DestinationPath "$env:TEMP" -Force -Verbose
-Copy-Item -Recurse -Path "$env:TEMP\Cloud.Health-master\Cloud.Health" -Destination "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules\" -Force -Verbose
-Import-Module Cloud.Health -Verbose
-Get-Command -Module Cloud.Health
+Copy-Item -Recurse -Path "$env:TEMP\PrivateCloud.Health-master\PrivateCloud.Health" -Destination "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules\" -Force -Verbose
+Import-Module PrivateCloud.Health -Verbose
+Get-Command -Module PrivateCloud.Health
 Get-Help Test-StorageHealth
 ``` 
 
