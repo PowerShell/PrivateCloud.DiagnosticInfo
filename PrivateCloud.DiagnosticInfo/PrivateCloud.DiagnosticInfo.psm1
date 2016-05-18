@@ -8,10 +8,10 @@
 <##################################################
 #  Helper functions                               #
 ##################################################>
+
 #
 # Shows error, cancels script
 #
-
 Function ShowError { 
 Param ([string] $Message)
     $Message = $Message + “ – cmdlet was cancelled”
@@ -21,10 +21,23 @@ Param ([string] $Message)
 #
 # Shows warning, script continues
 #
-
 Function ShowWarning { 
 Param ([string] $Message) 
     Write-Warning $Message 
+}
+
+#
+# Checks if the current version of module is the latest version
+#
+Function Compare-ModuleVersion {
+    If ($PSVersionTable.PSVersion -lt [System.Version]"5.0.0") {
+        ShowWarning("Current PS Version does not support this operation. `nPlease check for updated module from PS Gallery and update using: Update-Module PrivateCloud.DiagnosticInfo")
+    }
+    Else {
+        If ((Find-Module -Name PrivateCloud.DiagnosticInfo).Version -gt (Get-Module PrivateCloud.DiagnosticInfo).Version) {
+            ShowWarning ("There is an updated module available on PowerShell Gallery. Please update the module using: Update-Module PrivateCloud.DiagnosticInfo")
+        }
+    }
 }
 <##################################################
 #  End Helper functions                           #
@@ -489,6 +502,8 @@ param(
     # Start Transcript
     $transcriptFile = $Path + "0_CloudHealthSummary.log"
     Start-Transcript -Path $transcriptFile -Force
+
+    Compare-ModuleVersion
 
     If ($Read) { 
         "Reading from path : $Path"
