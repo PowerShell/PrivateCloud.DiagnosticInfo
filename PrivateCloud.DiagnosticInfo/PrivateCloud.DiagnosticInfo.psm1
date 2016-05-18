@@ -4,6 +4,32 @@
  #                                                 #
  ##################################################>
 
+
+<##################################################
+#  Helper functions                               #
+##################################################>
+#
+# Shows error, cancels script
+#
+
+Function ShowError { 
+Param ([string] $Message)
+    $Message = $Message + “ – cmdlet was cancelled”
+    Write-Error $Message -ErrorAction Stop
+}
+ 
+#
+# Shows warning, script continues
+#
+
+Function ShowWarning { 
+Param ([string] $Message) 
+    Write-Warning $Message 
+}
+<##################################################
+#  End Helper functions                           #
+##################################################>
+
 <# 
     .SYNOPSIS 
        Report on Storage Cluster Health
@@ -17,33 +43,33 @@
         To provide feedback and contribute visit https://github.com/PowerShell/PrivateCloud.Health
 
     .EXAMPLE 
-       Get-PrivateCloudStorageHealth
+       Get-PCStorageDiagnosticInfo
  
        Reports on overall storage cluster health, capacity, performance and events.
        Uses the default temporary working folder at C:\Users\<user>\HealthTest
        Saves the zipped results at C:\Users\<user>\HealthTest-<cluster>-<date>.ZIP
 
     .EXAMPLE 
-       Get-PrivateCloudStorageHealth -WriteToPath C:\Test
+       Get-PCStorageDiagnosticInfo -WriteToPath C:\Test
  
        Reports on overall storage cluster health, capacity, performance and events.
        Uses the specified folder as the temporary working folder
 
     .EXAMPLE 
-       Get-PrivateCloudStorageHealth -ClusterName Cluster1
+       Get-PCStorageDiagnosticInfo -ClusterName Cluster1
  
        Reports on overall storage cluster health, capacity, performance and events.
        Targets the storage cluster specified.
 
     .EXAMPLE 
-       Get-PrivateCloudStorageHealth -ReadFromPath C:\Test
+       Get-PCStorageDiagnosticInfo -ReadFromPath C:\Test
  
        Reports on overall storage cluster health, capacity, performance and events.
        Results are obtained from the specified folder, not from a live cluster.
 
 #> 
 
-function Get-PrivateCloudStorageHealth
+function Get-PCStorageDiagnosticInfo
 {
 [CmdletBinding(DefaultParameterSetName="Write")]
 [OutputType([String])]
@@ -108,32 +134,13 @@ param(
     [parameter(ParameterSetName="Read", Mandatory=$true)]
     [ValidateNotNullOrEmpty()]
     [string] $ReadFromPath = ""
-)
+    )
 
     #
     # Set strict mode to check typos on variable and property names
     #
 
     Set-StrictMode -Version Latest
-
-    #
-    # Shows error, cancels script
-    #
-
-    Function ShowError { 
-    Param ([string] $Message)
-        $Message = $Message + “ – cmdlet was cancelled”
-        Write-Error $Message -ErrorAction Stop
-    }
- 
-    #
-    # Shows warning, script continues
-    #
-
-    Function ShowWarning { 
-        Param ([string] $Message) 
-        Write-Warning $Message 
-    }
 
     #
     # Count number of elements in an array, including checks for $null or single object
@@ -169,7 +176,17 @@ param(
         $Result = ""
         $Associations | Foreach-Object {
             If ($_.VolumeID -eq $Volume) { $Result = $_.CSVVolume }
+        }
+        Return $Result
     }
+    
+    Function VolumeToVD {
+        Param ([String] $Volume) 
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
+        $Result = ""
+        $Associations | Foreach-Object {
+            If ($_.VolumeID -eq $Volume) { $Result = $_.FriendlyName }
+        }
         Return $Result
     }
 
@@ -220,12 +237,12 @@ param(
         Return $Result
     }
 
-    Function CSVToPool {
+    Function VolumeToPool {
         Param ([String] $Volume) 
         if ($null -eq $Associations) { ShowError("No device associations present.") }
         $Result = ""
         $Associations | Foreach-Object {
-            If ($_.CSVVolume -eq $Volume) { $Result = $_.PoolName }
+            If ($_.VolumeId -eq $Volume) { $Result = $_.PoolName }
         }
         Return $Result
     }
@@ -240,6 +257,16 @@ param(
         Return $Result
     }
 
+    Function CSVToPool {
+        Param ([String] $Volume) 
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
+        $Result = ""
+        $Associations | Foreach-Object {
+            If ($_.CSVVolume -eq $Volume) { $Result = $_.PoolName }
+        }
+        Return $Result
+    }
+    
     Function CSVToNode {
         Param ([String] $Volume) 
         if ($null -eq $Associations) { ShowError("No device associations present.") }
@@ -250,38 +277,44 @@ param(
         Return $Result
     }
 
-    Function CSVToName {
+    Function VolumeToCSVName {
         Param ([String] $Volume) 
         if ($null -eq $Associations) { ShowError("No device associations present.") }
         $Result = ""
         $Associations | Foreach-Object {
-            If ($_.CSVVolume -eq $Volume) { $Result = $_.CSVName }
+            If ($_.VolumeId -eq $Volume) { $Result = $_.CSVName }
+        }
+        Return $Result
+    }
+    
+    Function CSVStatus {
+        Param ([String] $Volume) 
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
+        $Result = ""
+        $Associations | Foreach-Object {
+            If ($_.VolumeId -eq $Volume) { $Result = $_.CSVStatus.Value }
+        }
+        Return $Result
+    }
+                
+    Function PoolOperationalStatus {
+        Param ([String] $Volume) 
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
+        $Result = ""
+        $Associations | Foreach-Object {
+            If ($_.VolumeId -eq $Volume) { $Result = $_.PoolOpStatus }
         }
         Return $Result
     }
 
-    Function PoolOperationalStatus {
-        Param ([String] $PoolName)
-        $poolOpStatus = ""
-        If ($PoolName) {
-            $poolOpStatus = (Get-StoragePool -FriendlyName $PoolName -CimSession $ClusterName).OperationalStatus
-        }
-        else {
-            ShowError("No storage pool specified")
-        }
-        return $poolOpStatus
-    }
-
     Function PoolHealthStatus {
-        Param ([String] $PoolName)
-        $poolHealthStatus = ""
-        If ($PoolName) {
-            $poolHealthStatus = (Get-StoragePool -FriendlyName $PoolName -CimSession $ClusterName).HealthStatus
+        Param ([String] $Volume) 
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
+        $Result = ""
+        $Associations | Foreach-Object {
+            If ($_.VolumeId -eq $Volume) { $Result = $_.PoolHealthStatus }
         }
-        else {
-            ShowError("No storage pool specified")
-        }
-        return $poolHealthStatus    
+        Return $Result
     }
 
     Function PoolHealthyPDs {
@@ -298,27 +331,23 @@ param(
     }
 
     Function VDOperationalStatus {
-        Param ([String] $VDName)
-        $VDOpStatus = ""
-        If ($VDName) {
-            $VDOpStatus = (Get-VirtualDisk -FriendlyName $VDName -CimSession $ClusterName).OperationalStatus
+        Param ([String] $Volume) 
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
+        $Result = ""
+        $Associations | Foreach-Object {
+            If ($_.VolumeId -eq $Volume) { $Result = $_.OperationalStatus }
         }
-        else {
-            ShowError("No virtual disk specified")
-        }
-        return $VDOpStatus   
+        Return $Result
     }
 
     Function VDHealthStatus {
-        Param ([String] $VDName)
-        $VDHealthStatus = ""
-        If ($VDName) {
-            $VDHealthStatus = (Get-VirtualDisk -FriendlyName $VDName -CimSession $ClusterName).HealthStatus
+        Param ([String] $Volume) 
+        if ($null -eq $Associations) { ShowError("No device associations present.") }
+        $Result = ""
+        $Associations | Foreach-Object {
+            If ($_.VolumeId -eq $Volume) { $Result = $_.HealthStatus }
         }
-        else {
-            ShowError("No virtual disk specified")
-        }
-        return $VDHealthStatus      
+        Return $Result    
     }
 
     #
@@ -406,19 +435,16 @@ param(
         [System.Console]::Clear()
 
         $Volumes | Where-Object FileSystem -eq CSVFS | Sort-Object SizeRemaining | 
-        Format-Table -AutoSize @{Expression={$poolName = CSVToPool(VolumeToCSV($_.Path)); $poolName + " [$(PoolOperationalStatus($poolName))/$(PoolHealthStatus($poolName))]"};Label="Pool [Op Status/Health Status]"}, 
-        @{Expression={(PoolHealthyPDs(CSVToPool(VolumeToCSV($_.Path)))) + " Healthy"};Label="Pool PDs"}, 
-        @{Expression={$vd = CSVToVD(VolumeToCSV($_.Path)); $vd + " [$(VDOperationalStatus($vd))/$(VDHealthStatus($vd))]"};Label="VirtualDisk [Op Status/Health Status]"}, 
-        @{Expression={VolumeToCSV($_.Path)};Label="CSV Volume"},
-        @{Expression={$csvName = CSVToName(VolumeToCSV($_.Path)); $csvStatus = (Get-ClusterSharedVolume -Name $csvName -Cluster $ClusterName).State; $csvName + " [$csvStatus]"};Label="CSV Name [Status]"}, 
-        @{Expression={$csvOwner = CSVToNode(VolumeToCSV($_.Path)); $ownerState = (Get-ClusterNode -Name $csvOwner -Cluster $ClusterName).State;$csvOwner + " [$ownerState]"};Label="Volume Owner [State]"},  
-        @{Expression={$_.HealthStatus};Label="Volume Health"}, 
-        @{Expression={VolumeToShare($_.Path)};Label="Share Name"},    
-        @{Expression={VolumeToResiliency($_.Path)};Label="Resiliency"}, 
-        @{Expression={VolumeToColumns($_.Path)};Label="Cols"}, 
-        @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"}, 
-        @{Expression={"{0:N2}" -f ($_.SizeRemaining/1GB)};Label="Available";Width=11;Align="Right"}, 
-        @{Expression={"{0:N2}" -f ($_.SizeRemaining/$_.Size*100)};Label="Avail%";Width=11;Align="Right"} 
+        Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.Path); "[$(PoolOperationalStatus($_.Path))/$(PoolHealthStatus($_.Path))] " + $poolName};Label="[OpStatus/Health] Pool"}, 
+        @{Expression={(PoolHealthyPDs(VolumeToPool($_.Path)))};Label="HealthyPhysicalDisks"; Align="Center"}, 
+        @{Expression={$vd = VolumeToVD($_.Path);  "[$(VDOperationalStatus($_.Path))/$(VDHealthStatus($_.Path))] "+$vd};Label="[OpStatus/Health] VirtualDisk"}, 
+        @{Expression={$csvVolume = VolumeToCSV($_.Path); "[" + $_.HealthStatus + "] " + $csvVolume};Label="[Health] CSV Volume"},
+        @{Expression={$csvName = VolumeToCSVName($_.Path); $csvStatus = CSVStatus($_.Path);  " [$csvStatus] " + $csvName};Label="[Status] CSV Name"}, 
+        @{Expression={CSVToNode(VolumeToCSV($_.Path))};Label="Volume Owner"},   
+        @{Expression={VolumeToShare($_.Path)};Label="Share Name"}, 
+        @{Expression={$VolResiliency = VolumeToResiliency($_.Path); $volColumns = VolumeToColumns($_.Path); "$VolResiliency,$volColumns" +"Col" };Label="Volume Configuration"},        
+        @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"},  
+        @{Expression={"{0:N2}" -f ($_.SizeRemaining/$_.Size*100)};Label="Avail%";Width=11;Align="Right"}         
         
         StartMonitoring
     }
@@ -585,35 +611,32 @@ param(
 
     # Gather nodes view of storage and build all the associations
 
-    If (-not $Read) {
-        $SNVJob = Start-Job -ArgumentList $ClusterName {
-        param ($ClusterName)
-            $storageEnclosures = Get-StorageEnclosure -CimSession $ClusterName
-            $allPhysicalDisks  = Get-PhysicalDisk -CimSession $ClusterName
-            $physicaldiskSNV   = Invoke-Command -ComputerName $ClusterName {Get-PhysicalDiskStorageNodeView}
-            
-            $SNV = @()               
-            
-            Foreach ($phyDisk in $physicaldiskSNV) {
+    If (-not $Read) {                         
+        $SNVJob = Start-Job -Name 'StorageNodePhysicalDiskView' -ArgumentList $clusterName {
+        param ($clusterName)
+            $clusterCimSession = New-CimSession -ComputerName $ClusterName
+            $snvInstances = Get-CimInstance -Namespace root\Microsoft\Windows\Storage -ClassName MSFT_StorageNodeToPhysicalDisk -CimSession $clusterCimSession            
+            $allPhysicalDisks  = Get-PhysicalDisk -CimSession $clusterCimSession               
+            $SNV = @()              
+                
+            Foreach ($phyDisk in $snvInstances) {
                 $SNVObject = New-Object -TypeName System.Object                       
                 $pdIndex = $phyDisk.PhysicalDiskObjectId.IndexOf("PD:")
                 $pdLength = $phyDisk.PhysicalDiskObjectId.Length
                 $pdID = $phyDisk.PhysicalDiskObjectId.Substring($pdIndex+3, $pdLength-($pdIndex+4))  
                 $PDUID = ($allPhysicalDisks | Where-Object ObjectID -Match $pdID).UniqueID
-            
-                If (-not ($allPhysicalDisks | Where-Object UniqueId -eq $PDUID | Get-VirtualDisk)) {
-                    continue
-                }
-                Else {
-                    $SNVObject | Add-Member -Type NoteProperty -Name PhysicalDiskUID -Value $PDUID                
-                }
+                $pd = $allPhysicalDisks | Where-Object UniqueID -eq $PDUID
                 $nodeIndex = $phyDisk.StorageNodeObjectId.IndexOf("SN:")
                 $nodeLength = $phyDisk.StorageNodeObjectId.Length
                 $storageNodeName = $phyDisk.StorageNodeObjectId.Substring($nodeIndex+3, $nodeLength-($nodeIndex+4))  
-                $pd = $allPhysicalDisks | Where-Object UniqueID -eq $PDUID
-            
+                $poolName = ($pd | Get-StoragePool | Where-Object IsPrimordial -eq $false).FriendlyName
+                if (-not $poolName) {
+                    continue
+                }
+
+                $SNVObject | Add-Member -Type NoteProperty -Name PhysicalDiskUID -Value $PDUID                
                 $SNVObject | Add-Member -Type NoteProperty -Name StorageNode -Value $storageNodeName
-                $SNVObject | Add-Member -Type NoteProperty -Name StoragePool -Value (($pd | Get-StoragePool | Where-Object IsPrimordial -eq $false).FriendlyName)
+                $SNVObject | Add-Member -Type NoteProperty -Name StoragePool -Value $poolName
                 $SNVObject | Add-Member -Type NoteProperty -Name MPIOPolicy -Value $phyDisk.LoadBalancePolicy
                 $SNVObject | Add-Member -Type NoteProperty -Name MPIOState -Value $phyDisk.IsMPIOEnabled
                 $SNVObject | Add-Member -Type NoteProperty -Name PathID -Value $phyDisk.PathID
@@ -622,7 +645,7 @@ param(
                 $SNV += $SNVObject
             }            
             Write-Output $SNV
-        }        
+        }              
     }
 
 
@@ -632,20 +655,20 @@ param(
 
     If (-not $Read) {
 
-        $AssocJob = Start-Job -ArgumentList $AccessNode,$ClusterName {
-
+        $AssocJob = Start-Job -Name 'StorageComponentAssociations' -ArgumentList $AccessNode,$ClusterName {
             param($AccessNode,$ClusterName)
 
             $SmbShares = Get-SmbShare -CimSession $AccessNode
-            $Associations = Get-VirtualDisk -CimSession $AccessNode |Foreach-Object {
+            $Associations = Get-VirtualDisk -CimSession $AccessNode | Foreach-Object {
 
-                $o = $_ | Select-Object FriendlyName, CSVName, CSVNode, CSVPath, CSVVolume, 
-                ShareName, SharePath, VolumeID, PoolName, VDResiliency, VDCopies, VDColumns, VDEAware
+                $o = $_ | Select-Object FriendlyName, OperationalStatus, HealthStatus, CSVName, CSVStatus, CSVNode, CSVPath, CSVVolume, 
+                ShareName, SharePath, VolumeID, PoolName, PoolOpStatus, PoolHealthStatus, VDResiliency, VDCopies, VDColumns, VDEAware
 
                 $AssocCSV = $_ | Get-ClusterSharedVolume -Cluster $ClusterName
 
 	            If ($AssocCSV) {
                     $o.CSVName = $AssocCSV.Name
+                    $o.CSVStatus = $AssocCSV.State
                     $o.CSVNode = $AssocCSV.OwnerNode.Name
                     $o.CSVPath = $AssocCSV.SharedVolumeInfo.FriendlyVolumeName
                     if ($o.CSVPath.Length -ne 0) {
@@ -668,12 +691,16 @@ param(
             $AssocPool = Get-StoragePool -CimSession $AccessNode
             $AssocPool | Foreach-Object {
 	            $AssocPName = $_.FriendlyName
+                $AssocPOpStatus = $_.OperationalStatus
+                $AssocPHStatus = $_.HealthStatus
 	            Get-StoragePool -CimSession $AccessNode –FriendlyName $AssocPName | 
                 Get-VirtualDisk -CimSession $AccessNode | Foreach-Object {
 		            $AssocVD = $_
 		            $Associations | Foreach-Object {
                         If ($_.FriendlyName –eq $AssocVD.FriendlyName) { 
                             $_.PoolName = $AssocPName 
+                            $_.PoolOpStatus = $AssocPOpStatus
+                            $_.PoolHealthStatus = $AssocPHStatus
                             $_.VDResiliency = $AssocVD.ResiliencySettingName
                             $_.VDCopies = $AssocVD.NumberofDataCopies
                             $_.VDColumns = $AssocVD.NumberofColumns
@@ -1085,7 +1112,6 @@ param(
         $SNVView = Import-Clixml ($Path + "GetStorageNodeView.XML")
     } else {
         "`nCollecting device associations..."
-
         $Associations = $AssocJob | Wait-Job | Receive-Job
         $AssocJob | Remove-Job
         if ($null -eq $Associations) {
@@ -1093,7 +1119,7 @@ param(
         }
         $Associations | Export-Clixml ($Path + "GetAssociations.XML")
 
-        
+        "`nCollecting storage view associations..."
         $SNVView = $SNVJob | Wait-Job | Receive-Job
         $SNVJob | Remove-Job
         if ($null -eq $SNVView) {
@@ -1111,12 +1137,12 @@ param(
     "Notes: Sizes shown in gigabytes (GB). * means multiple shares on that volume"
 
     $Volumes | Where-Object FileSystem -eq CSVFS | Sort-Object SizeRemaining | 
-    Format-Table -AutoSize @{Expression={$poolName = CSVToPool(VolumeToCSV($_.Path)); "[$(PoolOperationalStatus($poolName))/$(PoolHealthStatus($poolName))] " + $poolName};Label="[OpStatus/Health] Pool"}, 
-    @{Expression={(PoolHealthyPDs(CSVToPool(VolumeToCSV($_.Path))))};Label="HealthyPhysicalDisks"; Align="Center"}, 
-    @{Expression={$vd = CSVToVD(VolumeToCSV($_.Path));  "[$(VDOperationalStatus($vd))/$(VDHealthStatus($vd))] "+$vd};Label="[OpStatus/Health] VirtualDisk"}, 
+    Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.Path); "[$(PoolOperationalStatus($_.Path))/$(PoolHealthStatus($_.Path))] " + $poolName};Label="[OpStatus/Health] Pool"}, 
+    @{Expression={(PoolHealthyPDs(VolumeToPool($_.Path)))};Label="HealthyPhysicalDisks"; Align="Center"}, 
+    @{Expression={$vd = VolumeToVD($_.Path);  "[$(VDOperationalStatus($_.Path))/$(VDHealthStatus($_.Path))] "+$vd};Label="[OpStatus/Health] VirtualDisk"}, 
     @{Expression={$csvVolume = VolumeToCSV($_.Path); "[" + $_.HealthStatus + "] " + $csvVolume};Label="[Health] CSV Volume"},
-    @{Expression={$csvName = CSVToName(VolumeToCSV($_.Path)); $csvStatus = (Get-ClusterSharedVolume -Name $csvName -Cluster $ClusterName).State;  " [$csvStatus] " + $csvName};Label="[Status] CSV Name"}, 
-    @{Expression={$csvOwner = CSVToNode(VolumeToCSV($_.Path)); $ownerState = (Get-ClusterNode -Name $csvOwner -Cluster $ClusterName).State; " [$ownerState] " + $csvOwner};Label="[State] Volume Owner"},   
+    @{Expression={$csvName = VolumeToCSVName($_.Path); $csvStatus = CSVStatus($_.Path);  " [$csvStatus] " + $csvName};Label="[Status] CSV Name"}, 
+    @{Expression={CSVToNode(VolumeToCSV($_.Path))};Label="Volume Owner"},   
     @{Expression={VolumeToShare($_.Path)};Label="Share Name"}, 
     @{Expression={$VolResiliency = VolumeToResiliency($_.Path); $volColumns = VolumeToColumns($_.Path); "$VolResiliency,$volColumns" +"Col" };Label="Volume Configuration"},        
     @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"},  
@@ -1128,9 +1154,9 @@ param(
         "Notes: Sizes shown in gigabytes (GB). * means multiple shares on that volume"
 
         $DedupVolumes | Sort-Object SavingsRate -Descending | 
-        Format-Table -AutoSize @{Expression={$poolName = CSVToPool(VolumeToCSV($_.VolumeId)); "[$(PoolOperationalStatus($poolName))/$(PoolHealthStatus($poolName))] " + $poolName};Label="[OpStatus/Health] Pool"}, 
-        @{Expression={$healthyPDS = (PoolHealthyPDs(CSVToPool(VolumeToCSV($_.VolumeId)))); $healthyPDS};Label="HealthyPhysicalDisks"; Align="Center"}, 
-        @{Expression={$vd = CSVToVD(VolumeToCSV($_.VolumeId)); "[$(VDOperationalStatus($vd))/$(VDHealthStatus($vd))] " + $vd};Label="[OpStatus/Health] VirtualDisk"}, 
+        Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.VolumeId); "[$(PoolOperationalStatus($_.VolumeId))/$(PoolHealthStatus($_.VolumeId))] " + $poolName};Label="[OpStatus/Health] Pool"},  
+        @{Expression={(PoolHealthyPDs(VolumeToPool($_.VolumeId)))};Label="HealthyPhysicalDisks"; Align="Center"}, 
+        @{Expression={$vd = VolumeToVD($_.VolumeId);  "[$(VDOperationalStatus($_.VolumeId))/$(VDHealthStatus($_.VolumeId))] "+$vd};Label="[OpStatus/Health] VirtualDisk"},  
         @{Expression={VolumeToCSV($_.VolumeId)};Label="Volume "},
         @{Expression={VolumeToShare($_.VolumeId)};Label="Share"},
         @{Expression={"{0:N2}" -f ($_.Capacity/1GB)};Label="Capacity";Width=11;Align="Left"}, 
@@ -1694,7 +1720,7 @@ param(
     Stop-Transcript
 }
 
-New-Alias -Name getpcsh -Value Get-PrivateCloudStorageHealth -Description "Report on Storage Cluster Health"
-New-Alias -Name Test-StorageHealth -Value Get-PrivateCloudStorageHealth -Description "Report on Storage Cluster Health"
+New-Alias -Name getpcsdi -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
+New-Alias -Name Test-StorageHealth -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
 
-Export-ModuleMember -Alias * -Function *
+Export-ModuleMember -Alias * -Function Get-PCStorageDiagnosticInfo
