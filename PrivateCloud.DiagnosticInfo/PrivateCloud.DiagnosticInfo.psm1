@@ -39,6 +39,36 @@ Function Compare-ModuleVersion {
         }
     }
 }
+
+#
+# Parses the resource deployment duration
+#
+Function ParseOperationDuration($durationString){
+
+# expected behaviour (should put in tests)
+#(ParseOperationDuration "PT21.501S").ToString() # Timespan: 21.501 seconds
+#(ParseOperationDuration "PT5M21.501S").ToString() # Timespan: 5 minutes 21.501 seconds
+#(ParseOperationDuration "PT1H5M21.501S").ToString() # Timespan: 1 hour 5 minutes 21.501 seconds
+#(ParseOperationDuration "PT 21.501S").ToString() # throws exception for unhandled format
+
+    $timespan = $null
+    switch -Regex ($durationString)  {
+        "^PT(?<seconds>\d*.\d*)S$" {
+            $timespan =  New-TimeSpan -Seconds $matches["seconds"]
+        }
+        "^PT(?<minutes>\d*)M(?<seconds>\d*.\d*)S$" {
+            $timespan =  New-TimeSpan -Minutes $matches["minutes"] -Seconds $matches["seconds"]
+        }
+        "^PT(?<hours>\d*)H(?<minutes>\d*)M(?<seconds>\d*.\d*)S$" {
+            $timespan =  New-TimeSpan -Hours $matches["hours"] -Minutes $matches["minutes"] -Seconds $matches["seconds"]
+        }
+    }
+    if($null -eq $timespan){
+        $message = "unhandled duration format '$durationString'"
+        throw $message
+    }
+    $timespan
+}
 <##################################################
 #  End Helper functions                           #
 ##################################################>
@@ -53,7 +83,7 @@ Function Compare-ModuleVersion {
        Results are saved to a folder (default C:\Users\<user>\HealthTest) for later review and replay.
 
     .LINK 
-        To provide feedback and contribute visit https://github.com/PowerShell/PrivateCloud.Health
+        To provide feedback and contribute visit https://github.com/PowerShell/PrivateCloud.DiagnosticInfo
 
     .EXAMPLE 
        Get-PCStorageDiagnosticInfo
@@ -1735,7 +1765,130 @@ param(
     Stop-Transcript
 }
 
+<# 
+    .SYNOPSIS 
+       Collects and reports the resource group/resources deployment statistics
+
+    .DESCRIPTION 
+       Collects and shows the deployment statistics, like resource names, types, duration of the deployment.       
+       Results are saved to a XML file C:\Users\<User>\ASResourceGroupDeploymentState.XML for later review and replay.
+
+    .LINK 
+        To provide feedback and contribute visit https://github.com/PowerShell/PrivateCloud.DiagnosticInfo
+
+    .EXAMPLE 
+       Get-PCAzureStackResourceDeploymentState
+ 
+       Reports the deployment statistics for all the resources under all the resource groups in the selected subscription
+       
+    .EXAMPLE 
+       Get-PCAzureStackResourceDeploymentState -ResourceGroupName myResourceGroup -TenantID 5ea5e5b5-666d-7777-888b-fa9999faa9b9
+ 
+       Reports the deployment statistics for all the resources under the resource group "myResourceGroup" in the selected subscription    
+#> 
+
+function Get-PCAzureStackResourceDeploymentState
+{
+[CmdletBinding()]
+[OutputType([String])] 
+
+param (
+    [parameter(Position=0, Mandatory=$true)]
+    [ValidateNotNullOrEmpty()]
+    [string] $TenantID,
+    [parameter(Mandatory=$false)]
+    [ValidateNotNullOrEmpty()]
+    [string[]] $ResourceGroupName,
+    [parameter(Mandatory=$false)]
+    [ValidateNotNullOrEmpty()]
+    [string] $AzureStackSubscriptionID,
+    [parameter(Mandatory=$false)]
+    [ValidateNotNullOrEmpty()]
+    [string] $AzureStackSubscriptionName)
+    
+    $allResourceGroups = @()
+    $outputPath = $env:USERPROFILE + "\ASResourceGroupDeploymentState.XML"
+
+    Write-Output "Adding the Azure Stack environment"
+    Try {
+        $azureStackEnvironment = Add-AzureRmEnvironment -Name 'AzureStack' `
+                                -ActiveDirectoryEndpoint ("https://login.windows.net/$TenantId/") `
+                                -ActiveDirectoryServiceEndpointResourceId ("https://azurestack.local-api/") `
+                                -ResourceManagerEndpoint ("https://api.azurestack.local/") `
+                                -GalleryEndpoint ("https://gallery.azurestack.local/") `
+                                -GraphEndpoint "https://graph.windows.net/"
+    }
+    Catch {
+        ShowError ("Failed to add the Azure Stack environment `nError="+$_.Exception.Message)
+    }
+
+
+    Write-Output "Please login to your Azure Stack account"
+    $asCreds = Get-Credential
+    Try { Add-AzureRMAccount -Environment $azureStackEnvironment -Credential $asCreds| Out-Null }
+    Catch { ShowError ("Failed to login to the Azure Stack account `nError="+$_.Exception.Message) }
+
+    if ((-not ($AzureStackSubscriptionID)) -or (-not ($AzureStackSubscriptionName))) {
+        $defaultAzureStackSubscription = Get-AzureRmSubscription | Where-Object SubscriptionName -match "Default Provider Subscription"
+        Write-Output "Azure Stack subscription selected: $($defaultAzureStackSubscription.SubscriptionName)"        
+    }
+    else {
+        if ($AzureStackSubscriptionName){
+            Select-AzureRmSubscription -SubscriptionName $AzureStackSubscriptionName -ErrorAction Stop    
+        }
+        elseif ($AzureStackSubscriptionID) {
+            Select-AzureRmSubscription -SubscriptionId $AzureStackSubscriptionID -ErrorAction Stop
+        }
+    }
+    if (-not ($ResourceGroupName)) {        
+        Write-Output "No resource group has been specified; Displaying deployment statistics for all the resource groups under the selected subscription"
+        $allResourceGroups = Get-AzureRmResourceGroup
+    }
+    else {
+        $allResourceGroups = $ResourceGroupName        
+    }  
+
+    $deploymentStats = @()
+    foreach ($resourceGroup in $allResourceGroups) {        
+        if ($resourceGroup.GetType().Name -eq "PSResourceGroup") {
+            $resGrpDeployment = Get-AzureRmResourceGroupDeployment -ResourceGroupName $resourceGroup.ResourceGroupName
+        }
+        else {
+            $resourceGroup = Get-AzureRmResourceGroup -Name $resourceGroup
+            $resGrpDeployment = Get-AzureRmResourceGroupDeployment -ResourceGroupName $resourceGroup.ResourceGroupName
+        }        
+        if (-not ($resGrpDeployment)) {
+            ShowWarning("No deployments were found in the resource group $($resourceGroup.ResourceGroupName)")
+        }
+        foreach($resDeployment in $resGrpDeployment){            
+            $deploymentOps = Get-AzureRmResourceGroupDeploymentOperation -DeploymentName $resDeployment.DeploymentName -ResourceGroupName $resourceGroup.ResourceGroupName
+            foreach ($operation in $deploymentOps) {
+                $resDeploymentStat = New-Object -TypeName System.Object
+                $resDeploymentStat | Add-Member -Type NoteProperty -Name ResourceGroup -Value $resourceGroup.ResourceGroupName
+                #$resDeploymentStat | Add-Member -Type NoteProperty -Name ProvisioningOperation -Value $operation.Properties.ProvisioningOperation
+                $resDeploymentStat | Add-Member -Type NoteProperty -Name ProvisioningState -Value $operation.Properties.ProvisioningState
+                $deploymentDuration = ParseOperationDuration($operation.Properties.Duration)
+                $resDeploymentStat | Add-Member -Type NoteProperty -Name DeploymentDuration -Value $deploymentDuration
+                $resDeploymentStat | Add-Member -Type NoteProperty -Name TargetResourceType -Value $operation.Properties.TargetResource.ResourceType
+                $resDeploymentStat | Add-Member -Type NoteProperty -Name TargetResourceName -Value $operation.Properties.TargetResource.ResourceName 
+                $deploymentStats += $resDeploymentStat        
+            }
+        }
+    }
+    Write-Output "Exporting the deployment statistics to XML file $outputPath"
+    $deploymentStats | Export-Clixml -Path $outputPath
+    
+    $deploymentStats | Format-Table -AutoSize @{Expression = {$_.ResourceGroup}; Label = "ResourceGroup"; Align = "Left"},
+    #@{Expression = {$_.ProvisioningOperation}; Label = "ProvisioningOperation"; Align = "Left"},
+    @{Expression = {$_.ProvisioningState}; Label = "ProvisioningState"; Align = "Left"},
+    @{Expression = {$_.DeploymentDuration}; Label = "DeploymentDuration"; Align = "Left"},
+    @{Expression = {$_.TargetResourceType}; Label = "TargetResourceType"; Align = "Left"},
+    @{Expression = {$_.TargetResourceName}; Label = "TargetResourceName"; Align = "Left"}
+}
+
 New-Alias -Name getpcsdi -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
+New-Alias -Name getpcasrds -Value Get-PCAzureStackResourceDeploymentState -Description "Diplays the resource/resource group deployment state"
 New-Alias -Name Test-StorageHealth -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
 
-Export-ModuleMember -Alias * -Function Get-PCStorageDiagnosticInfo
+Export-ModuleMember -Alias * -Function Get-PCStorageDiagnosticInfo,
+                                      `Get-PCAzureStackResourceDeploymentState
