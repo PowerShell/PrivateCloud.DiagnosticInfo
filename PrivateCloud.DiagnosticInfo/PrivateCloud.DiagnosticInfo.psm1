@@ -1723,16 +1723,15 @@ param(
             [Reflection.Assembly]::LoadWithPartialName("System.IO.Compression.FileSystem") | Out-Null
             $ZipLevel = [System.IO.Compression.CompressionLevel]::Optimal
             [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, $ZipLevel, $false)
-
+            "Zip File Name : $ZipPath `n" 
+	    # Stop Transcript
+    	    Stop-Transcript
             "Cleaning up temporary directory $Path"
             Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
-            "Zip File Name : $ZipPath `n" 
         } Catch {
             ShowError("Error creating the ZIP file!`nContent remains available at $Path") 
         }
     }
-    # Stop Transcript
-    Stop-Transcript
 }
 
 New-Alias -Name getpcsdi -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
