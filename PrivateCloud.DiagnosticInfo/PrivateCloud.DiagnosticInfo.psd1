@@ -1,5 +1,5 @@
 ﻿#
-# Module manifest for module 'Cloud.Health'
+# Module manifest for module 'PrivateCloud.DiagnosticInfo'
 #
 # Generated on: 4/25/2016
 #
