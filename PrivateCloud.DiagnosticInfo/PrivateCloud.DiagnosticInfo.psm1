@@ -1717,6 +1717,9 @@ param(
         $ZipSuffix = "-" + $Cluster.Name + $ZipSuffix
         $ZipPath = $ZipPrefix+$ZipSuffix+".ZIP"
 
+        # Stop Transcript
+    	Stop-Transcript
+    	
         Try {
             "Creating zip file with objects, logs and events."
 
@@ -1724,8 +1727,7 @@ param(
             $ZipLevel = [System.IO.Compression.CompressionLevel]::Optimal
             [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, $ZipLevel, $false)
             "Zip File Name : $ZipPath `n" 
-	    # Stop Transcript
-    	    Stop-Transcript
+	    
             "Cleaning up temporary directory $Path"
             Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
         } Catch {
