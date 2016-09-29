@@ -10,7 +10,7 @@
 RootModule = 'PrivateCloud.DiagnosticInfo.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.0.3'
+ModuleVersion = '1.0.4'
 
 # ID used to uniquely identify this module
 GUID = '7e0bc824-c371-4936-98e6-b7216ba5f348'
@@ -64,7 +64,8 @@ Description = 'Evaluates and reports the cloud health'
 # NestedModules = @()
 
 # Functions to export from this module
-FunctionsToExport = @('Get-PCStorageDiagnosticInfo')
+FunctionsToExport = @('Get-PCStorageDiagnosticInfo',
+                      'Get-PCAzureStackACSDiagnosticInfo')
 
 # Cmdlets to export from this module
 # CmdletsToExport = ''
@@ -74,7 +75,8 @@ FunctionsToExport = @('Get-PCStorageDiagnosticInfo')
 
 # Aliases to export from this module
 AliasesToExport = @('getpcsdi',
-                    'Test-StorageHealth')
+                    'Test-StorageHealth',
+					'getacslog')
 
 # List of all modules packaged with this module
 # ModuleList = @()
