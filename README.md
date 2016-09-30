@@ -8,6 +8,8 @@ Test-StorageHealth command in this module includes several sections, including:
 3. Reporting of Storage Performance with IOPS and Latency per Volume 
 4. Collection of event logs from all cluster nodes and Summary Error Report. 
 
+Get-PCAzureStackACSDiagnosticInfo command in this module will collect Azure Stack consistent storage diagnostic information, including logs, related events and dumps.
+
 # To install module from PowerShell gallery
 Powershell gallery: https://www.powershellgallery.com/packages/PrivateCloud.DiagnosticInfo
 Note: Installing items from the Gallery requires the latest version of the PowerShellGet module, which is available in Windows 10, in Windows Management Framework (WMF) 5.0, or in the MSI-based installer (for PowerShell 3 and 4).
@@ -56,6 +58,22 @@ Test-StorageHealth -ReadFromPath D:\Folder
 # To exclude events from data collection
 ``` PowerShell
 Test-StorageHealth -IncludeEvents:$false
+```
+
+# To collect debug logs of Azure Stack Consistent Storage
+1. Log on to any cluster VM or the host with domain admin credential.
+2. Create a log folder or use an existing folder to store collected logs. e.g. Folder on the share: \\\\SU1FileServer\\SU1_Tenant_1
+3. Run the following scripts, update the StartTime and EndTime value with your own preferred time range. Make sure you do set the SettingsStoreLiteralPath if you are not running the command on an ACS Node.
+4. Collected log files will be compacted and saved as [TargetFolderPath]/ACSLogs_[datetime].zip
+
+Default value of StartTime is two hours before current time, default value of EndTime is current time.
+Default value fo TargetFolderPath is $env:temp.
+
+``` PowerShell
+$end = get-date 
+$start = $end.AddMinutes(-10) 
+$output = “\\SU1FileServer\SU1_Tenant_1” 
+Get-PCAzureStackACSDiagnosticInfo –StartTime $start –EndTime $end –TargetFolderPath $output -SettingsStoreLiteralPath file:\\SU1FileServer\SU1_Infrastructure_1\ObjectStorageService\Settings -Verbose
 ```
 
 # What to expect next ?
