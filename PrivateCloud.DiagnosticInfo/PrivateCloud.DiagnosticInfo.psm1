@@ -1744,13 +1744,13 @@ param(
 .DESCRIPTION
 
 .PARAMETER StartTime
-    The start time for collected logs
+    The start time for collected logs, default value is two hours before current time
 
 .PARAMETER  EndTime
-    The end time for collected logs
+    The end time for collected logs, default value is current time
 
 .PARAMETER  TragetFolderPath
-    The targetPosition unc path
+    The targetPosition unc path, default value is $env:temp
 
 .PARAMETER  Credential
     The PSCredential object to run this script
@@ -1773,14 +1773,14 @@ param(
 function Get-PCAzureStackACSDiagnosticInfo
 {
     param(
-        [Parameter(Mandatory = $true)]
-        [System.DateTime] $StartTime,
-        [Parameter(Mandatory = $true)]
-        [System.DateTime] $EndTime,
+        [Parameter(Mandatory = $false)]
+        [System.DateTime] $StartTime = (Get-Date).AddHours(-2),
+        [Parameter(Mandatory = $false)]
+        [System.DateTime] $EndTime = (Get-Date),
         [Parameter(Mandatory = $true)]
         [PSCredential] $Credential, 
-        [Parameter(Mandatory = $true)]
-        [System.String] $TargetFolderPath,
+        [Parameter(Mandatory = $false)]
+        [System.String] $TargetFolderPath = $env:temp,
         [Parameter(Mandatory = $false)]
         [System.String] $SettingsStoreLiteralPath,
         [Parameter(Mandatory = $false)]
@@ -1789,6 +1789,12 @@ function Get-PCAzureStackACSDiagnosticInfo
 
     Write-Verbose "Set error action to Stop."
     $ErrorActionPreference = "Stop"
+	
+	if($StartTime -gt $EndTime)
+	{
+		Write-Error "Parameter StartTime is greater than EndTime, pls check your input and run the command again."
+		exit
+	}
 
     function global:EstablishSmbConnection
     {
@@ -2414,7 +2420,7 @@ function Get-PCAzureStackACSDiagnosticInfo
         $compressionLevel = [System.IO.Compression.CompressionLevel]::Fastest
 
         [System.IO.Compression.ZipFile]::CreateFromDirectory($TargetFolderPath, $zipfilename, $compressionLevel, $false)
-        Write-Verbose "Log Files was compacted into $zipfilename"
+        Write-Verbose "Your log files was compacted into $zipfilename"
 
         Write-Verbose "Cleanup share folder" 
         Remove-Item $TargetFolderPath -Recurse -Force
