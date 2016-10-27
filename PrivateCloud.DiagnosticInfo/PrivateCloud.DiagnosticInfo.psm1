@@ -33,13 +33,12 @@ Function Compare-ModuleVersion {
     If ($PSVersionTable.PSVersion -lt [System.Version]"5.0.0") {
         ShowWarning("Current PS Version does not support this operation. `nPlease check for updated module from PS Gallery and update using: Update-Module PrivateCloud.DiagnosticInfo")
     }
-    Else {
-        If ((Find-Module -Name PrivateCloud.DiagnosticInfo).Version -gt (Get-Module PrivateCloud.DiagnosticInfo).Version) {
+    Else {        
+        If ((Find-Module -Name PrivateCloud.DiagnosticInfo).Version -gt (Get-Module PrivateCloud.DiagnosticInfo).Version) {        
             ShowWarning ("There is an updated module available on PowerShell Gallery. Please update the module using: Update-Module PrivateCloud.DiagnosticInfo")
         }
     }
 }
-
 <##################################################
 #  End Helper functions                           #
 ##################################################>
@@ -115,31 +114,31 @@ param(
 
     [parameter(ParameterSetName="Write", Mandatory=$false)]
     [ValidateNotNullOrEmpty()]
-    [int] $ExpectedNodes = 4,
+    [int] $ExpectedNodes,
 
     [parameter(ParameterSetName="Write", Mandatory=$false)]
     [ValidateNotNullOrEmpty()]
-    [int] $ExpectedNetworks = 2,
+    [int] $ExpectedNetworks,
 
     [parameter(ParameterSetName="Write", Mandatory=$false)]
     [ValidateNotNullOrEmpty()]
-    [int] $ExpectedVolumes = 33,
+    [int] $ExpectedVolumes,
 
     [parameter(ParameterSetName="Write", Mandatory=$false)]
     [ValidateNotNullOrEmpty()]
-    [int] $ExpectedDedupVolumes = 16,
+    [int] $ExpectedDedupVolumes,
 
     [parameter(ParameterSetName="Write", Mandatory=$false)]
     [ValidateNotNullOrEmpty()]
-    [int] $ExpectedPhysicalDisks = 240,
+    [int] $ExpectedPhysicalDisks,
 
     [parameter(ParameterSetName="Write", Mandatory=$false)]
     [ValidateNotNullOrEmpty()]
-    [int] $ExpectedPools = 3,
+    [int] $ExpectedPools,
     
     [parameter(ParameterSetName="Write", Mandatory=$false)]
     [ValidateNotNullOrEmpty()]
-    [int] $ExpectedEnclosures = 4,
+    [int] $ExpectedEnclosures,
 
     [parameter(ParameterSetName="Write", Mandatory=$false)]
     [ValidateNotNullOrEmpty()]
@@ -401,20 +400,20 @@ param(
 
                 $AssocCSV = $_ | Get-ClusterSharedVolume -Cluster $ClusterName
 
-                If ($AssocCSV) {
+	            If ($AssocCSV) {
                     $o.CSVName = $AssocCSV.Name
                     $o.CSVNode = $AssocCSV.OwnerNode.Name
                     $o.CSVPath = $AssocCSV.SharedVolumeInfo.FriendlyVolumeName
                     if ($o.CSVPath.Length -ne 0) {
                         $o.CSVVolume = $o.CSVPath.Split(“\”)[2]
                     }     
-                    $AssocLike = $o.CSVPath+”\*”
-                    $AssocShares = $SmbShares | Where-Object Path –like $AssocLike 
+	                $AssocLike = $o.CSVPath+”\*”
+	                $AssocShares = $SmbShares | Where-Object Path –like $AssocLike 
                     $AssocShare = $AssocShares | Select-Object -First 1
                     If ($AssocShare) {
-                        $o.ShareName = $AssocShare.Name
-                        $o.SharePath = $AssocShare.Path
-                        $o.VolumeID = $AssocShare.Volume
+	                    $o.ShareName = $AssocShare.Name
+	                    $o.SharePath = $AssocShare.Path
+	                    $o.VolumeID = $AssocShare.Volume
                         If ($AssocShares.Count -gt 1) { $o.ShareName += "*" }
                     }
                 }
@@ -424,11 +423,11 @@ param(
 
             $AssocPool = Get-StoragePool -CimSession $AccessNode
             $AssocPool | Foreach-Object {
-                $AssocPName = $_.FriendlyName
-                Get-StoragePool -CimSession $AccessNode –FriendlyName $AssocPName | 
+	            $AssocPName = $_.FriendlyName
+	            Get-StoragePool -CimSession $AccessNode –FriendlyName $AssocPName | 
                 Get-VirtualDisk -CimSession $AccessNode | Foreach-Object {
-                    $AssocVD = $_
-                    $Associations | Foreach-Object {
+		            $AssocVD = $_
+		            $Associations | Foreach-Object {
                         If ($_.FriendlyName –eq $AssocVD.FriendlyName) { 
                             $_.PoolName = $AssocPName 
                             $_.VDResiliency = $AssocVD.ResiliencySettingName
@@ -502,9 +501,15 @@ param(
 
     # Start Transcript
     $transcriptFile = $Path + "0_CloudHealthSummary.log"
+    try{
+        Stop-Transcript | Out-Null
+    }
+    catch [System.InvalidOperationException]{}
     Start-Transcript -Path $transcriptFile -Force
 
-    Compare-ModuleVersion
+    if ((Test-NetConnection -ComputerName 'www.microsoft.com' -Hops 1 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue).PingSucceeded) {
+        Compare-ModuleVersion
+    }
 
     If ($Read) { 
         "Reading from path : $Path"
@@ -589,10 +594,11 @@ param(
     }
 
     $ScaleOutServers = $ClusterGroups | Where-Object GroupType -like "ScaleOut*"
-    If ($null -eq $ScaleOutServers) { ShowError("No Scale-Out File Server cluster roles found") }
-    $ScaleOutName = $ScaleOutServers[0].Name+"."+$Cluster.Domain
-    "Scale-Out File Server Name : $ScaleOutName"
-
+    If ($null -eq $ScaleOutServers) { ShowWarning("No Scale-Out File Server cluster roles found") }
+    else {
+        $ScaleOutName = $ScaleOutServers[0].Name+"."+$Cluster.Domain
+        "Scale-Out File Server Name : $ScaleOutName"
+    }
     #
     # Show health
     #
@@ -645,7 +651,7 @@ param(
                 $nodeIndex = $phyDisk.StorageNodeObjectId.IndexOf("SN:")
                 $nodeLength = $phyDisk.StorageNodeObjectId.Length
                 $storageNodeName = $phyDisk.StorageNodeObjectId.Substring($nodeIndex+3, $nodeLength-($nodeIndex+4))  
-                $poolName = ($pd | Get-StoragePool | Where-Object IsPrimordial -eq $false).FriendlyName
+                $poolName = ($pd | Get-StoragePool -CimSession $clusterCimSession | Where-Object IsPrimordial -eq $false).FriendlyName
                 if (-not $poolName) {
                     continue
                 }
@@ -654,10 +660,11 @@ param(
                 $SNVObject | Add-Member -Type NoteProperty -Name StorageNode -Value $storageNodeName
                 $SNVObject | Add-Member -Type NoteProperty -Name StoragePool -Value $poolName
                 $SNVObject | Add-Member -Type NoteProperty -Name MPIOPolicy -Value $phyDisk.LoadBalancePolicy
-                $SNVObject | Add-Member -Type NoteProperty -Name MPIOState -Value $phyDisk.IsMPIOEnabled
-                $SNVObject | Add-Member -Type NoteProperty -Name PathID -Value $phyDisk.PathID
-                $SNVObject | Add-Member -Type NoteProperty -Name PathState -Value $phyDisk.PathState            
+                $SNVObject | Add-Member -Type NoteProperty -Name MPIOState -Value $phyDisk.IsMPIOEnabled            
                 $SNVObject | Add-Member -Type NoteProperty -Name StorageEnclosure -Value $pd.PhysicalLocation
+                $SNVObject | Add-Member -Type NoteProperty -Name PathID -Value $phyDisk.PathID
+                $SNVObject | Add-Member -Type NoteProperty -Name PathState -Value $phyDisk.PathState
+
                 $SNV += $SNVObject
             }            
             Write-Output $SNV
@@ -682,7 +689,7 @@ param(
 
                 $AssocCSV = $_ | Get-ClusterSharedVolume -Cluster $ClusterName
 
-                If ($AssocCSV) {
+	            If ($AssocCSV) {
                     $o.CSVName = $AssocCSV.Name
                     $o.CSVStatus = $AssocCSV.State
                     $o.CSVNode = $AssocCSV.OwnerNode.Name
@@ -690,13 +697,13 @@ param(
                     if ($o.CSVPath.Length -ne 0) {
                         $o.CSVVolume = $o.CSVPath.Split(“\”)[2]
                     }     
-                    $AssocLike = $o.CSVPath+”\*”
-                    $AssocShares = $SmbShares | Where-Object Path –like $AssocLike 
+	                $AssocLike = $o.CSVPath+”\*”
+	                $AssocShares = $SmbShares | Where-Object Path –like $AssocLike 
                     $AssocShare = $AssocShares | Select-Object -First 1
                     If ($AssocShare) {
-                        $o.ShareName = $AssocShare.Name
-                        $o.SharePath = $AssocShare.Path
-                        $o.VolumeID = $AssocShare.Volume
+	                    $o.ShareName = $AssocShare.Name
+	                    $o.SharePath = $AssocShare.Path
+	                    $o.VolumeID = $AssocShare.Volume
                         If ($AssocShares.Count -gt 1) { $o.ShareName += "*" }
                     }
                 }
@@ -706,13 +713,13 @@ param(
 
             $AssocPool = Get-StoragePool -CimSession $AccessNode
             $AssocPool | Foreach-Object {
-                $AssocPName = $_.FriendlyName
+	            $AssocPName = $_.FriendlyName
                 $AssocPOpStatus = $_.OperationalStatus
                 $AssocPHStatus = $_.HealthStatus
-                Get-StoragePool -CimSession $AccessNode –FriendlyName $AssocPName | 
+	            Get-StoragePool -CimSession $AccessNode –FriendlyName $AssocPName | 
                 Get-VirtualDisk -CimSession $AccessNode | Foreach-Object {
-                    $AssocVD = $_
-                    $Associations | Foreach-Object {
+		            $AssocVD = $_
+		            $Associations | Foreach-Object {
                         If ($_.FriendlyName –eq $AssocVD.FriendlyName) { 
                             $_.PoolName = $AssocPName 
                             $_.PoolOpStatus = $AssocPOpStatus
@@ -1416,7 +1423,8 @@ param(
             $LogPatterns = 'Storage','SMB','Failover','VHDMP','Hyper-V','ResumeKeyFilter','Witness','PnP','Space','NTFS','storport','disk','Kernel' | Foreach-Object { "*$_*" }
             $LogPatterns += 'System','Application'
 
-            $Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node | Where-Object LogName -NotLike "*Diag*" 
+            #$Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node | Where-Object LogName -NotLike "*Diag*" 
+            $Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node  
             $Logs | Foreach-Object {
         
                 $FileSuffix = $Node+"_Event_"+$_.LogName.Replace("/","-")+".EVTX"
@@ -1698,6 +1706,29 @@ param(
         }
     }
     
+    if ((([System.Environment]::OSVersion.Version).Major) -ge 10) {
+        "Gathering the storage diagnostic information"
+        $deleteStorageSubsystem = $false
+        if (-not (Get-StorageSubsystem -FriendlyName Clustered*)) {
+            $storageProviderName = (Get-StorageProvider -CimSession $ClusterName | ? Manufacturer -match 'Microsoft').Name
+            $registeredSubSystem = Register-StorageSubsystem -ProviderName $storageProviderName -ComputerName $ClusterName -ErrorAction SilentlyContinue
+            $deleteStorageSubsystem = $true
+            $storagesubsystemToDelete = Get-StorageSubsystem -FriendlyName Clustered*
+        }
+        $destinationPath = Join-Path -Path $Path -ChildPath 'StorageDiagnosticInfo'
+        If (Test-Path -Path $destinationPath) {
+            Remove-Item -Path $destinationPath -Recurse -Force
+        }
+        New-Item -Path $destinationPath -ItemType Directory
+        $clusterSubsystem = (Get-StorageSubSystem | Where-Object Model -eq 'Clustered Windows Storage').FriendlyName
+        Stop-StorageDiagnosticLog -StorageSubSystemFriendlyName $clusterSubsystem -ErrorAction SilentlyContinue
+        Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
+        
+        if ($deleteStorageSubsystem) {
+            Unregister-StorageSubsystem -StorageSubSystemUniqueId $storagesubsystemToDelete.UniqueId -ProviderName Windows*
+        }
+    }
+        
     #
     # Phase 7
     #
@@ -1719,8 +1750,8 @@ param(
         $ZipPath = $ZipPrefix+$ZipSuffix+".ZIP"
 
         # Stop Transcript
-        Stop-Transcript
-        
+    	Stop-Transcript
+    	
         Try {
             "Creating zip file with objects, logs and events."
 
@@ -1728,9 +1759,11 @@ param(
             $ZipLevel = [System.IO.Compression.CompressionLevel]::Optimal
             [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, $ZipLevel, $false)
             "Zip File Name : $ZipPath `n" 
-        
+	    
             "Cleaning up temporary directory $Path"
             Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
+            "Removing all the cimsessions"
+            Get-CimSession | Remove-cimSession 
         } Catch {
             ShowError("Error creating the ZIP file!`nContent remains available at $Path") 
         }
