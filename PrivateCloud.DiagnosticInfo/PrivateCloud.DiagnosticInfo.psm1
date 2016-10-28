@@ -594,7 +594,7 @@ param(
     }
 
     $ScaleOutServers = $ClusterGroups | Where-Object GroupType -like "ScaleOut*"
-    If ($null -eq $ScaleOutServers) { ShowWarning("No Scale-Out File Server cluster roles found") }
+    # If ($null -eq $ScaleOutServers) { ShowWarning("No Scale-Out File Server cluster roles found") }
     else {
         $ScaleOutName = $ScaleOutServers[0].Name+"."+$Cluster.Domain
         "Scale-Out File Server Name : $ScaleOutName"
@@ -626,7 +626,7 @@ param(
     if (-not $Read) {
         if ($(Invoke-Command -ComputerName $AccessNode {(-not (Get-Command -Module Deduplication))} )) { 
             $DedupEnabled = $false
-            ShowWarning("Deduplication PowerShell not installed on cluster node.")
+            #ShowWarning("Deduplication PowerShell not installed on cluster node.")
         }
     }
 
