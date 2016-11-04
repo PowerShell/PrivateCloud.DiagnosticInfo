@@ -146,7 +146,11 @@ param(
 
     [parameter(ParameterSetName="Read", Mandatory=$true)]
     [ValidateNotNullOrEmpty()]
-    [string] $ReadFromPath = ""
+    [string] $ReadFromPath = "",
+
+    [parameter(ParameterSetName="Write", Mandatory=$false)]
+    [ValidateNotNullOrEmpty()]
+    [bool] $IncludeLiveDump = $false
     )
 
     #
@@ -368,6 +372,8 @@ param(
     #
 
     $OS = Get-CimInstance -ClassName Win32_OperatingSystem
+    $S2DEnabled = $false
+
     If ([uint64]$OS.BuildNumber -lt 9600) { 
         ShowError("Wrong OS Version - Need at least Windows Server 2012 R2 or Windows 8.1. You are running - " + $OS.Name) 
     }
@@ -400,20 +406,20 @@ param(
 
                 $AssocCSV = $_ | Get-ClusterSharedVolume -Cluster $ClusterName
 
-	            If ($AssocCSV) {
+                If ($AssocCSV) {
                     $o.CSVName = $AssocCSV.Name
                     $o.CSVNode = $AssocCSV.OwnerNode.Name
                     $o.CSVPath = $AssocCSV.SharedVolumeInfo.FriendlyVolumeName
                     if ($o.CSVPath.Length -ne 0) {
                         $o.CSVVolume = $o.CSVPath.Split(“\”)[2]
                     }     
-	                $AssocLike = $o.CSVPath+”\*”
-	                $AssocShares = $SmbShares | Where-Object Path –like $AssocLike 
+                    $AssocLike = $o.CSVPath+”\*”
+                    $AssocShares = $SmbShares | Where-Object Path –like $AssocLike 
                     $AssocShare = $AssocShares | Select-Object -First 1
                     If ($AssocShare) {
-	                    $o.ShareName = $AssocShare.Name
-	                    $o.SharePath = $AssocShare.Path
-	                    $o.VolumeID = $AssocShare.Volume
+                        $o.ShareName = $AssocShare.Name
+                        $o.SharePath = $AssocShare.Path
+                        $o.VolumeID = $AssocShare.Volume
                         If ($AssocShares.Count -gt 1) { $o.ShareName += "*" }
                     }
                 }
@@ -423,11 +429,11 @@ param(
 
             $AssocPool = Get-StoragePool -CimSession $AccessNode
             $AssocPool | Foreach-Object {
-	            $AssocPName = $_.FriendlyName
-	            Get-StoragePool -CimSession $AccessNode –FriendlyName $AssocPName | 
+                $AssocPName = $_.FriendlyName
+                Get-StoragePool -CimSession $AccessNode –FriendlyName $AssocPName | 
                 Get-VirtualDisk -CimSession $AccessNode | Foreach-Object {
-		            $AssocVD = $_
-		            $Associations | Foreach-Object {
+                    $AssocVD = $_
+                    $Associations | Foreach-Object {
                         If ($_.FriendlyName –eq $AssocVD.FriendlyName) { 
                             $_.PoolName = $AssocPName 
                             $_.VDResiliency = $AssocVD.ResiliencySettingName
@@ -581,6 +587,9 @@ param(
     $ClusterName = $Cluster.Name + "." + $Cluster.Domain
     "Cluster Name               : $ClusterName"
     
+    $S2DEnabled = $Cluster.S2DEnabled
+    "S2D Enabled                : $S2DEnabled"
+
     #
     # Test if it's a scale-out file server
     #
@@ -594,8 +603,11 @@ param(
     }
 
     $ScaleOutServers = $ClusterGroups | Where-Object GroupType -like "ScaleOut*"
-    #If ($null -eq $ScaleOutServers) { ShowWarning("No Scale-Out File Server cluster roles found") }
-    else {
+    If ($null -eq $ScaleOutServers) { 
+        if ($S2DEnabled -ne $true) {
+            ShowWarning("No Scale-Out File Server cluster roles found") 
+        }
+    } else {
         $ScaleOutName = $ScaleOutServers[0].Name+"."+$Cluster.Domain
         "Scale-Out File Server Name : $ScaleOutName"
     }
@@ -626,7 +638,9 @@ param(
     if (-not $Read) {
         if ($(Invoke-Command -ComputerName $AccessNode {(-not (Get-Command -Module Deduplication))} )) { 
             $DedupEnabled = $false
-            #ShowWarning("Deduplication PowerShell not installed on cluster node.")
+            if ($S2DEnabled -ne $true) {
+                ShowWarning("Deduplication PowerShell not installed on cluster node.")
+            }
         }
     }
 
@@ -689,7 +703,7 @@ param(
 
                 $AssocCSV = $_ | Get-ClusterSharedVolume -Cluster $ClusterName
 
-	            If ($AssocCSV) {
+                If ($AssocCSV) {
                     $o.CSVName = $AssocCSV.Name
                     $o.CSVStatus = $AssocCSV.State
                     $o.CSVNode = $AssocCSV.OwnerNode.Name
@@ -697,13 +711,13 @@ param(
                     if ($o.CSVPath.Length -ne 0) {
                         $o.CSVVolume = $o.CSVPath.Split(“\”)[2]
                     }     
-	                $AssocLike = $o.CSVPath+”\*”
-	                $AssocShares = $SmbShares | Where-Object Path –like $AssocLike 
+                    $AssocLike = $o.CSVPath+”\*”
+                    $AssocShares = $SmbShares | Where-Object Path –like $AssocLike 
                     $AssocShare = $AssocShares | Select-Object -First 1
                     If ($AssocShare) {
-	                    $o.ShareName = $AssocShare.Name
-	                    $o.SharePath = $AssocShare.Path
-	                    $o.VolumeID = $AssocShare.Volume
+                        $o.ShareName = $AssocShare.Name
+                        $o.SharePath = $AssocShare.Path
+                        $o.VolumeID = $AssocShare.Volume
                         If ($AssocShares.Count -gt 1) { $o.ShareName += "*" }
                     }
                 }
@@ -713,13 +727,13 @@ param(
 
             $AssocPool = Get-StoragePool -CimSession $AccessNode
             $AssocPool | Foreach-Object {
-	            $AssocPName = $_.FriendlyName
+                $AssocPName = $_.FriendlyName
                 $AssocPOpStatus = $_.OperationalStatus
                 $AssocPHStatus = $_.HealthStatus
-	            Get-StoragePool -CimSession $AccessNode –FriendlyName $AssocPName | 
+                Get-StoragePool -CimSession $AccessNode –FriendlyName $AssocPName | 
                 Get-VirtualDisk -CimSession $AccessNode | Foreach-Object {
-		            $AssocVD = $_
-		            $Associations | Foreach-Object {
+                    $AssocVD = $_
+                    $Associations | Foreach-Object {
                         If ($_.FriendlyName –eq $AssocVD.FriendlyName) { 
                             $_.PoolName = $AssocPName 
                             $_.PoolOpStatus = $AssocPOpStatus
@@ -1403,6 +1417,16 @@ param(
 
         $ClusterLogJob = Start-Job -ArgumentList $ClusterName,$Path { 
             param($c,$p) Get-ClusterLog -Cluster $c -Destination $p 
+            if ($S2DEnabled -eq $true) {
+                param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -Health
+            }
+        }
+    
+        if ($S2DEnabled -eq $true) {
+            "Starting Export of Cluster Health Logs..." 
+            $ClusterHealthLogJob = Start-Job -ArgumentList $ClusterName,$Path { 
+                param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -Health
+            }
         }
 
         "Exporting Event Logs..." 
@@ -1682,6 +1706,12 @@ param(
         $ClusterLogJob | Wait-Job | Receive-Job
         $ClusterLogJob | Remove-Job        
     
+        if ($S2DEnabled) {
+            "Receiving Cluster Health Logs..."
+            $ClusterHealthLogJob | Wait-Job | Receive-Job
+            $ClusterHealthLogJob | Remove-Job        
+        }
+
         $errorFilePath = $Path + "\*"
         Remove-Item -Path $errorFilePath -Include "*_Event_*.EVTX" -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -1722,7 +1752,11 @@ param(
         New-Item -Path $destinationPath -ItemType Directory
         $clusterSubsystem = (Get-StorageSubSystem | Where-Object Model -eq 'Clustered Windows Storage').FriendlyName
         Stop-StorageDiagnosticLog -StorageSubSystemFriendlyName $clusterSubsystem -ErrorAction SilentlyContinue
-        Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
+        if ($IncludeLiveDump) {
+            Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
+        } else {
+            Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
+        }
         
         if ($deleteStorageSubsystem) {
             Unregister-StorageSubsystem -StorageSubSystemUniqueId $storagesubsystemToDelete.UniqueId -ProviderName Windows*
@@ -1750,8 +1784,8 @@ param(
         $ZipPath = $ZipPrefix+$ZipSuffix+".ZIP"
 
         # Stop Transcript
-    	Stop-Transcript
-    	
+        Stop-Transcript
+        
         Try {
             "Creating zip file with objects, logs and events."
 
@@ -1759,7 +1793,7 @@ param(
             $ZipLevel = [System.IO.Compression.CompressionLevel]::Optimal
             [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, $ZipLevel, $false)
             "Zip File Name : $ZipPath `n" 
-	    
+        
             "Cleaning up temporary directory $Path"
             Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
             "Removing all the cimsessions"
@@ -1822,12 +1856,12 @@ function Get-PCAzureStackACSDiagnosticInfo
 
     Write-Verbose "Set error action to Stop."
     $ErrorActionPreference = "Stop"
-	
-	if($StartTime -gt $EndTime)
-	{
-		Write-Error "Parameter StartTime is greater than EndTime, pls check your input and run the command again."
-		exit
-	}
+    
+    if($StartTime -gt $EndTime)
+    {
+        Write-Error "Parameter StartTime is greater than EndTime, pls check your input and run the command again."
+        exit
+    }
 
     function global:EstablishSmbConnection
     {
