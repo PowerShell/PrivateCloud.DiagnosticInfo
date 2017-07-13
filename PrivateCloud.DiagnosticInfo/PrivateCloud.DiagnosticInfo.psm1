@@ -106,7 +106,7 @@ param(
     
     [parameter(ParameterSetName="Write", Mandatory=$false)]
     [ValidateNotNullOrEmpty()]
-    [bool] $IncludePerformance = $false,
+    [bool] $IncludePerformance = $true,
 
     [parameter(Mandatory=$false)]
     [ValidateNotNullOrEmpty()]
@@ -142,7 +142,7 @@ param(
 
     [parameter(ParameterSetName="Write", Mandatory=$false)]
     [ValidateNotNullOrEmpty()]
-    [int] $HoursOfEvents = 48,
+    [int] $HoursOfEvents = 24,
 
     [parameter(ParameterSetName="Read", Mandatory=$true)]
     [ValidateNotNullOrEmpty()]
