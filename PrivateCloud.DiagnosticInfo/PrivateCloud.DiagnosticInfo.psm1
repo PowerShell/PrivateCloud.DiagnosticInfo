@@ -685,6 +685,19 @@ param(
         }              
     }
 
+    if ($S2DEnabled -eq $true) {
+        Try {
+            $NonHealthyVDs=Get-VirtualDisk | where {$_.HealthStatus -ne "Healthy" -OR $_.OperationalStatus -ne "OK"}
+            $NonHealthyVDs | Export-Clixml ($Path + "NonHealthyVDs.XML")
+
+            foreach ($NonHealthyVD in $NonHealthyVDs) {
+                $NonHealthyExtents = $NonHealthyVD | Get-PhysicalExtent | ? OperationalStatus -ne Active | sort-object VirtualDiskOffset, CopyNumber
+                $NonHealthyExtents | Export-Clixml($Path + $NonHealthyVD.FriendlyName + "_Extents.xml")
+            }
+        } Catch {
+            ShowWarning("Not able to query extents for faulted virtual disks")
+        } 
+    }
 
     # Gather association between pool, virtualdisk, volume, share.
     # This is first used at Phase 4 and is run asynchronously since
