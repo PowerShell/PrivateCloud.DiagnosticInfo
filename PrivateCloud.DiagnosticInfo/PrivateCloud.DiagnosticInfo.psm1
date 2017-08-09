@@ -513,6 +513,12 @@ param(
     catch [System.InvalidOperationException]{}
     Start-Transcript -Path $transcriptFile -Force
 
+    if ($S2DEnabled -ne $true) {
+        if ((Test-NetConnection -ComputerName 'www.microsoft.com' -Hops 1 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue).PingSucceeded) {
+            Compare-ModuleVersion
+        }
+    }
+
     If ($Read) { 
         "Reading from path : $Path"
     } else { 
@@ -692,6 +698,18 @@ param(
             }
         } Catch {
             ShowWarning("Not able to query extents for faulted virtual disks")
+        } 
+
+        Try {
+            $NonHealthyPools = Get-StoragePool | ? IsPrimordial -eq $false
+            foreach ($NonHealthyPool in $NonHealthyPools) {
+                $faultyDisks = $NonHealthyPool | Get-PhysicalDisk 
+                $faultySSU = $faultyDisks | Get-StorageFaultDomain -type StorageScaleUnit
+                $faultyDisks | Export-Clixml($Path + $NonHealthyPool.FriendlyName + "_Disks.xml")
+                $faultySSU | Export-Clixml($Path + $NonHealthyPool.FriendlyName + "_SSU.xml")
+            }
+        } Catch {
+            ShowWarning("Not able to query faulty disksa nd SSU for faulted pools")
         } 
     }
 
