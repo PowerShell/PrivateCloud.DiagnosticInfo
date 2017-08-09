@@ -513,10 +513,6 @@ param(
     catch [System.InvalidOperationException]{}
     Start-Transcript -Path $transcriptFile -Force
 
-    if ((Test-NetConnection -ComputerName 'www.microsoft.com' -Hops 1 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue).PingSucceeded) {
-        Compare-ModuleVersion
-    }
-
     If ($Read) { 
         "Reading from path : $Path"
     } else { 
