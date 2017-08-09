@@ -513,11 +513,6 @@ param(
     catch [System.InvalidOperationException]{}
     Start-Transcript -Path $transcriptFile -Force
 
-    if ($S2DEnabled -ne $true) {
-        if ((Test-NetConnection -ComputerName 'www.microsoft.com' -Hops 1 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue).PingSucceeded) {
-            Compare-ModuleVersion
-        }
-    }
 
     If ($Read) { 
         "Reading from path : $Path"
@@ -591,6 +586,12 @@ param(
     
     $S2DEnabled = $Cluster.S2DEnabled
     "S2D Enabled                : $S2DEnabled"
+
+    if ($S2DEnabled -ne $true) {
+        if ((Test-NetConnection -ComputerName 'www.microsoft.com' -Hops 1 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue).PingSucceeded) {
+            Compare-ModuleVersion
+        }
+    }
 
     #
     # Test if it's a scale-out file server
