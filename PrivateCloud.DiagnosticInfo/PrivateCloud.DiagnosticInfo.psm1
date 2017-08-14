@@ -1177,20 +1177,24 @@ param(
         $SNVView = Import-Clixml ($Path + "GetStorageNodeView.XML")
     } else {
         "`nCollecting device associations..."
-        $Associations = $AssocJob | Wait-Job | Receive-Job
-        $AssocJob | Remove-Job
-        if ($null -eq $Associations) {
-            ShowError("Unable to get object associations")
-        }
-        $Associations | Export-Clixml ($Path + "GetAssociations.XML")
+        Try {
+            $Associations = $AssocJob | Wait-Job | Receive-Job
+            $AssocJob | Remove-Job
+            if ($null -eq $Associations) {
+                ShowWarning("Unable to get object associations")
+            }
+            $Associations | Export-Clixml ($Path + "GetAssociations.XML")
 
-        "`nCollecting storage view associations..."
-        $SNVView = $SNVJob | Wait-Job | Receive-Job
-        $SNVJob | Remove-Job
-        if ($null -eq $SNVView) {
-            ShowError("Unable to get nodes storage view associations")
+            "`nCollecting storage view associations..."
+            $SNVView = $SNVJob | Wait-Job | Receive-Job
+            $SNVJob | Remove-Job
+            if ($null -eq $SNVView) {
+                ShowWarning("Unable to get nodes storage view associations")
+            }
+            $SNVView | Export-Clixml ($Path + "GetStorageNodeView.XML")        
+        } catch {
+            ShowWarning("Not able to query associations..")
         }
-        $SNVView | Export-Clixml ($Path + "GetStorageNodeView.XML")        
     }
 
     #
