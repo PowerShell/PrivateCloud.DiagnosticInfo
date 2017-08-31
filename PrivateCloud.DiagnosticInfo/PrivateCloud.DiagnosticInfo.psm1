@@ -713,7 +713,7 @@ param(
             ShowWarning("Not able to query faulty disksa nd SSU for faulted pools")
         } 
 
-        $ClusterNodes = Get-ClusterNode -Cluster $ClusterName
+        $ClusterNodes = Get-ClusterNode -Cluster $ClusterName | ? State -eq Up
 
         Try {
             Write-Progress -Activity "Gathering SBL connectivity"
@@ -759,7 +759,7 @@ param(
                         $o.CSVVolume = $o.CSVPath.Split(“\”)[2]
                     }     
                     $AssocLike = $o.CSVPath+”\*”
-                    $AssocShares = $SmbShares | Where-Object Path –like $AssocLike 
+                    $AssocShares = $SmbShares | Where-Object Path -like $AssocLike 
                     $AssocShare = $AssocShares | Select-Object -First 1
                     If ($AssocShare) {
                         $o.ShareName = $AssocShare.Name
