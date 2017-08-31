@@ -1767,34 +1767,36 @@ param(
             $ErrorSummary | Sort-Object Total -Descending | Select-Object * -ExcludeProperty Group, Values | Format-Table  -AutoSize
         }
     }
-    
-    if ((([System.Environment]::OSVersion.Version).Major) -ge 10) {
-        "Gathering the storage diagnostic information"
-        $deleteStorageSubsystem = $false
-        if (-not (Get-StorageSubsystem -FriendlyName Clustered*)) {
-            $storageProviderName = (Get-StorageProvider -CimSession $ClusterName | ? Manufacturer -match 'Microsoft').Name
-            $registeredSubSystem = Register-StorageSubsystem -ProviderName $storageProviderName -ComputerName $ClusterName -ErrorAction SilentlyContinue
-            $deleteStorageSubsystem = $true
-            $storagesubsystemToDelete = Get-StorageSubsystem -FriendlyName Clustered*
+
+    if ($S2DEnabled -ne $true) { 
+        if ((([System.Environment]::OSVersion.Version).Major) -ge 10) {
+            "Gathering the storage diagnostic information"
+            $deleteStorageSubsystem = $false
+            if (-not (Get-StorageSubsystem -FriendlyName Clustered*)) {
+                $storageProviderName = (Get-StorageProvider -CimSession $ClusterName | ? Manufacturer -match 'Microsoft').Name
+                $registeredSubSystem = Register-StorageSubsystem -ProviderName $storageProviderName -ComputerName $ClusterName -ErrorAction SilentlyContinue
+                $deleteStorageSubsystem = $true
+                $storagesubsystemToDelete = Get-StorageSubsystem -FriendlyName Clustered*
+            }
+            $destinationPath = Join-Path -Path $Path -ChildPath 'StorageDiagnosticInfo'
+            If (Test-Path -Path $destinationPath) {
+                Remove-Item -Path $destinationPath -Recurse -Force
+            }
+            New-Item -Path $destinationPath -ItemType Directory
+            $clusterSubsystem = (Get-StorageSubSystem | Where-Object Model -eq 'Clustered Windows Storage').FriendlyName
+            Stop-StorageDiagnosticLog -StorageSubSystemFriendlyName $clusterSubsystem -ErrorAction SilentlyContinue
+            if ($IncludeLiveDump) {
+                Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
+            } else {
+                Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
+            }
+            
+            if ($deleteStorageSubsystem) {
+                Unregister-StorageSubsystem -StorageSubSystemUniqueId $storagesubsystemToDelete.UniqueId -ProviderName Windows*
+            }
         }
-        $destinationPath = Join-Path -Path $Path -ChildPath 'StorageDiagnosticInfo'
-        If (Test-Path -Path $destinationPath) {
-            Remove-Item -Path $destinationPath -Recurse -Force
-        }
-        New-Item -Path $destinationPath -ItemType Directory
-        $clusterSubsystem = (Get-StorageSubSystem | Where-Object Model -eq 'Clustered Windows Storage').FriendlyName
-        Stop-StorageDiagnosticLog -StorageSubSystemFriendlyName $clusterSubsystem -ErrorAction SilentlyContinue
-        if ($IncludeLiveDump) {
-            Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
-        } else {
-            Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
-        }
-        
-        if ($deleteStorageSubsystem) {
-            Unregister-StorageSubsystem -StorageSubSystemUniqueId $storagesubsystemToDelete.UniqueId -ProviderName Windows*
-        }
-    }
-        
+    }    
+
     #
     # Phase 7
     #
