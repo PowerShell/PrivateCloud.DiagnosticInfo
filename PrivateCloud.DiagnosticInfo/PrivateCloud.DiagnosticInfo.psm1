@@ -712,6 +712,25 @@ param(
         } Catch {
             ShowWarning("Not able to query faulty disksa nd SSU for faulted pools")
         } 
+
+        $ClusterNodes = Get-ClusterNode -Cluster $ClusterName
+
+        Try {
+            Write-Progress -Activity "Gathering SBL connectivity"
+            "SBL Connectivity"
+            foreach($node in $ClusterNodes) {
+                Write-Progress -Activity "Gathering SBL connectivity" -currentOperation "collecitng from $node"
+                $endpoints = Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $node
+                $endpoints | Export-Clixml ($Path + $node + "_ClusPort.xml")
+                $disks = ($endpoints | ? DeviceType -eq 0).count
+                $enc = ($endpoints | ? DeviceType -eq 1).count
+                $ssu = ($endpoints | ? DeviceType -eq 2).count
+                "$node has $disks disks, $enc enclosures, and $ssu scaleunit"
+            }
+            Write-Progress -Activity "Gathering SBL connectivity" -Completed
+        } Catch {
+            ShowWarning("Gathering SBL connectivity failed")
+        }
     }
 
     # Gather association between pool, virtualdisk, volume, share.
@@ -1767,34 +1786,36 @@ param(
             $ErrorSummary | Sort-Object Total -Descending | Select-Object * -ExcludeProperty Group, Values | Format-Table  -AutoSize
         }
     }
-    
-    if ((([System.Environment]::OSVersion.Version).Major) -ge 10) {
-        "Gathering the storage diagnostic information"
-        $deleteStorageSubsystem = $false
-        if (-not (Get-StorageSubsystem -FriendlyName Clustered*)) {
-            $storageProviderName = (Get-StorageProvider -CimSession $ClusterName | ? Manufacturer -match 'Microsoft').Name
-            $registeredSubSystem = Register-StorageSubsystem -ProviderName $storageProviderName -ComputerName $ClusterName -ErrorAction SilentlyContinue
-            $deleteStorageSubsystem = $true
-            $storagesubsystemToDelete = Get-StorageSubsystem -FriendlyName Clustered*
+
+    if ($S2DEnabled -ne $true) { 
+        if ((([System.Environment]::OSVersion.Version).Major) -ge 10) {
+            "Gathering the storage diagnostic information"
+            $deleteStorageSubsystem = $false
+            if (-not (Get-StorageSubsystem -FriendlyName Clustered*)) {
+                $storageProviderName = (Get-StorageProvider -CimSession $ClusterName | ? Manufacturer -match 'Microsoft').Name
+                $registeredSubSystem = Register-StorageSubsystem -ProviderName $storageProviderName -ComputerName $ClusterName -ErrorAction SilentlyContinue
+                $deleteStorageSubsystem = $true
+                $storagesubsystemToDelete = Get-StorageSubsystem -FriendlyName Clustered*
+            }
+            $destinationPath = Join-Path -Path $Path -ChildPath 'StorageDiagnosticInfo'
+            If (Test-Path -Path $destinationPath) {
+                Remove-Item -Path $destinationPath -Recurse -Force
+            }
+            New-Item -Path $destinationPath -ItemType Directory
+            $clusterSubsystem = (Get-StorageSubSystem | Where-Object Model -eq 'Clustered Windows Storage').FriendlyName
+            Stop-StorageDiagnosticLog -StorageSubSystemFriendlyName $clusterSubsystem -ErrorAction SilentlyContinue
+            if ($IncludeLiveDump) {
+                Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
+            } else {
+                Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
+            }
+            
+            if ($deleteStorageSubsystem) {
+                Unregister-StorageSubsystem -StorageSubSystemUniqueId $storagesubsystemToDelete.UniqueId -ProviderName Windows*
+            }
         }
-        $destinationPath = Join-Path -Path $Path -ChildPath 'StorageDiagnosticInfo'
-        If (Test-Path -Path $destinationPath) {
-            Remove-Item -Path $destinationPath -Recurse -Force
-        }
-        New-Item -Path $destinationPath -ItemType Directory
-        $clusterSubsystem = (Get-StorageSubSystem | Where-Object Model -eq 'Clustered Windows Storage').FriendlyName
-        Stop-StorageDiagnosticLog -StorageSubSystemFriendlyName $clusterSubsystem -ErrorAction SilentlyContinue
-        if ($IncludeLiveDump) {
-            Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
-        } else {
-            Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
-        }
-        
-        if ($deleteStorageSubsystem) {
-            Unregister-StorageSubsystem -StorageSubSystemUniqueId $storagesubsystemToDelete.UniqueId -ProviderName Windows*
-        }
-    }
-        
+    }    
+
     #
     # Phase 7
     #
