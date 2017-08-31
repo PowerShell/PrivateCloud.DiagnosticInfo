@@ -729,6 +729,7 @@ param(
             }
             Write-Progress -Activity "Gathering SBL connectivity" -Completed
         } Catch {
+            Write-Progress -Activity "Gathering SBL connectivity" -Completed
             ShowWarning("Gathering SBL connectivity failed")
         }
     }
