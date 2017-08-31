@@ -712,6 +712,25 @@ param(
         } Catch {
             ShowWarning("Not able to query faulty disksa nd SSU for faulted pools")
         } 
+
+        $ClusterNodes = Get-ClusterNode -Cluster $ClusterName
+
+        Try {
+            Write-Progress -Activity "Gathering SBL connectivity"
+            "SBL Connectivity"
+            foreach($node in $ClusterNodes) {
+                Write-Progress -Activity "Gathering SBL connectivity" -currentOperation "collecitng from $node"
+                $endpoints = Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $node
+                $endpoints | Export-Clixml ($Path + $node + "_ClusPort.xml")
+                $disks = ($endpoints | ? DeviceType -eq 0).count
+                $enc = ($endpoints | ? DeviceType -eq 1).count
+                $ssu = ($endpoints | ? DeviceType -eq 2).count
+                "$node has $disks disks, $enc enclosures, and $ssu scaleunit"
+            }
+            Write-Progress -Activity "Gathering SBL connectivity" -Completed
+        } Catch {
+            ShowWarning("Gathering SBL connectivity failed")
+        }
     }
 
     # Gather association between pool, virtualdisk, volume, share.
