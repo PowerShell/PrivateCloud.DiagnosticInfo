@@ -108,6 +108,10 @@ param(
     [ValidateNotNullOrEmpty()]
     [bool] $IncludePerformance = $false,
 
+    [parameter(ParameterSetName="Write", Mandatory=$false)]
+    [ValidateNotNullOrEmpty()]
+    [bool] $IncludeReliabilityCounters = $false,
+
     [parameter(Mandatory=$false)]
     [ValidateNotNullOrEmpty()]
     [switch] $MonitoringMode,
@@ -1025,10 +1029,12 @@ param(
     If ($Read) {
         $ReliabilityCounters = Import-Clixml ($Path + "GetReliabilityCounter.XML")
     } else {
-        Try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-              $ReliabilityCounters = $PhysicalDisks | Get-StorageReliabilityCounter -CimSession $AccessNode }
-        Catch { ShowError("Unable to get Storage Reliability Counters. `nError="+$_.Exception.Message) }
-        $ReliabilityCounters | Export-Clixml ($Path + "GetReliabilityCounter.XML")
+        if ($IncludeReliabilityCounters -eq $true) {
+            Try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+                  $ReliabilityCounters = $PhysicalDisks | Get-StorageReliabilityCounter -CimSession $AccessNode }
+            Catch { ShowError("Unable to get Storage Reliability Counters. `nError="+$_.Exception.Message) }
+            $ReliabilityCounters | Export-Clixml ($Path + "GetReliabilityCounter.XML")
+        }
     }
 
     # Storage enclosure health - only performed if the required KB is present
