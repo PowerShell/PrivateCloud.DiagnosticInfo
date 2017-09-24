@@ -1495,6 +1495,8 @@ param(
             Param([int] $Hours)
             # Calculate number of milliseconds and prepare the WEvtUtil parameter to filter based on date/time
             $MSecs = $Hours * 60 * 60 * 1000
+            
+            $QParameterLevel = "*[System[(Level=2)]]"
             $QParameter = "*[System[(Level=2) and TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
             $QParameterUnfiltered = "*[System[TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
 
@@ -1502,7 +1504,7 @@ param(
             $NodePath = [System.IO.Path]::GetTempPath()
             $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)
 
-            $LogPatterns = 'Storage','SMB','Failover','VHDMP','Hyper-V','ResumeKeyFilter','Witness','PnP','Space','NTFS','storport','disk','Kernel' | Foreach-Object { "*$_*" }
+            $LogPatterns = 'Storage','SMB','Failover','VHDMP','Hyper-V','ResumeKeyFilter','Witness','PnP','Space','REFS','NTFS','storport','disk','Kernel' | Foreach-Object { "*$_*" }
             $LogPatterns += 'System','Application'
 
             #$Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node | Where-Object LogName -NotLike "*Diag*" 
@@ -1515,8 +1517,11 @@ param(
 
                 # Export filtered log file using the WEvtUtil command-line tool
                 # This includes filtering the events to errors (Level=2) that happened in recent hours.
-
-                WEvtUtil.exe epl $_.LogName $NodeFile /q:$QParameter /ow:true
+                if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management") {
+                    WEvtUtil.exe epl $_.LogName $NodeFile /q:$QParameterLevel /ow:true
+                } else {
+                    WEvtUtil.exe epl $_.LogName $NodeFile /q:$QParameter /ow:true
+                }
                 Write-Output $RFile
             }
 
@@ -1528,7 +1533,11 @@ param(
 
                 # Export unfiltered log file using the WEvtUtil command-line tool
             
-                WEvtUtil.exe epl $_.LogName $UnfilteredNodeFile /q:$QParameterUnfiltered /ow:true
+                if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management") {
+                    WEvtUtil.exe epl $_.LogName $UnfilteredNodeFile /ow:true
+                } else {
+                    WEvtUtil.exe epl $_.LogName $UnfilteredNodeFile /q:$QParameterUnfiltered /ow:true
+                }
                 Write-Output $UnfilteredRFile
             }
         }
