@@ -1474,16 +1474,16 @@ param(
         # Using Start-Job to run them in the background, while we collect events and other diagnostic information
 
         $ClusterLogJob = Start-Job -ArgumentList $ClusterName,$Path { 
-            param($c,$p) Get-ClusterLog -Cluster $c -Destination $p 
+            param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -UseLocalTime 
             if ($S2DEnabled -eq $true) {
-                param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -Health
+                param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -Health -UseLocalTime
             }
         }
     
         if ($S2DEnabled -eq $true) {
             "Starting Export of Cluster Health Logs..." 
             $ClusterHealthLogJob = Start-Job -ArgumentList $ClusterName,$Path { 
-                param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -Health
+                param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -Health -UseLocalTime
             }
         }
 
@@ -2490,11 +2490,11 @@ function Get-PCAzureStackACSDiagnosticInfo
         {
             if($Credential -ne $null)
             {
-                Invoke-Command -ComputerName $($node.Key) -Credential $Credential -ScriptBlock {Get-ClusterLog}
+                Invoke-Command -ComputerName $($node.Key) -Credential $Credential -ScriptBlock {Get-ClusterLog -UseLocalTime}
             }
             else
             {
-                Invoke-Command -ComputerName $($node.Key) -ScriptBlock {Get-ClusterLog}
+                Invoke-Command -ComputerName $($node.Key) -ScriptBlock {Get-ClusterLog -UseLocalTime}
             }
             $clusterlogpath = [System.Environment]::ExpandEnvironmentVariables("%windir%\Cluster\Reports\Cluster.log")
             $clusterlogpath = "\\$($node.Key)\" + $clusterlogpath.replace(":","$")
