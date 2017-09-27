@@ -1474,16 +1474,10 @@ param(
         # Using Start-Job to run them in the background, while we collect events and other diagnostic information
 
         $ClusterLogJob = Start-Job -ArgumentList $ClusterName,$Path { 
-            param($c,$p) Get-ClusterLog -Cluster $c -Destination $p 
-            if ($S2DEnabled -eq $true) {
-                param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -Health
-            }
-        }
-    
-        if ($S2DEnabled -eq $true) {
-            "Starting Export of Cluster Health Logs..." 
-            $ClusterHealthLogJob = Start-Job -ArgumentList $ClusterName,$Path { 
-                param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -Health
+            param($c,$p)
+            Get-ClusterLog -Cluster $c -Destination $p -UseLocalTime
+            if ($using:S2DEnabled -eq $true) {
+                Get-ClusterLog -Cluster $c -Destination $p -Health -UseLocalTime
             }
         }
 
@@ -1773,12 +1767,6 @@ param(
         "Receiving Cluster Logs..."
         $ClusterLogJob | Wait-Job | Receive-Job
         $ClusterLogJob | Remove-Job        
-    
-        if ($S2DEnabled) {
-            "Receiving Cluster Health Logs..."
-            $ClusterHealthLogJob | Wait-Job | Receive-Job
-            $ClusterHealthLogJob | Remove-Job        
-        }
 
         $errorFilePath = $Path + "\*"
         Remove-Item -Path $errorFilePath -Include "*_Event_*.EVTX" -Recurse -Force -ErrorAction SilentlyContinue
