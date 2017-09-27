@@ -714,7 +714,7 @@ param(
                 $faultySSU | Export-Clixml($Path + $NonHealthyPool.FriendlyName + "_SSU.xml")
             }
         } Catch {
-            ShowWarning("Not able to query faulty disksa nd SSU for faulted pools")
+            ShowWarning("Not able to query faulty disks and SSU for faulted pools")
         } 
 
         $ClusterNodes = Get-ClusterNode -Cluster $ClusterName | ? State -eq Up
@@ -723,12 +723,12 @@ param(
             Write-Progress -Activity "Gathering SBL connectivity"
             "SBL Connectivity"
             foreach($node in $ClusterNodes) {
-                Write-Progress -Activity "Gathering SBL connectivity" -currentOperation "collecitng from $node"
+                Write-Progress -Activity "Gathering SBL connectivity" -currentOperation "collecting from $node"
                 $endpoints = Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $node
                 $endpoints | Export-Clixml ($Path + $node + "_ClusPort.xml")
-                $disks = ($endpoints | ? DeviceType -eq 0).count
-                $enc = ($endpoints | ? DeviceType -eq 1).count
-                $ssu = ($endpoints | ? DeviceType -eq 2).count
+                $disks = @($endpoints | ? DeviceType -eq 0).count
+                $enc = @($endpoints | ? DeviceType -eq 1).count
+                $ssu = @($endpoints | ? DeviceType -eq 2).count
                 "$node has $disks disks, $enc enclosures, and $ssu scaleunit"
             }
             Write-Progress -Activity "Gathering SBL connectivity" -Completed
@@ -929,7 +929,7 @@ param(
     }
 
     $WitTotal = NCount($SmbWitness | Where-Object State -eq RequestedNotifications | Group-Object ClientName)
-    "sers with a Witness           : $WitTotal"
+    "Users with a Witness           : $WitTotal"
     If ($WitTotal -eq 0) { ShowWarning("No users with a Witness") }
 
     # Volume health
@@ -1474,16 +1474,16 @@ param(
         # Using Start-Job to run them in the background, while we collect events and other diagnostic information
 
         $ClusterLogJob = Start-Job -ArgumentList $ClusterName,$Path { 
-            param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -UseLocalTime 
+            param($c,$p) Get-ClusterLog -Cluster $c -Destination $p 
             if ($S2DEnabled -eq $true) {
-                param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -Health -UseLocalTime
+                param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -Health
             }
         }
     
         if ($S2DEnabled -eq $true) {
             "Starting Export of Cluster Health Logs..." 
             $ClusterHealthLogJob = Start-Job -ArgumentList $ClusterName,$Path { 
-                param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -Health -UseLocalTime
+                param($c,$p) Get-ClusterLog -Cluster $c -Destination $p -Health
             }
         }
 
@@ -1582,7 +1582,8 @@ param(
         # Find the node name prefix, so we can trim the node name if possible
         #
 
-        $NodeCount = $ClusterNodes.Count
+        $NodeCount = @($ClusterNodes).Count
+        $NodeSame = 0
         If ($NodeCount -gt 1) { 
     
             # Find the length of the shortest node name
@@ -2490,11 +2491,11 @@ function Get-PCAzureStackACSDiagnosticInfo
         {
             if($Credential -ne $null)
             {
-                Invoke-Command -ComputerName $($node.Key) -Credential $Credential -ScriptBlock {Get-ClusterLog -UseLocalTime}
+                Invoke-Command -ComputerName $($node.Key) -Credential $Credential -ScriptBlock {Get-ClusterLog}
             }
             else
             {
-                Invoke-Command -ComputerName $($node.Key) -ScriptBlock {Get-ClusterLog -UseLocalTime}
+                Invoke-Command -ComputerName $($node.Key) -ScriptBlock {Get-ClusterLog}
             }
             $clusterlogpath = [System.Environment]::ExpandEnvironmentVariables("%windir%\Cluster\Reports\Cluster.log")
             $clusterlogpath = "\\$($node.Key)\" + $clusterlogpath.replace(":","$")
