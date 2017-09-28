@@ -1610,7 +1610,6 @@ param(
             Write-Progress -Activity "Processing Event Logs - Reading in" -Completed
         }
 
-
         #
         # Find the node name prefix, so we can trim the node name if possible
         #
@@ -1646,7 +1645,6 @@ param(
             $NodeSame = $Current-1
         } 
 
-
         #
         # Trim the node name by removing the node name prefix
         #
@@ -1660,6 +1658,7 @@ param(
         # 
         # Trim the log name by removing some common log name prefixes
         #
+
         Function TrimLogName {
             Param ([String] $LogName) 
             $Result = $LogName.Split(",")[1].Trim().TrimEnd()
@@ -1673,6 +1672,7 @@ param(
         #
         # Convert the grouped table into a table with the fields we need
         #
+
         $Errors = $AllErrors | Select-Object @{Expression={TrimLogName($_.Name)};Label="LogName"},
         @{Expression={[int] $_.Name.Split(",")[2].Trim().TrimEnd()};Label="EventId"},
         @{Expression={TrimNode($_.Name)};Label="Node"}, Count, 
@@ -1716,6 +1716,7 @@ param(
                 #
                 # Is it the end of row?
                 #
+
                 If ($_ -eq $Last) { 
                     $EndofRow = $true 
                 } else { 
@@ -1729,6 +1730,7 @@ param(
                 # 
                 # End of row, generate the row with the totals per Logname, EventId
                 #
+
                 If ($EndofRow) {
                     $ErrorRow = "" | Select-Object LogName, EventId
                     $ErrorRow.LogName = $LogName
@@ -2518,11 +2520,11 @@ function Get-PCAzureStackACSDiagnosticInfo
         {
             if($Credential -ne $null)
             {
-                Invoke-Command -ComputerName $($node.Key) -Credential $Credential -ScriptBlock {Get-ClusterLog}
+                Invoke-Command -ComputerName $($node.Key) -Credential $Credential -ScriptBlock {Get-ClusterLog  -UseLocalTime}
             }
             else
             {
-                Invoke-Command -ComputerName $($node.Key) -ScriptBlock {Get-ClusterLog}
+                Invoke-Command -ComputerName $($node.Key) -ScriptBlock {Get-ClusterLog  -UseLocalTime}
             }
             $clusterlogpath = [System.Environment]::ExpandEnvironmentVariables("%windir%\Cluster\Reports\Cluster.log")
             $clusterlogpath = "\\$($node.Key)\" + $clusterlogpath.replace(":","$")
