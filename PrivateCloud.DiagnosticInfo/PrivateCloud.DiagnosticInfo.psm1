@@ -2520,11 +2520,11 @@ function Get-PCAzureStackACSDiagnosticInfo
         {
             if($Credential -ne $null)
             {
-                Invoke-Command -ComputerName $($node.Key) -Credential $Credential -ScriptBlock {Get-ClusterLog  -UseLocalTime}
+                Invoke-Command -ComputerName $($node.Key) -Credential $Credential -ScriptBlock {Get-ClusterLog -UseLocalTime}
             }
             else
             {
-                Invoke-Command -ComputerName $($node.Key) -ScriptBlock {Get-ClusterLog  -UseLocalTime}
+                Invoke-Command -ComputerName $($node.Key) -ScriptBlock {Get-ClusterLog -UseLocalTime}
             }
             $clusterlogpath = [System.Environment]::ExpandEnvironmentVariables("%windir%\Cluster\Reports\Cluster.log")
             $clusterlogpath = "\\$($node.Key)\" + $clusterlogpath.replace(":","$")
