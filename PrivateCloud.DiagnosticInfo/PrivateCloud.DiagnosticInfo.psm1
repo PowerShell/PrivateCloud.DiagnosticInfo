@@ -1062,7 +1062,11 @@ param(
     # Reliability counters
 
     If ($Read) {
-        $ReliabilityCounters = Import-Clixml ($Path + "GetReliabilityCounter.XML")
+        if (Test-Path ($Path + "GetReliabilityCounter.XML")) {
+            $ReliabilityCounters = Import-Clixml ($Path + "GetReliabilityCounter.XML")
+        } else {
+            ShowWarning("Reliability Counters not gathered for this capture")
+        }
     } else {
         if ($IncludeReliabilityCounters -eq $true) {
             Try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
