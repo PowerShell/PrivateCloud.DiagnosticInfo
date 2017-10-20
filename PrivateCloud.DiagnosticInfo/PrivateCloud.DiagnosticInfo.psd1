@@ -65,6 +65,7 @@ Description = 'Evaluates and reports the cloud health'
 
 # Functions to export from this module
 FunctionsToExport = @('Get-PCStorageDiagnosticInfo',
+                      'Get-PCStorageReport'
                       'Get-PCAzureStackACSDiagnosticInfo')
 
 # Cmdlets to export from this module
