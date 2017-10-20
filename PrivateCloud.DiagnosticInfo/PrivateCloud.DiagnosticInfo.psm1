@@ -1,4 +1,4 @@
-﻿<###################################################
+<###################################################
  #                                                 #
  #  Copyright (c) Microsoft. All rights reserved.  #
  #                                                 #
@@ -733,7 +733,6 @@ function Get-PCStorageDiagnosticInfo
             } Catch {
                 ShowWarning("Not able to query extents for faulted virtual disks")
             } 
-
             Try {
                 $NonHealthyPools = Get-StoragePool | ? IsPrimordial -eq $false
                 foreach ($NonHealthyPool in $NonHealthyPools) {
