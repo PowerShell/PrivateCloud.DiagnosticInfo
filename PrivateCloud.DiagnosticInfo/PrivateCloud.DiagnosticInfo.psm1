@@ -14,7 +14,7 @@
 #
 Function ShowError { 
 Param ([string] $Message)
-    $Message = $Message + “ – cmdlet was cancelled”
+    $Message = $Message + " - cmdlet was cancelled"
     Write-Error $Message -ErrorAction Stop
 }
  
@@ -415,10 +415,10 @@ function Get-PCStorageDiagnosticInfo
                     $o.CSVNode = $AssocCSV.OwnerNode.Name
                     $o.CSVPath = $AssocCSV.SharedVolumeInfo.FriendlyVolumeName
                     if ($o.CSVPath.Length -ne 0) {
-                        $o.CSVVolume = $o.CSVPath.Split(“\”)[2]
+                        $o.CSVVolume = $o.CSVPath.Split("\")[2]
                     }     
-                    $AssocLike = $o.CSVPath+”\*”
-                    $AssocShares = $SmbShares | Where-Object Path –like $AssocLike 
+                    $AssocLike = $o.CSVPath+"\*"
+                    $AssocShares = $SmbShares | Where-Object Path -like $AssocLike 
                     $AssocShare = $AssocShares | Select-Object -First 1
                     If ($AssocShare) {
                         $o.ShareName = $AssocShare.Name
@@ -434,11 +434,11 @@ function Get-PCStorageDiagnosticInfo
             $AssocPool = Get-StoragePool -CimSession $AccessNode
             $AssocPool | Foreach-Object {
                 $AssocPName = $_.FriendlyName
-                Get-StoragePool -CimSession $AccessNode –FriendlyName $AssocPName | 
+                Get-StoragePool -CimSession $AccessNode -FriendlyName $AssocPName | 
                 Get-VirtualDisk -CimSession $AccessNode | Foreach-Object {
                     $AssocVD = $_
                     $Associations | Foreach-Object {
-                        If ($_.FriendlyName –eq $AssocVD.FriendlyName) { 
+                        If ($_.FriendlyName -eq $AssocVD.FriendlyName) { 
                             $_.PoolName = $AssocPName 
                             $_.VDResiliency = $AssocVD.ResiliencySettingName
                             $_.VDCopies = $AssocVD.NumberofDataCopies
@@ -733,6 +733,7 @@ function Get-PCStorageDiagnosticInfo
             } Catch {
                 ShowWarning("Not able to query extents for faulted virtual disks")
             } 
+
             Try {
                 $NonHealthyPools = Get-StoragePool | ? IsPrimordial -eq $false
                 foreach ($NonHealthyPool in $NonHealthyPools) {
@@ -795,9 +796,9 @@ function Get-PCStorageDiagnosticInfo
                     $o.CSVNode = $AssocCSV.OwnerNode.Name
                     $o.CSVPath = $AssocCSV.SharedVolumeInfo.FriendlyVolumeName
                     if ($o.CSVPath.Length -ne 0) {
-                        $o.CSVVolume = $o.CSVPath.Split(“\”)[2]
+                        $o.CSVVolume = $o.CSVPath.Split("\")[2]
                     }     
-                    $AssocLike = $o.CSVPath+”\*”
+                    $AssocLike = $o.CSVPath+"\*"
                     $AssocShares = $SmbShares | Where-Object Path -like $AssocLike 
                     $AssocShare = $AssocShares | Select-Object -First 1
                     If ($AssocShare) {
@@ -816,11 +817,11 @@ function Get-PCStorageDiagnosticInfo
                 $AssocPName = $_.FriendlyName
                 $AssocPOpStatus = $_.OperationalStatus
                 $AssocPHStatus = $_.HealthStatus
-                Get-StoragePool -CimSession $AccessNode –FriendlyName $AssocPName | 
+                Get-StoragePool -CimSession $AccessNode -FriendlyName $AssocPName | 
                 Get-VirtualDisk -CimSession $AccessNode | Foreach-Object {
                     $AssocVD = $_
                     $Associations | Foreach-Object {
-                        If ($_.FriendlyName –eq $AssocVD.FriendlyName) { 
+                        If ($_.FriendlyName -eq $AssocVD.FriendlyName) { 
                             $_.PoolName = $AssocPName 
                             $_.PoolOpStatus = $AssocPOpStatus
                             $_.PoolHealthStatus = $AssocPHStatus
@@ -1220,14 +1221,14 @@ function Get-PCStorageDiagnosticInfo
     }
 
     "`nPhysical disks by Media Type, Model and Firmware Version" 
-    $PhysicalDisks | Group-Object MediaType, Model, FirmwareVersion | Format-Table Count, @{Expression={$_.Name};Label="Media Type, Model, Firmware Version"} –AutoSize
+    $PhysicalDisks | Group-Object MediaType, Model, FirmwareVersion | Format-Table Count, @{Expression={$_.Name};Label="Media Type, Model, Firmware Version"} -AutoSize
 
  
     If ( -not (Get-Command *StorageEnclosure*) ) {
         ShowWarning("Storage Enclosure commands not available. See http://support.microsoft.com/kb/2913766/en-us")
     } else {
         "Storage Enclosures by Model and Firmware Version"
-        $StorageEnclosures | Group-Object Model, FirmwareVersion | Format-Table Count, @{Expression={$_.Name};Label="Model, Firmware Version"} –AutoSize
+        $StorageEnclosures | Group-Object Model, FirmwareVersion | Format-Table Count, @{Expression={$_.Name};Label="Model, Firmware Version"} -AutoSize
     }
     
     #
@@ -1303,7 +1304,7 @@ function Get-PCStorageDiagnosticInfo
     
     If ($SNVView) {
         "`n[Storage Node view]"
-        $SNVView | Format-Table -AutoSize @{Expression = {$_.StorageNode}; Label = "StorageNode"; Align = "Left"},
+        $SNVView | sort StorageNode,StorageEnclosure | Format-Table -AutoSize @{Expression = {$_.StorageNode}; Label = "StorageNode"; Align = "Left"},
         @{Expression = {$_.StoragePool}; Label = "StoragePool"; Align = "Left"},
         @{Expression = {$_.MPIOPolicy}; Label = "MPIOPolicy"; Align = "Left"},
         @{Expression = {$_.MPIOState}; Label = "MPIOState"; Align = "Left"},
@@ -1317,7 +1318,7 @@ function Get-PCStorageDiagnosticInfo
     "Physical disks by Enclosure, Media Type and Health Status, with total and unallocated space" 
     "Note: Sizes shown in gigabytes (GB)"
 
-    $PDStatus = $PhysicalDisks | Where-Object EnclosureNumber –ne $null | 
+    $PDStatus = $PhysicalDisks | Where-Object EnclosureNumber -ne $null | 
     Sort-Object EnclosureNumber, MediaType, HealthStatus |  
     Group-Object EnclosureNumber, MediaType, HealthStatus | 
     Select-Object Count, TotalSize, Unalloc, 
@@ -1371,8 +1372,8 @@ function Get-PCStorageDiagnosticInfo
         "Please wait for $PerfSamples seconds while performance samples are collected."
 
         $PerfNodes = $ClusterNodes | Where-Object State -like "Up" | Foreach-Object {$_.Name}
-        $PerfCounters = “reads/sec”, “writes/sec” , “read latency”, “write latency” 
-        $PerfItems = $PerfNodes | Foreach-Object { $Node=$_; $PerfCounters | Foreach-Object { (”\\”+$Node+”\Cluster CSV File System(*)\”+$_) } }
+        $PerfCounters = "reads/sec","writes/sec","read latency","write latency"
+        $PerfItems = $PerfNodes | Foreach-Object { $Node=$_; $PerfCounters | Foreach-Object { ("\\"+$Node+"\Cluster CSV File System(*)\"+$_) } }
         $PerfRaw = Get-Counter -Counter $PerfItems -SampleInterval 1 -MaxSamples $PerfSamples
 
         "Collected $PerfSamples seconds of raw performance counters. Processing...`n"
@@ -1390,8 +1391,8 @@ function Get-PCStorageDiagnosticInfo
                 Write-Progress -Activity "Processing performance samples" -PercentComplete $Progress
 
                 $_.CounterSamples | Foreach-Object { 
-                    $DetailRow = “” | Select-Object Time, Pool, Owner, Node, Volume, Share, Counter, Value
-                    $Split = $_.Path.Split(“\”)
+                    $DetailRow = "" | Select-Object Time, Pool, Owner, Node, Volume, Share, Counter, Value
+                    $Split = $_.Path.Split("\")
                     $DetailRow.Time = $TimeStamp
                     $DetailRow.Node = $Split[2]
                     $DetailRow.Volume = $_.InstanceName
@@ -1405,11 +1406,11 @@ function Get-PCStorageDiagnosticInfo
             $PerfDetail = $PerfDetail | Sort-Object Volume
 
             $Last = $PerfDetail.Count - 1
-            $Volume = “”
+            $Volume = ""
     
             $PerfVolume = 0 .. $Last | Foreach-Object {
 
-                If ($Volume –ne $PerfDetail[$_].Volume) {
+                If ($Volume -ne $PerfDetail[$_].Volume) {
                     $Volume = $PerfDetail[$_].Volume
                     $Pool = CSVToPool ($Volume)
                     $Owner = CSVToNode ($Volume)
@@ -1432,17 +1433,17 @@ function Get-PCStorageDiagnosticInfo
                 $Value = $PerfDetail[$_].Value
 
                 Switch ($PerfDetail[$_].Counter) {
-                    “reads/sec” { $ReadIOPS += $Value }
-                    “writes/sec” { $WriteIOPS += $Value }
-                    “read latency” { $ReadLatency += $Value; If ($Value -gt 0) {$NonZeroRL++} }
-                    “write latency” { $WriteLatency += $Value; If ($Value -gt 0) {$NonZeroWL++} }
-                    default { Write-Warning “Invalid counter” }
+                    "reads/sec" { $ReadIOPS += $Value }
+                    "writes/sec" { $WriteIOPS += $Value }
+                    "read latency" { $ReadLatency += $Value; If ($Value -gt 0) {$NonZeroRL++} }
+                    "write latency" { $WriteLatency += $Value; If ($Value -gt 0) {$NonZeroWL++} }
+                    default { Write-Warning ?Invalid counter? }
                 }
 
                 If ($_ -eq $Last) { 
                     $EndofVolume = $true 
                 } else { 
-                    If ($Volume –ne $PerfDetail[$_+1].Volume) { 
+                    If ($Volume -ne $PerfDetail[$_+1].Volume) { 
                         $EndofVolume = $true 
                     } else { 
                         $EndofVolume = $false 
@@ -1450,7 +1451,7 @@ function Get-PCStorageDiagnosticInfo
                 }
 
                 If ($EndofVolume) {
-                    $VolumeRow = “” | Select-Object Pool, Volume, Share, ReadIOPS, WriteIOPS, TotalIOPS, ReadLatency, WriteLatency, TotalLatency
+                    $VolumeRow = "" | Select-Object Pool, Volume, Share, ReadIOPS, WriteIOPS, TotalIOPS, ReadLatency, WriteLatency, TotalLatency
                     $VolumeRow.Pool = $Pool
                     $VolumeRow.Volume = $Volume
                     $VolumeRow.Share = $Share
@@ -1490,7 +1491,7 @@ function Get-PCStorageDiagnosticInfo
             "Storage Performance per Volume, sorted by Latency"
             "Notes: Latencies in milliseconds (ms). * means multiple shares on that volume`n"
 
-            $PerfVolume | Sort-Object TotalLatency -Descending | Select-Object * -ExcludeProperty TotalL* | Format-Table –AutoSize 
+            $PerfVolume | Sort-Object TotalLatency -Descending | Select-Object * -ExcludeProperty TotalL* | Format-Table -AutoSize 
         }
     }
 
