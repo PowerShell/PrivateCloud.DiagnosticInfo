@@ -84,78 +84,78 @@ Function Compare-ModuleVersion {
 
 function Get-PCStorageDiagnosticInfo
 {
-[CmdletBinding(DefaultParameterSetName="Write")]
-[OutputType([String])]
+    [CmdletBinding(DefaultParameterSetName="Write")]
+    [OutputType([String])]
 
-param(
-    [parameter(ParameterSetName="Write", Position=0, Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [string] $WriteToPath = $($env:userprofile + "\HealthTest\"),
+    param(
+        [parameter(ParameterSetName="Write", Position=0, Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $WriteToPath = $($env:userprofile + "\HealthTest\"),
 
-    [parameter(ParameterSetName="Write", Position=1, Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [string] $ClusterName = ".",
+        [parameter(ParameterSetName="Write", Position=1, Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $ClusterName = ".",
 
-    [parameter(ParameterSetName="Write", Position=2, Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [string] $ZipPrefix = $($env:userprofile + "\HealthTest"),
+        [parameter(ParameterSetName="Write", Position=2, Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $ZipPrefix = $($env:userprofile + "\HealthTest"),
 
-    [parameter(ParameterSetName="Write", Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [bool] $IncludeEvents = $true,
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $IncludeEvents = $true,
     
-    [parameter(ParameterSetName="Write", Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [bool] $IncludePerformance = $false,
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $IncludePerformance = $false,
 
-    [parameter(ParameterSetName="Write", Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [bool] $IncludeReliabilityCounters = $false,
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $IncludeReliabilityCounters = $false,
 
-    [parameter(Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [switch] $MonitoringMode,
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [switch] $MonitoringMode,
 
-    [parameter(ParameterSetName="Write", Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [int] $ExpectedNodes,
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedNodes,
 
-    [parameter(ParameterSetName="Write", Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [int] $ExpectedNetworks,
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedNetworks,
 
-    [parameter(ParameterSetName="Write", Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [int] $ExpectedVolumes,
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedVolumes,
 
-    [parameter(ParameterSetName="Write", Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [int] $ExpectedDedupVolumes,
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedDedupVolumes,
 
-    [parameter(ParameterSetName="Write", Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [int] $ExpectedPhysicalDisks,
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedPhysicalDisks,
 
-    [parameter(ParameterSetName="Write", Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [int] $ExpectedPools,
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedPools,
     
-    [parameter(ParameterSetName="Write", Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [int] $ExpectedEnclosures,
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedEnclosures,
 
-    [parameter(ParameterSetName="Write", Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [int] $HoursOfEvents = 48,
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $HoursOfEvents = 48,
 
-    [parameter(ParameterSetName="Read", Mandatory=$true)]
-    [ValidateNotNullOrEmpty()]
-    [string] $ReadFromPath = "",
+        [parameter(ParameterSetName="Read", Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string] $ReadFromPath = "",
 
-    [parameter(ParameterSetName="Write", Mandatory=$false)]
-    [ValidateNotNullOrEmpty()]
-    [bool] $IncludeLiveDump = $false
-    )
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $IncludeLiveDump = $false
+        )
 
     #
     # Set strict mode to check typos on variable and property names
@@ -1903,6 +1903,309 @@ param(
     }
 }
 
+##
+# PCStorageDiagnosticInfo Reporting
+##
+
+enum ReportLevelType
+{
+    Summary
+    Standard
+    Full
+}
+
+# Report Types. Ordering here is reflects output ordering when multiple reports are specified.
+
+enum ReportType
+{
+    All = 0
+    SSBCache = 1
+}
+
+function Get-PCStorageReportSSBCache
+{
+    param(
+        [parameter(Position=0, Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $Path,
+
+        [parameter(Mandatory=$true)]
+        [ReportLevelType]
+        $ReportLevel
+    )
+
+    BEGIN {
+        $csvf = $null
+       
+    }
+
+    <#
+    These are the possible DiskStates
+
+    typedef enum
+    {
+        CacheDiskStateUnknown                   = 0,
+        CacheDiskStateConfiguring               = 1,
+        CacheDiskStateInitialized               = 2,
+        CacheDiskStateInitializedAndBound       = 3,     <- expected normal operational
+        CacheDiskStateDraining                  = 4,     <- expected during RW->RO change (waiting for dirty pages -> 0)
+        CacheDiskStateDisabling                 = 5,
+        CacheDiskStateDisabled                  = 6,     <- expected post-disable of S2D
+        CacheDiskStateMissing                   = 7,
+        CacheDiskStateOrphanedWaiting           = 8,
+        CacheDiskStateOrphanedRecovering        = 9,
+        CacheDiskStateFailedMediaError          = 10,
+        CacheDiskStateFailedProvisioning        = 11,
+        CacheDiskStateReset                     = 12,
+        CacheDiskStateRepairing                 = 13,
+        CacheDiskStateIneligibleDataPartition   = 2000,
+        CacheDiskStateIneligibleNotGPT          = 2001,
+        CacheDiskStateIneligibleNotEnoughSpace  = 2002,
+        CacheDiskStateIneligibleUnsupportedSystem = 2003,
+        CacheDiskStateIneligibleExcludedFromS2D = 2004,
+        CacheDiskStateIneligibleForS2D          = 2999,
+        CacheDiskStateSkippedBindingNoFlash     = 3000,
+        CacheDiskStateIgnored                   = 3001,
+        CacheDiskStateNonHybrid                 = 3002,
+        CacheDiskStateInternalErrorConfiguring  = 9000,
+        CacheDiskStateMarkedBad                 = 9001,
+        CacheDiskStateMarkedMissing             = 9002,
+        CacheDiskStateInStorageMaintenance      = 9003   <- expected during FRU/maint
+    }
+    CacheDiskState;
+    #>
+
+    PROCESS {
+
+        $csvf = New-TemporaryFile
+
+        dir $Path\*cluster.log | sort -Property BaseName |% {
+
+            $node = "<unknown>"
+            if ($_.BaseName -match "^(.*)_cluster$") {
+                $node = $matches[1]
+            }
+
+            Write-Output ("-"*40) "Node: $node"
+
+
+            ##
+            # Parse cluster log for the SBL Disk section
+            ## 
+
+            $sr = [System.IO.StreamReader]$_.FullName
+
+            $in = $false
+            $parse = $false
+            $(do {
+                $l = $sr.ReadLine()
+        
+                # Heuristic ...
+                # SBL Disks comes before System
+
+                if ($in) {
+                    # in section, blank line terminates
+                    if ($l -notmatch '^\s*$') {
+                        $l
+                    } else {
+                        # parse was good
+                        $parse = $true
+                        break
+                    }
+                } elseif ($l -match '^\[=== SBL Disks') {
+                    $in = $true
+                } elseif ($l -match '^\[=== System') {
+                    break
+                }
+        
+            } while (-not $sr.EndOfStream)) > $csvf
+
+            ##
+            # With a good parse, provide commentary
+            ##
+
+            if ($parse) {
+                $d = import-csv $csvf
+
+                ##
+                # Table of raw data, friendly cache device numbering
+                ##
+
+                $idmap = @{}
+                $d |% {
+                    $idmap[$_.DiskId] = $_.DeviceNumber
+                }
+
+                if ($ReportLevel -eq [ReportLevelType]::Full) {
+                    $d | sort IsSblCacheDevice,CacheDeviceId,DiskState | ft -AutoSize DiskState,DiskId,DeviceNumber,@{
+                        Label = 'CacheDeviceNumber'; Expression = {
+                            if ($_.IsSblCacheDevice -eq 'true') {
+                                '= cache'
+                            } elseif ($idmap.ContainsKey($_.CacheDeviceId)) {
+                                $idmap[$_.CacheDeviceId]
+                            } elseif ($_.CacheDeviceId -eq '{00000000-0000-0000-0000-000000000000}') {
+                                "= unbound"
+                            } else {
+                                # should be DiskStateMissing or OrphanedWaiting? Check live.
+                                "= not present $($_.CacheDeviceId)"
+                            }
+                        }
+                    },HasSeekPenalty,PathId,BindingAttributes,DirtyPages
+                }
+
+                ##
+                # Now do basic testing of device counts
+                ##
+
+                $dcache = $d |? IsSblCacheDevice -eq 'true'
+                $dcap = $d |? IsSblCacheDevice -ne 'true'
+
+                Write-Output "Device counts: cache $($dcache.count) capacity $($dcap.count)"
+        
+                ##
+                # Test cache bindings if we do have cache present
+                ##
+
+                if ($dcache) {
+
+                    # first uneven check, the basic count case
+                    $uneven = $false
+                    if ($dcap.count % $dcache.count) {
+                        $uneven = $true
+                        Write-Warning "Capacity device count does not evenly distribute to cache devices"
+                    }
+
+                    # now look for unbound devices
+                    $unbound = $dcap |? CacheDeviceId -eq '{00000000-0000-0000-0000-000000000000}'
+                    if ($unbound) {
+                        Write-Warning "There are $(@($unbound).count) unbound capacity device(s)"
+                    }
+
+                    # unbound devices give us the second uneven case
+                    if (-not $uneven -and ($dcap.count - @($unbound).count) % $dcache.count) {
+                        $uneven = $true
+                    }
+
+                    $gdev = $dcap |? DiskState -eq 'CacheDiskStateInitializedAndBound' | group -property CacheDeviceId
+
+                    if (@($gdev).count -ne $dcache.count) {
+                        Write-Warning "Not all cache devices in use"
+                    }
+
+                    $gdist = $gdev |% { $_.count } | group
+
+                    # in any given round robin binding of devices, there should be at most two counts; n and n-1
+
+                    # single ratio
+                    if (@($gdist).count -eq 1) {
+                        Write-Output "Binding ratio is even: 1:$($gdist.name)"
+                    } else {
+                        # group names are n in the 1:n binding ratios
+                        $delta = [math]::Abs([int]$gdist[0].name - [int]$gdist[1].name)
+
+                        if ($delta -eq 1 -and $uneven) {
+                            Write-Output "Binding ratios are as expected for uneven device ratios"
+                        } else {
+                            Write-Warning "Binding ratios are uneven"
+                        }
+
+                        # form list of group sizes
+                        $s = $($gdist |% {
+                            "1:$($_.name) ($($_.count) total)"
+                        }) -join ", "
+
+                        Write-Output "Groups: $s"
+                    }
+                }
+
+                ##
+                # Provide summary of diskstate if more than one is present in the results
+                ##
+
+                $g = $d | group -property DiskState
+
+                if (@($g).count -ne 1) {
+                    write-output "Disk State Summary:"
+                    $g | sort -property Name | ft @{ Label = 'DiskState'; Expression = { $_.Name}},@{ Label = "Number of Disks"; Expression = { $_.Count }}
+                } else {
+                    write-output "All disks are in $($g.name)"
+                }
+            }
+        }
+    }
+
+    END {
+
+        del $csvf
+    }
+}
+
+<#
+.SYNOPSIS
+    Show diagnostic reports based on information collected from Get-PCStorageDiagnosticInfo.
+
+.DESCRIPTION
+    Show diagnostic reports based on information collected from Get-PCStorageDiagnosticInfo.    
+
+.PARAMETER Path
+    Path to the the logs produced by Get-PCStorageDiagnosticInfo. This must be the un-zipped report (Expand-Archive).
+
+.PARAMETER ReportLevel
+    Controls the level of detail in the report. By default standard reports are shown. Full detail may be extensive.
+
+.PARAMETER Report
+    Specifies individual reports to produce. By default all reports will be shown.
+
+.EXAMPLE
+    Get-PCStorageTriageReport -Path C:\log -Report Full
+
+#>
+
+function Get-PCStorageReport
+{
+    [CmdletBinding()]
+    param(
+        [parameter(Position=0, Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $Path,
+
+        [parameter(Mandatory=$false)]
+        [ReportLevelType]
+        $ReportLevel = [ReportLevelType]::Standard,
+
+        [parameter(Mandatory=$false)]
+        [ReportType[]]
+        $Report = [ReportType]::All
+    )
+
+    if (-not (Test-Path $Path)) {
+        Write-Error "Path is not accessible. Please check and try again: $Path"
+        return
+    }
+
+    # Produce all reports?
+    if ($Report.Count -eq 1 -and $Report[0] -eq [ReportType]::All) {
+        $Report = [ReportType].GetEnumValues() |? { $_ -ne [ReportType]::All } | sort
+    }
+
+    foreach ($r in $Report) {
+
+        Write-Output "Report: $r"
+        Write-Output ("*"*40)
+
+        switch ($r) {
+            { $_ -eq [ReportType]::SSBCache } {
+                Get-PCStorageReportSSBCache $Path -ReportLevel:$ReportLevel
+            }
+            default {
+                throw "Internal Error: unknown report type $r"
+            }
+        }
+    }
+}
+
 <#
 .SYNOPSIS
     Collect All WOSS related logs/events/... for Diagonistic
@@ -2598,10 +2901,8 @@ function Get-PCAzureStackACSDiagnosticInfo
     Write-Verbose "Log Collector completed."
 }
 
-
 New-Alias -Name getpcsdi -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
 New-Alias -Name Test-StorageHealth -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
 New-Alias -Name getacslog -Value Get-PCAzureStackACSDiagnosticInfo -Description "Collects diagnostic information of Azure Stack Storage"
 
-Export-ModuleMember -Alias * -Function Get-PCStorageDiagnosticInfo, Get-PCAzureStackACSDiagnosticInfo
-
+Export-ModuleMember -Alias * -Function Get-PCStorageDiagnosticInfo,Get-PCAzureStackACSDiagnosticInfo,Get-PCStorageReport
