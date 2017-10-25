@@ -3093,4 +3093,4 @@ New-Alias -Name getpcsdi -Value Get-PCStorageDiagnosticInfo -Description "Collec
 New-Alias -Name Test-StorageHealth -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
 New-Alias -Name getacslog -Value Get-PCAzureStackACSDiagnosticInfo -Description "Collects diagnostic information of Azure Stack Storage"
 
-Export-ModuleMember -Alias * -Function Get-PCStorageDiagnosticInfo,Get-PCAzureStackACSDiagnosticInfo,Get-PCStorageReport
+Export-ModuleMember -Alias * -Function Get-PCStorageDiagnosticInfo,Get-PCAzureStackACSDiagnosticInfo,Get-PCStorageRepor
