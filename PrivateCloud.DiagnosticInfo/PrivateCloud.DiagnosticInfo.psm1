@@ -2236,8 +2236,7 @@ function Get-PCStorageReportStorageLatency
     }
 
     # acquire the physicaldisks datasource
-    # $PhysicalDisks = Import-Clixml ($Path + "GetPhysicalDisk.XML")
-    $PhysicalDisks = Import-Clixml ("x:\plex\GetPhysicalDisk.XML")
+    $PhysicalDisks = Join-Path $Path "GetPhysicalDisk.XML"
 
     # hash by object id
     # this is an example where a formal datasource class/api could be useful
