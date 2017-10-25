@@ -2283,12 +2283,11 @@ function Get-PCStorageReportStorageLatency
 
             $dev = $_
 
-
             # the bucket labels are in the hash in the same order as the values
             # and use to make an object for table rendering
             $vprop = @{}
             $weight = 0
-            foreach ($i in 0..($buckhash[$label].count - 1)) { 
+            foreach ($i in 0..($bucklabels.count - 1)) { 
                 $v = $buckhash[$_][$i]
                 if ($v) {
                     $weight = $i
@@ -2319,7 +2318,6 @@ function Get-PCStorageReportStorageLatency
         }
     }
 }
-
 
 <#
 .SYNOPSIS
