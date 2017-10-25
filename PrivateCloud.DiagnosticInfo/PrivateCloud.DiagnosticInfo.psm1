@@ -1920,6 +1920,7 @@ enum ReportType
 {
     All = 0
     SSBCache = 1
+    StorageLatency = 2
 }
 
 function Get-PCStorageReportSSBCache
@@ -1936,8 +1937,8 @@ function Get-PCStorageReportSSBCache
     )
 
     BEGIN {
-        $csvf = $null
-       
+
+        $csvf = New-TemporaryFile
     }
 
     <#
@@ -1977,8 +1978,6 @@ function Get-PCStorageReportSSBCache
     #>
 
     PROCESS {
-
-        $csvf = New-TemporaryFile
 
         dir $Path\*cluster.log | sort -Property BaseName |% {
 
@@ -2141,6 +2140,187 @@ function Get-PCStorageReportSSBCache
     }
 }
 
+function Get-PCStorageReportStorageLatency
+{
+
+    param(
+        [parameter(Position=0, Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $Path,
+
+        [parameter(Mandatory=$true)]
+        [ReportLevelType]
+        $ReportLevel
+    )
+
+    $j = @()
+
+    dir $Path\*_UnfilteredEvent_Microsoft-Windows-Storage-Storport-Operational.EVTX | sort -Property BaseName |% {
+
+        $file = $_.FullName
+        $node = "<unknown>"
+        if ($_.BaseName -match "^(.*)_UnfilteredEvent_Microsoft-Windows-Storage-Storport-Operational$") {
+            $node = $matches[1]
+        }
+
+        # parallelize processing of per-node event logs
+
+        $j += start-job -Name $node -ArgumentList $($ReportLevel -eq [ReportLevelType]::Full) {
+
+            param($dofull)
+
+            $buckhash = @{}
+            $bucklabels = $null
+
+            $evs = @()
+
+            # get all storport 505 events; there is a label field at position 6 which names
+            # the integer fields in the following positions. these fields countain counts
+            # of IOs in the given latency buckets. we assume all events have the same labelling
+            # scheme.
+            #
+            # 1. count the number of sample periods in which a given bucket had any io.
+            # 2. emit onto the pipeline the hash of counted periods and events which have
+            #    io in the last bucket
+            #
+            # note: getting fields by position is not ideal, but getting them by name would
+            # appear to require pushing through an XML rendering and hashing. this would be
+            # less efficient and this is already somewhat time consuming.
+        
+            Get-WinEvent -Path $using:file |? Id -eq 505 |% {
+
+                # physical disk device id at position 4
+                $dev = [string] $_.Properties[4].Value
+                if ($bucklabels -eq $null) { $bucklabels = $_.Properties[6].Value -split ',\s+' }
+                $buckvalues = $_.Properties[7..11].Value
+                if ($bucklabels.count -ne $buckvalues.count) { throw "misparsed 505 event latency buckets" }
+
+                if (-not $buckhash.ContainsKey($dev)) {
+                    # new device
+                    $buckhash[$dev] = $buckvalues |% { if ($_) { 1 } else { 0 }}
+                } else {
+                    # increment device bucket hit counts
+                    foreach ($i in 0..($buckvalues.count - 1)) {
+                        if ($buckvalues[$i]) { $buckhash[$dev][$i] += 1}
+                    }
+                }
+
+                if ($dofull -and $buckvalues[-1] -ne 0) {
+                    $evs += $_
+                }
+            }
+
+            # return label schema, counting hash, and events
+            # labels must be en-listed to pass the pipeline as a list as opposed to individual values
+            # events must be cracked into plain objects to survive deserialization through the session
+            ,$bucklabels
+            $buckhash
+            $evs |% {
+
+                # base object with time/device
+                $o = New-Object psobject -Property @{
+                    'Time' = $_.TimeCreated
+                    'Device' = [string] $_.Properties[4].Value
+                }
+
+                # add on the named latency buckets
+                foreach ($i in 0..($bucklabels.count -1)) {
+                    $o | Add-Member -NotePropertyName $bucklabels[$i] -NotePropertyValue $_.Properties[7 + $i].Value
+                }
+
+                # and emit
+                $o
+            }
+        }
+    }
+
+    # acquire the physicaldisks datasource
+    # $PhysicalDisks = Import-Clixml ($Path + "GetPhysicalDisk.XML")
+    $PhysicalDisks = Import-Clixml ("x:\plex\GetPhysicalDisk.XML")
+
+    # hash by object id
+    # this is an example where a formal datasource class/api could be useful
+    $PhysicalDisksTable = @{}
+    $PhysicalDisks |% {
+        if ($_.ObjectId -match 'PD:{(.*)}') {
+            $PhysicalDisksTable[$matches[1]] = $_
+        }
+    }
+
+    # we will join the latency information with this set of physicaldisk attributes
+    $pdattr = 'FriendlyName','SerialNumber','MediaType','OperationalStatus','HealthStatus','Usage'
+
+    $pdattrs_tab = @{ Label = 'FriendlyName'; Expression = { $PhysicalDisksTable[$_.Device].FriendlyName }},
+                @{ Label = 'SerialNumber'; Expression = { $PhysicalDisksTable[$_.Device].SerialNumber }},
+                @{ Label = 'MediaType'; Expression = { $PhysicalDisksTable[$_.Device].MediaType }},
+                @{ Label = 'Usage'; Expression = { $PhysicalDisksTable[$_.Device].Usage }},
+                @{ Label = 'OperationalStatus'; Expression = { $PhysicalDisksTable[$_.Device].OperationalStatus }},
+                @{ Label = 'HealthStatus'; Expression = { $PhysicalDisksTable[$_.Device].HealthStatus }}
+
+    # joined physicaldisk attributes for the event view
+    # since status' are not known at the time of the event, omit for brevity/accuracy
+    $pdattrs_ev = @{ Label = 'FriendlyName'; Expression = { $PhysicalDisksTable[$_.Device].FriendlyName }},
+                @{ Label = 'SerialNumber'; Expression = { $PhysicalDisksTable[$_.Device].SerialNumber }},
+                @{ Label = 'MediaType'; Expression = { $PhysicalDisksTable[$_.Device].MediaType }},
+                @{ Label = 'Usage'; Expression = { $PhysicalDisksTable[$_.Device].Usage }}
+            
+    # now wait for the event processing jobs and emit the per-node reports
+    $j | wait-job| sort name |% {
+
+        ($bucklabels, $buckhash, $evs) = receive-job $_
+        $node = $_.Name
+        remove-job $_
+
+        Write-Output ("-"*40) "Node: $node" "`nSample Period Count Report"
+
+        # note: these reports are filtered to only show devices in the pd table
+        # this leaves boot device and others unreported until we have a datasource
+        # to inject them.
+    
+        # output the table of device latency bucket counts
+        $buckhash.Keys |? { $PhysicalDisksTable.ContainsKey($_) } |% {
+
+            $dev = $_
+
+
+            # the bucket labels are in the hash in the same order as the values
+            # and use to make an object for table rendering
+            $vprop = @{}
+            $weight = 0
+            foreach ($i in 0..($buckhash[$label].count - 1)) { 
+                $v = $buckhash[$_][$i]
+                if ($v) {
+                    $weight = $i
+                    $vprop[$bucklabels[$i]] = $v
+                }
+            }
+
+            $vprop['Device'] = $dev
+            $vprop['Weight'] = $weight
+
+            new-object psobject -Property $vprop
+
+        } | sort Weight,@{ Expression = {$PhysicalDisksTable[$_.Device].Usage}} | ft -AutoSize (,'Device' + $pdattrs_tab  + $bucklabels)
+
+        # for the full report, output the high bucket events
+        # note: enumerations do not appear to be available in job sessions, otherwise it would clearly be more efficient
+        #  to avoid geneating the events in the first place.
+        if ($ReportLevel -eq [ReportLevelType]::Full) {
+
+            Write-Output "`nHighest Bucket ($($bucklabels[-1])) Latency Events"
+
+            $n = 0
+            $evs |? { $PhysicalDisksTable.ContainsKey($_.Device) } |% { $n += 1; $_ } | sort Time -Descending | ft -AutoSize ('Time','Device' + $pdattrs_ev + $bucklabels)
+
+            if ($n -eq 0) {
+                Write-Output "-> No Events"
+            }
+        }
+    }
+}
+
+
 <#
 .SYNOPSIS
     Show diagnostic reports based on information collected from Get-PCStorageDiagnosticInfo.
@@ -2192,17 +2372,25 @@ function Get-PCStorageReport
 
     foreach ($r in $Report) {
 
+        Write-Output ("*"*80)
         Write-Output "Report: $r"
-        Write-Output ("*"*40)
+
+        $t0 = Get-Date
 
         switch ($r) {
             { $_ -eq [ReportType]::SSBCache } {
                 Get-PCStorageReportSSBCache $Path -ReportLevel:$ReportLevel
             }
+            { $_ -eq [ReportType]::StorageLatency } {
+                Get-PCStorageReportStorageLatency $Path -ReportLevel:$ReportLevel
+            }
             default {
                 throw "Internal Error: unknown report type $r"
             }
         }
+
+        $td = (Get-Date) - $t0
+        Write-Output ("Report $r took {0:N2} seconds" -f $td.TotalSeconds)
     }
 }
 
