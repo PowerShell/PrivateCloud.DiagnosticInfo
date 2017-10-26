@@ -1537,7 +1537,7 @@ function Get-PCStorageDiagnosticInfo
             $NodePath = [System.IO.Path]::GetTempPath()
             $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)
 
-            $LogPatterns = 'Storage','SMB','Failover','VHDMP','Hyper-V','ResumeKeyFilter','Witness','PnP','Space','REFS','NTFS','storport','disk','Kernel' | Foreach-Object { "*$_*" }
+            $LogPatterns = 'Storage','SMB','Failover','VHDMP','Hyper-V','ResumeKeyFilter','Witness','PnP','Space','REFS','NTFS','storport','ClusterAware','disk','Kernel' | Foreach-Object { "*$_*" }
             $LogPatterns += 'System','Application'
 
             #$Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node | Where-Object LogName -NotLike "*Diag*" 
