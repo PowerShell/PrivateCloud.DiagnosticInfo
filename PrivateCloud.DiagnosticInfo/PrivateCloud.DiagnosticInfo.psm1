@@ -2190,11 +2190,25 @@ function Get-PCStorageReportStorageLatency
         
             Get-WinEvent -Path $using:file |? Id -eq 505 |% {
 
-                # physical disk device id at position 4
-                $dev = [string] $_.Properties[4].Value
-                if ($bucklabels -eq $null) { $bucklabels = $_.Properties[6].Value -split ',\s+' }
-                $buckvalues = $_.Properties[7..11].Value
-                if ($bucklabels.count -ne $buckvalues.count) { throw "misparsed 505 event latency buckets" }
+                # must cast through the XML representation of the event to get named properties
+                # hash them
+                $x = ([xml]$_.ToXml()).Event.EventData.Data
+                $xh = @{}
+                $x |% {
+                    $xh[$_.Name] = $_.'#text'
+                }
+
+                # physical disk device id - string the curly to normalize later matching
+                $dev = [string] $xh['ClassDeviceGuid']
+                if ($dev -match '{(.*)}') {
+                    $dev = $matches[1]
+                }
+
+                # only need to get the bucket label schema once
+                # the number of labels and the number of bucket counts should be equal
+                if ($bucklabels -eq $null) { $bucklabels = $xh['IoLatencyBuckets'] -split ',\s+' }
+                $buckvalues = $xh.Keys |? { $_ -like 'BucketIoCount*' } | sort |% { [int] $xh[$_] }
+                if ($bucklabels.count -ne $buckvalues.count) { throw "misparsed 505 event latency buckets: labels $($bucklabels.count) values $($buckvalues.count)" }
 
                 if (-not $buckhash.ContainsKey($dev)) {
                     # new device
@@ -2207,36 +2221,37 @@ function Get-PCStorageReportStorageLatency
                 }
 
                 if ($dofull -and $buckvalues[-1] -ne 0) {
-                    $evs += $_
+                    $evs += $(
+
+                        # events must be cracked into plain objects to survive deserialization through the session
+
+                        # base object with time/device
+                        $o = New-Object psobject -Property @{
+                            'Time' = $_.TimeCreated
+                            'Device' = [string] $_.Properties[4].Value
+                        }
+
+                        # add on the named latency buckets
+                        foreach ($i in 0..($bucklabels.count -1)) {
+                            $o | Add-Member -NotePropertyName $bucklabels[$i] -NotePropertyValue $buckvalues[$i]
+                        }
+
+                        # and emit
+                        $o
+                    )
                 }
             }
 
             # return label schema, counting hash, and events
             # labels must be en-listed to pass the pipeline as a list as opposed to individual values
-            # events must be cracked into plain objects to survive deserialization through the session
             ,$bucklabels
             $buckhash
-            $evs |% {
-
-                # base object with time/device
-                $o = New-Object psobject -Property @{
-                    'Time' = $_.TimeCreated
-                    'Device' = [string] $_.Properties[4].Value
-                }
-
-                # add on the named latency buckets
-                foreach ($i in 0..($bucklabels.count -1)) {
-                    $o | Add-Member -NotePropertyName $bucklabels[$i] -NotePropertyValue $_.Properties[7 + $i].Value
-                }
-
-                # and emit
-                $o
-            }
+            $evs 
         }
     }
 
     # acquire the physicaldisks datasource
-    $PhysicalDisks = Join-Path $Path "GetPhysicalDisk.XML"
+    $PhysicalDisks = Import-Clixml (Join-Path $Path "GetPhysicalDisk.XML")
 
     # hash by object id
     # this is an example where a formal datasource class/api could be useful
@@ -2309,7 +2324,9 @@ function Get-PCStorageReportStorageLatency
             Write-Output "`nHighest Bucket ($($bucklabels[-1])) Latency Events"
 
             $n = 0
-            $evs |? { $PhysicalDisksTable.ContainsKey($_.Device) } |% { $n += 1; $_ } | sort Time -Descending | ft -AutoSize ('Time','Device' + $pdattrs_ev + $bucklabels)
+            if ($evs -ne $null) {
+                $evs |? { $PhysicalDisksTable.ContainsKey($_.Device) } |% { $n += 1; $_ } | sort Time -Descending | ft -AutoSize ('Time','Device' + $pdattrs_ev + $bucklabels)
+            }
 
             if ($n -eq 0) {
                 Write-Output "-> No Events"
