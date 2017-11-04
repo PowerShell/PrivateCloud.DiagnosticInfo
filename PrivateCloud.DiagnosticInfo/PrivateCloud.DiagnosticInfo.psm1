@@ -1764,7 +1764,7 @@ function Get-PCStorageDiagnosticInfo
             $ClusterNodes | Where-Object State -like "Up" | Foreach-Object {
 
                 $Progress = ( $Count1 / $Total1 ) * 100
-                Write-Progress -Activity "Gathering System Info and Minidump files" -PercentComplete $Progress
+                Write-Progress -Activity "Gathering System Info, Reports and Minidump files" -PercentComplete $Progress
                 $Node = $_.Name + "." + $Cluster.Domain
 
                 # Gather SYSTEMINFO.EXE output for a given node
@@ -1806,9 +1806,11 @@ function Get-PCStorageDiagnosticInfo
 
                 # Copy minidump files from the node
                 $RepFiles | Foreach-Object {
-                    $LocalFile = $Path + $Node + "_" + $_.Name
-                    Try { Copy-Item $_.FullName $LocalFile }
-                    Catch { ShowWarning("Could not copy report file $_.FullName") }
+                    if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
+                        $LocalFile = $Path + $Node + "_" + $_.Name
+                        Try { Copy-Item $_.FullName $LocalFile }
+                        Catch { ShowWarning("Could not copy report file $_.FullName") }
+                    }
                 }
 
                 $Count1++
