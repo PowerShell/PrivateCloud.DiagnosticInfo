@@ -1754,7 +1754,7 @@ function Get-PCStorageDiagnosticInfo
         $ErrorSummary | Export-Clixml ($Path + "GetAllErrors.XML")
         Write-Progress -Activity "Processing Event Logs - Summary" -Completed
 
-        "Gathering System Info and Minidump files ..." 
+        "Gathering System Info, Reports and Minidump files ..." 
 
         $Count1 = 0
         $Total1 = NCount($ClusterNodes | Where-Object State -like "Up")
@@ -1798,6 +1798,18 @@ function Get-PCStorageDiagnosticInfo
                     Try { Copy-Item $_.FullName $LocalFile } 
                     Catch { ShowWarning("Could not copy minidump file $_.FullName") }
                 }        
+
+                Try {$NodePath = Invoke-Command -ComputerName $Node { Get-Content Env:\SystemRoot }
+                     $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)+"\Cluster\Reports\*.*"
+                     $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
+                Catch { $RepFiles = ""; ShowWarning("Unable to get reports for node $Node") }
+
+                # Copy minidump files from the node
+                $RepFiles | Foreach-Object {
+                    $LocalFile = $Path + $Node + "_" + $_.Name
+                    Try { Copy-Item $_.FullName $LocalFile }
+                    Catch { ShowWarning("Could not copy report file $_.FullName") }
+                }
 
                 $Count1++
             }
