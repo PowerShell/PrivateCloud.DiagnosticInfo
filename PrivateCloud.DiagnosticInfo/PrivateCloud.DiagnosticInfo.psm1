@@ -2267,16 +2267,17 @@ function Get-PCStorageReportStorageLatency
 
     $pdattrs_tab = @{ Label = 'FriendlyName'; Expression = { $PhysicalDisksTable[$_.Device].FriendlyName }},
                 @{ Label = 'SerialNumber'; Expression = { $PhysicalDisksTable[$_.Device].SerialNumber }},
-                @{ Label = 'MediaType'; Expression = { $PhysicalDisksTable[$_.Device].MediaType }},
+                @{ Label = 'Firmware'; Expression = { $PhysicalDisksTable[$_.Device].FirmwareVersion }},
+                @{ Label = 'Media'; Expression = { $PhysicalDisksTable[$_.Device].MediaType }},
                 @{ Label = 'Usage'; Expression = { $PhysicalDisksTable[$_.Device].Usage }},
-                @{ Label = 'OperationalStatus'; Expression = { $PhysicalDisksTable[$_.Device].OperationalStatus }},
-                @{ Label = 'HealthStatus'; Expression = { $PhysicalDisksTable[$_.Device].HealthStatus }}
+                @{ Label = 'OpStat'; Expression = { $PhysicalDisksTable[$_.Device].OperationalStatus }},
+                @{ Label = 'HealthStat'; Expression = { $PhysicalDisksTable[$_.Device].HealthStatus }}
 
     # joined physicaldisk attributes for the event view
     # since status' are not known at the time of the event, omit for brevity/accuracy
     $pdattrs_ev = @{ Label = 'FriendlyName'; Expression = { $PhysicalDisksTable[$_.Device].FriendlyName }},
                 @{ Label = 'SerialNumber'; Expression = { $PhysicalDisksTable[$_.Device].SerialNumber }},
-                @{ Label = 'MediaType'; Expression = { $PhysicalDisksTable[$_.Device].MediaType }},
+                @{ Label = 'Media'; Expression = { $PhysicalDisksTable[$_.Device].MediaType }},
                 @{ Label = 'Usage'; Expression = { $PhysicalDisksTable[$_.Device].Usage }}
             
     # now wait for the event processing jobs and emit the per-node reports
@@ -2305,16 +2306,18 @@ function Get-PCStorageReportStorageLatency
                 $v = $buckhash[$_][$i]
                 if ($v) {
                     $weight = $i
+                    $weightval = $v
                     $vprop[$bucklabels[$i]] = $v
                 }
             }
 
             $vprop['Device'] = $dev
             $vprop['Weight'] = $weight
+            $vprop['WeightVal'] = $weightval
 
             new-object psobject -Property $vprop
 
-        } | sort Weight,@{ Expression = {$PhysicalDisksTable[$_.Device].Usage}} | ft -AutoSize (,'Device' + $pdattrs_tab  + $bucklabels)
+        } | sort Weight,@{ Expression = {$PhysicalDisksTable[$_.Device].Usage}},WeightVal | ft -AutoSize (,'Device' + $pdattrs_tab  + $bucklabels)
 
         # for the full report, output the high bucket events
         # note: enumerations do not appear to be available in job sessions, otherwise it would clearly be more efficient
