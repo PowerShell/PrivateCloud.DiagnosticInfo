@@ -2432,6 +2432,7 @@ function Get-PCStorageReportStorageFirmware
                     ft @{ Label = 'SerialNumber'; Expression = { if ($_.BusType -eq 'NVME') { $_.AdapterSerialNumber } else { $_.SerialNumber}}},
                        @{ Label = "Media"; Expression = { $_.MediaType }},
                        Usage
+
             }
 
 
