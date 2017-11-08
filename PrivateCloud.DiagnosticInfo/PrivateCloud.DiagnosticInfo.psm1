@@ -1951,6 +1951,7 @@ enum ReportType
     All = 0
     SSBCache = 1
     StorageLatency = 2
+    StorageFirmware = 3
 }
 
 function Get-PCStorageReportSSBCache
@@ -2173,7 +2174,6 @@ function Get-PCStorageReportSSBCache
 
 function Get-PCStorageReportStorageLatency
 {
-
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -2382,6 +2382,67 @@ function Get-PCStorageReportStorageLatency
     }
 }
 
+function Get-PCStorageReportStorageFirmware
+{
+    param(
+        [parameter(Position=0, Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $Path,
+
+        [parameter(Mandatory=$true)]
+        [ReportLevelType]
+        $ReportLevel
+    )
+    
+    # acquire the physicaldisks datasource for non-retired disks
+    # retired disks may not show fw and in any case are not of interest for live operation
+    $PhysicalDisks = Import-Clixml (Join-Path $Path "GetPhysicalDisk.XML") |? Usage -ne Retired
+
+    # basic report
+    Write-Output "Total Firmware Report"
+    $PhysicalDisks | group -Property Manufacturer,Model,FirmwareVersion | sort Name |
+        ft @{ Label = 'Number'; Expression = { $_.Count }},
+           @{ Label = 'Manufacturer'; Expression = { $_.Group[0].Manufacturer }},
+           @{ Label = 'Model'; Expression = { $_.Group[0].Model }},
+           @{ Label = 'Firmware'; Expression = { $_.Group[0].FirmwareVersion }},
+           @{ Label = 'Media'; Expression = { $_.Group[0].MediaType }},
+           @{ Label = 'Usage'; Expression = { $_.Group[0].Usage }}
+
+    # group by manu/model and for each, group by fw
+    # report out minority fw devices by serial number
+    Write-Output "Per Unit Firmware Report`n"
+    $PhysicalDisks | group -Property Manufacturer,Model | sort Name |% {
+
+        $total = $_.Count
+        $fwg = $_.Group | group -Property FirmwareVersion | sort -Property Count
+
+        # if there is any variation, report
+        if (($fwg | measure).Count -ne 1) {
+            Write-Output "$($_.Group[0].Manufacturer) $($_.Group[0].Model): varying firmware found - $($fwg.Name -join ' ')"
+            Write-Output "Majority Devices: $($fwg[-1].Count) are at firmware version $($fwg[-1].Group[0].FirmwareVersion)"
+            Write-Output "Minority Devices:"
+
+            # skip group with the highest count; likely correct/not relevant to report
+            $fwg | select -SkipLast 1 |% {
+
+                Write-Output "Firmware Version $($_.Name) - Total $($_.Count)"
+
+                $_.Group |
+                    ft @{ Label = 'SerialNumber'; Expression = { if ($_.BusType -eq 'NVME') { $_.AdapterSerialNumber } else { $_.SerialNumber}}},
+                       @{ Label = "Media"; Expression = { $_.MediaType }},
+                       Usage
+            }
+
+
+        } else {
+
+            # good case
+            Write-Output "$($_.Group[0].Manufacturer) $($_.Group[0].Model): all devices are on firmware version $($_.Group[0].FirmwareVersion)`n"
+        }
+    }
+}
+
 <#
 .SYNOPSIS
     Show diagnostic reports based on information collected from Get-PCStorageDiagnosticInfo.
@@ -2444,6 +2505,9 @@ function Get-PCStorageReport
             }
             { $_ -eq [ReportType]::StorageLatency } {
                 Get-PCStorageReportStorageLatency $Path -ReportLevel:$ReportLevel
+            }
+            { $_ -eq [ReportType]::StorageFirmware } {
+                Get-PCStorageReportStorageFirmware $Path -ReportLevel:$ReportLevel
             }
             default {
                 throw "Internal Error: unknown report type $r"
