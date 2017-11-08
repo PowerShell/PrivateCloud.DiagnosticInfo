@@ -1954,6 +1954,14 @@ enum ReportType
     StorageFirmware = 3
 }
 
+# helper function which trims the full-length disk state
+function Format-SSBCacheDiskState(
+    [string] $DiskState
+    )
+{
+    $DiskState -replace 'CacheDiskState',''
+}
+
 function Get-PCStorageReportSSBCache
 {
     param(
@@ -2068,7 +2076,7 @@ function Get-PCStorageReportSSBCache
                 }
 
                 if ($ReportLevel -eq [ReportLevelType]::Full) {
-                    $d | sort IsSblCacheDevice,CacheDeviceId,DiskState | ft -AutoSize @{ Label = 'DiskState'; Expression = { $_ -replace 'CacheDiskState',''}},
+                    $d | sort IsSblCacheDevice,CacheDeviceId,DiskState | ft -AutoSize @{ Label = 'DiskState'; Expression = { Format-SSBCacheDiskState $_.DiskState }},
                         DiskId,DeviceNumber,@{
                         Label = 'CacheDeviceNumber'; Expression = {
                             if ($_.IsSblCacheDevice -eq 'true') {
@@ -2158,9 +2166,9 @@ function Get-PCStorageReportSSBCache
 
                 if (@($g).count -ne 1) {
                     write-output "Disk State Summary:"
-                    $g | sort -property Name | ft @{ Label = 'DiskState'; Expression = { $_.Name}},@{ Label = "Number of Disks"; Expression = { $_.Count }}
+                    $g | sort -property Name | ft @{ Label = 'DiskState'; Expression = { Format-SSBCacheDiskState $_.Name}},@{ Label = "Number of Disks"; Expression = { $_.Count }}
                 } else {
-                    write-output "All disks are in $($g.name)"
+                    write-output "All disks are in $(Format-SSBCacheDiskState $g.name)"
                 }
             }
         }
