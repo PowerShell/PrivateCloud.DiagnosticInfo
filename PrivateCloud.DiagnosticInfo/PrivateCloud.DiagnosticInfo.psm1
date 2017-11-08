@@ -4,6 +4,7 @@
  #                                                 #
  ##################################################>
 
+ Import-Module Storage
 
 <##################################################
 #  Helper functions                               #
@@ -1529,19 +1530,33 @@ function Get-PCStorageDiagnosticInfo
             # Calculate number of milliseconds and prepare the WEvtUtil parameter to filter based on date/time
             $MSecs = $Hours * 60 * 60 * 1000
             
-            $QParameterLevel = "*[System[(Level=2)]]"
-            $QParameter = "*[System[(Level=2) and TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
-            $QParameterUnfiltered = "*[System[TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
+            $QLevel = "*[System[(Level=2)]]"
+            $QTime = "*[System[TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
+            $QLevelAndTime = "*[System[(Level=2) and TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
 
             $Node = $env:COMPUTERNAME
             $NodePath = [System.IO.Path]::GetTempPath()
-            $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)
+            $RPath = "\\$Node\$($NodePath[0])$\"+$NodePath.Substring(3,$NodePath.Length-3)
 
-            $LogPatterns = 'Storage','SMB','Failover','VHDMP','Hyper-V','ResumeKeyFilter','Witness','PnP','Space','REFS','NTFS','storport','ClusterAware','disk','Kernel' | Foreach-Object { "*$_*" }
+            # Log prefixes to gather. Note that this is a simple pattern match; for instance, there are a number of
+            # different providers that match *Microsoft-Windows-Storage*: Storage, StorageManagement, StorageSpaces, etc.
+            #
+            # TODO: make this a prefix match for self-documentatability. Confirm ClusterAware updating's prefix and do it.
+            $LogPatterns = 'Microsoft-Windows-Storage',
+                           'Microsoft-Windows-SMB',
+                           'Microsoft-Windows-FailoverClustering',
+                           'Microsoft-Windows-VHDMP',
+                           'Microsoft-Windows-Hyper-V',
+                           'Microsoft-Windows-ResumeKeyFilter',
+                           'Microsoft-Windows-REFS',
+                           'Microsoft-Windows-NTFS',
+                           'ClusterAware',
+                           'Microsoft-Windows-Kernel' | Foreach-Object { "*$_*" }
+
+            # Core logs to gather, by explicit names.
             $LogPatterns += 'System','Application'
 
-            #$Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node | Where-Object LogName -NotLike "*Diag*" 
-            $Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node  
+            $Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node
             $Logs | Foreach-Object {
         
                 $FileSuffix = $Node+"_Event_"+$_.LogName.Replace("/","-")+".EVTX"
@@ -1551,9 +1566,9 @@ function Get-PCStorageDiagnosticInfo
                 # Export filtered log file using the WEvtUtil command-line tool
                 # This includes filtering the events to errors (Level=2) that happened in recent hours.
                 if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management") {
-                    WEvtUtil.exe epl $_.LogName $NodeFile /q:$QParameterLevel /ow:true
+                    WEvtUtil.exe epl $_.LogName $NodeFile /q:$QLevel /ow:true
                 } else {
-                    WEvtUtil.exe epl $_.LogName $NodeFile /q:$QParameter /ow:true
+                    WEvtUtil.exe epl $_.LogName $NodeFile /q:$QLevelAndTime /ow:true
                 }
                 Write-Output $RFile
             }
@@ -1569,7 +1584,7 @@ function Get-PCStorageDiagnosticInfo
                 if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management") {
                     WEvtUtil.exe epl $_.LogName $UnfilteredNodeFile /ow:true
                 } else {
-                    WEvtUtil.exe epl $_.LogName $UnfilteredNodeFile /q:$QParameterUnfiltered /ow:true
+                    WEvtUtil.exe epl $_.LogName $UnfilteredNodeFile /q:$QTime /ow:true
                 }
                 Write-Output $UnfilteredRFile
             }
@@ -1648,6 +1663,7 @@ function Get-PCStorageDiagnosticInfo
         #
         # Trim the node name by removing the node name prefix
         #
+
         Function TrimNode {
             Param ([String] $Node) 
             $Result = $Node.Split(".")[0].Trim().TrimEnd()
@@ -2051,7 +2067,8 @@ function Get-PCStorageReportSSBCache
                 }
 
                 if ($ReportLevel -eq [ReportLevelType]::Full) {
-                    $d | sort IsSblCacheDevice,CacheDeviceId,DiskState | ft -AutoSize DiskState,DiskId,DeviceNumber,@{
+                    $d | sort IsSblCacheDevice,CacheDeviceId,DiskState | ft -AutoSize @{ Label = 'DiskState'; Expression = { $_ -replace 'CacheDiskState',''}},
+                        DiskId,DeviceNumber,@{
                         Label = 'CacheDeviceNumber'; Expression = {
                             if ($_.IsSblCacheDevice -eq 'true') {
                                 '= cache'
@@ -2202,7 +2219,8 @@ function Get-PCStorageReportStorageLatency
             # appear to require pushing through an XML rendering and hashing. this would be
             # less efficient and this is already somewhat time consuming.
         
-            Get-WinEvent -Path $using:file |? Id -eq 505 |% {
+            # the erroraction handles (potentially) disabled logs, which have no events
+            Get-WinEvent -Path $using:file -ErrorAction SilentlyContinue |? Id -eq 505 |% {
 
                 # must cast through the XML representation of the event to get named properties
                 # hash them
@@ -2303,50 +2321,62 @@ function Get-PCStorageReportStorageLatency
 
         Write-Output ("-"*40) "Node: $node" "`nSample Period Count Report"
 
-        # note: these reports are filtered to only show devices in the pd table
-        # this leaves boot device and others unreported until we have a datasource
-        # to inject them.
+        if ($buckhash.Count -eq 0) {
+
+            #
+            # If there was nothing reported, that may indicate the storport channel was disabled. In any case
+            # we can't produce the report.
+            #
+
+            Write-Warning "Node $node is not reporting latency information. Please verify the following event channel is enabled on it: Microsoft-Windows-Storage-Storport/Operational"
+
+        } else {
+
+            # note: these reports are filtered to only show devices in the pd table
+            # this leaves boot device and others unreported until we have a datasource
+            # to inject them.
     
-        # output the table of device latency bucket counts
-        $buckhash.Keys |? { $PhysicalDisksTable.ContainsKey($_) } |% {
+            # output the table of device latency bucket counts
+            $buckhash.Keys |? { $PhysicalDisksTable.ContainsKey($_) } |% {
 
-            $dev = $_
+                $dev = $_
 
-            # the bucket labels are in the hash in the same order as the values
-            # and use to make an object for table rendering
-            $vprop = @{}
-            $weight = 0
-            foreach ($i in 0..($bucklabels.count - 1)) { 
-                $v = $buckhash[$_][$i]
-                if ($v) {
-                    $weight = $i
-                    $weightval = $v
-                    $vprop[$bucklabels[$i]] = $v
+                # the bucket labels are in the hash in the same order as the values
+                # and use to make an object for table rendering
+                $vprop = @{}
+                $weight = 0
+                foreach ($i in 0..($bucklabels.count - 1)) { 
+                    $v = $buckhash[$_][$i]
+                    if ($v) {
+                        $weight = $i
+                        $weightval = $v
+                        $vprop[$bucklabels[$i]] = $v
+                    }
                 }
-            }
 
-            $vprop['Device'] = $dev
-            $vprop['Weight'] = $weight
-            $vprop['WeightVal'] = $weightval
+                $vprop['Device'] = $dev
+                $vprop['Weight'] = $weight
+                $vprop['WeightVal'] = $weightval
 
-            new-object psobject -Property $vprop
+                new-object psobject -Property $vprop
 
-        } | sort Weight,@{ Expression = {$PhysicalDisksTable[$_.Device].Usage}},WeightVal | ft -AutoSize (,'Device' + $pdattrs_tab  + $bucklabels)
+            } | sort Weight,@{ Expression = {$PhysicalDisksTable[$_.Device].Usage}},WeightVal | ft -AutoSize (,'Device' + $pdattrs_tab  + $bucklabels)
 
-        # for the full report, output the high bucket events
-        # note: enumerations do not appear to be available in job sessions, otherwise it would clearly be more efficient
-        #  to avoid geneating the events in the first place.
-        if ($ReportLevel -eq [ReportLevelType]::Full) {
+            # for the full report, output the high bucket events
+            # note: enumerations do not appear to be available in job sessions, otherwise it would clearly be more efficient
+            #  to avoid geneating the events in the first place.
+            if ($ReportLevel -eq [ReportLevelType]::Full) {
 
-            Write-Output "`nHighest Bucket ($($bucklabels[-1])) Latency Events"
+                Write-Output "`nHighest Bucket ($($bucklabels[-1])) Latency Events"
 
-            $n = 0
-            if ($evs -ne $null) {
-                $evs |? { $PhysicalDisksTable.ContainsKey($_.Device) } |% { $n += 1; $_ } | sort Time -Descending | ft -AutoSize ('Time','Device' + $pdattrs_ev + $bucklabels)
-            }
+                $n = 0
+                if ($evs -ne $null) {
+                    $evs |? { $PhysicalDisksTable.ContainsKey($_.Device) } |% { $n += 1; $_ } | sort Time -Descending | ft -AutoSize ('Time','Device' + $pdattrs_ev + $bucklabels)
+                }
 
-            if ($n -eq 0) {
-                Write-Output "-> No Events"
+                if ($n -eq 0) {
+                    Write-Output "-> No Events"
+                }
             }
         }
     }
