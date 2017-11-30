@@ -1556,7 +1556,7 @@ function Get-PCStorageDiagnosticInfo
             # Core logs to gather, by explicit names.
             $LogPatterns += 'System','Application'
 
-            $Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node
+            $Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node -Force
             $Logs | Foreach-Object {
         
                 $FileSuffix = $Node+"_Event_"+$_.LogName.Replace("/","-")+".EVTX"
