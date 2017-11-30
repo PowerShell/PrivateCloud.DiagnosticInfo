@@ -1952,6 +1952,7 @@ enum ReportType
     SSBCache = 1
     StorageLatency = 2
     StorageFirmware = 3
+    LSIEvent = 4
 }
 
 # helper function which trims the full-length disk state
@@ -2452,6 +2453,56 @@ function Get-PCStorageReportStorageFirmware
     }
 }
 
+function Get-PCStorageReportLsiEvent
+{
+    param(
+        [parameter(Position=0, Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $Path,
+
+        [parameter(Mandatory=$true)]
+        [ReportLevelType]
+        $ReportLevel
+    )
+
+    # process the system event logs
+    # produce the time-series for full report, error code summary-only for lower levels
+
+    dir $path\*_UnfilteredEvent_System.EVTX | sort -Property BaseName |% {
+
+        if ($_.BaseName -match "^(.*)_UnfilteredEvent_.*") {
+            $node = $matches[1]
+        }
+         
+        $ev = Get-WinEvent -Path $_ |? { $_.ProviderName -match "lsi" -and $_.Id -eq 11 } |% {
+
+            new-object psobject -Property @{
+                'Time' = $_.TimeCreated;
+                'Provider Name' = $_.ProviderName;
+                'LSI Error'= (($_.Properties[1].Value[19..16] |% { '{0:X2}' -f $_ }) -join '');
+            }
+        }
+
+        Write-Output ("-"*40) "Node: $node"
+
+        if (-not $ev) {
+            Write-Output "No LSI events present"
+        } else {
+            Write-Output "Summary of LSI Event 11 error codes"
+        
+            $ev | group -Property 'LSI Error' -NoElement | sort -Property Name | ft -AutoSize Count,@{ Label = 'LSI Error'; Expression = { $_.Name }}
+
+            if ($ReportLevel -eq [ReportLevelType]::Full) {
+
+                Write-Output "LSI Event 11 errors by time"
+
+                $ev | ft Time,'LSI Error'
+            }
+        }
+    }
+}
+
 <#
 .SYNOPSIS
     Show diagnostic reports based on information collected from Get-PCStorageDiagnosticInfo.
@@ -2517,6 +2568,9 @@ function Get-PCStorageReport
             }
             { $_ -eq [ReportType]::StorageFirmware } {
                 Get-PCStorageReportStorageFirmware $Path -ReportLevel:$ReportLevel
+            }
+            { $_ -eq [ReportType]::LsiEvent } {
+                Get-PCStorageReportLsiEvent $Path -ReportLevel:$ReportLevel
             }
             default {
                 throw "Internal Error: unknown report type $r"
