@@ -155,6 +155,10 @@ function Get-PCStorageDiagnosticInfo
 
         [parameter(ParameterSetName="Write", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
+        [bool] $IncludeDumps = $false,
+
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
         [bool] $IncludeLiveDump = $false
         )
 
@@ -1550,6 +1554,9 @@ function Get-PCStorageDiagnosticInfo
                            'Microsoft-Windows-ResumeKeyFilter',
                            'Microsoft-Windows-REFS',
                            'Microsoft-Windows-NTFS',
+                           'Microsoft-Windows-NDIS',
+                           'Microsoft-Windows-Network',
+                           'Microsoft-Windows-TCPIP',
                            'ClusterAware',
                            'Microsoft-Windows-Kernel' | Foreach-Object { "*$_*" }
 
@@ -1800,27 +1807,42 @@ function Get-PCStorageDiagnosticInfo
                 Try { Get-SmbServerNetworkInterface -CimSession $Node >$LocalFile } 
                 Catch { ShowWarning("Unable to get a list of SMB network interfaces for node $Node") }
 
-                # Enumerate minidump files for a given node
+                if ($IncludeDumps -eq $true) {
+                    # Enumerate minidump files for a given node
 
-                Try { $NodePath = Invoke-Command -ComputerName $Node { Get-Content Env:\SystemRoot }
-                      $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)+"\Minidump\*.dmp"
-                      $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
-                Catch { $DmpFiles = ""; ShowWarning("Unable to get minidump files for node $Node") }
+                    Try { $NodePath = Invoke-Command -ComputerName $Node { Get-Content Env:\SystemRoot }
+                          $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)+"\Minidump\*.dmp"
+                          $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
+                    Catch { $DmpFiles = ""; ShowWarning("Unable to get minidump files for node $Node") }
 
-                # Copy minidump files from the node
+                    # Copy minidump files from the node
 
-                $DmpFiles | Foreach-Object {
-                    $LocalFile = $Path + $Node + "_" + $_.Name 
-                    Try { Copy-Item $_.FullName $LocalFile } 
-                    Catch { ShowWarning("Could not copy minidump file $_.FullName") }
-                }        
+                    $DmpFiles | Foreach-Object {
+                        $LocalFile = $Path + $Node + "_" + $_.Name 
+                        Try { Copy-Item $_.FullName $LocalFile } 
+                        Catch { ShowWarning("Could not copy minidump file $_.FullName") }
+                    }        
+
+                    Try { $NodePath = Invoke-Command -ComputerName $Node { Get-Content Env:\SystemRoot }
+                          $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)+"\LiveKernelReports\*.dmp"
+                          $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
+                    Catch { $DmpFiles = ""; ShowWarning("Unable to get LiveKernelReports files for node $Node") }
+
+                    # Copy LiveKernelReports files from the node
+
+                    $DmpFiles | Foreach-Object {
+                        $LocalFile = $Path + $Node + "_" + $_.Name 
+                        Try { Copy-Item $_.FullName $LocalFile } 
+                        Catch { ShowWarning("Could not copy LiveKernelReports file $_.FullName") }
+                    }        
+                }
 
                 Try {$NodePath = Invoke-Command -ComputerName $Node { Get-Content Env:\SystemRoot }
                      $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)+"\Cluster\Reports\*.*"
                      $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
                 Catch { $RepFiles = ""; ShowWarning("Unable to get reports for node $Node") }
 
-                # Copy minidump files from the node
+                # Copy logs from the Report directory
                 $RepFiles | Foreach-Object {
                     if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
                         $LocalFile = $Path + $Node + "_" + $_.Name
