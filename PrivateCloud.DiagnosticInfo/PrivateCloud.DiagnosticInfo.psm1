@@ -1216,7 +1216,7 @@ function Get-PCStorageDiagnosticInfo
         foreach ($node in $clusterNodeNames) { 
             "`nCluster Node: $node"
             Try { $Drivers = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $node }
-            Catch { ShowError("Unable to get Drivers on node $nod. `nError="+$_.Exception.Message) }
+            Catch { ShowError("Unable to get Drivers on node $node. `nError="+$_.Exception.Message) }
             $Drivers | Export-Clixml ($Path + $node + "_GetDrivers.XML")
             $RelevantDrivers = $Drivers | Where-Object { ($_.DeviceName -like "LSI*") -or ($_.DeviceName -like "Mellanox*") -or ($_.DeviceName -like "Chelsio*") } | 
             Group-Object DeviceName, DriverVersion | 
