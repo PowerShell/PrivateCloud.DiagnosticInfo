@@ -1977,6 +1977,110 @@ enum ReportType
     LSIEvent = 4
 }
 
+# helper function to parse the csv-demarcated sections of the cluster log
+# return value is a hashtable indexed by section name
+
+function Get-ClusterLogDataSources(
+    [string] $logname
+    )
+{
+    
+    BEGIN {
+        $csvf = New-TemporaryFile
+        $sr = [System.IO.StreamReader](gi $logname).FullName
+        $datasource = @{}
+    }
+
+    PROCESS {
+
+        ##
+        # Parse cluster log for all csv datasources. Recognize by a heuristic of >4 comma-seperated values
+        #   immediately after the block header [=== name ===]
+        #
+        # Final line to parse is the System block, which is after all potential datasources.
+        ## 
+
+        $firstline = $false
+        $in = $false
+        $section = $null
+
+        do {
+
+            $l = $sr.ReadLine()
+        
+            # Heuristic ...
+            # SBL Disks comes before System
+
+            if ($in) {
+
+                # if first line of section, detect if CSV
+                if ($firstline) {
+
+                    $firstline = $false
+
+                    #if not csv, go back to looking for blocks
+                    if (($l -split ',').count -lt 4) {
+                        $in = $false
+                    } else {
+                        
+                        # bug workaround
+                        # the Resources section has a duplicate _embeddedFailureAction
+                        # rename the first to an ignore per DaUpton
+                        # using the non-greedy match gives us the guarantee of picking out the first instance
+
+                        if ($section -eq 'Resources' -and $l -match '^(.*?)(_embeddedFailureAction)(.*)$') {
+                            $l = $matches[1]+"ignore"+$matches[3]
+                        }
+
+                        # number all ignore fields s.t. duplicates become unique (Networks section)
+                        $n = 0
+                        while ($l -match '^(.*?)(,ignore,)(.*)$') {
+                            $l = $matches[1]+",ignore$n,"+$matches[3]
+                            $n += 1
+                        }
+                                                                        
+                        # place in csv temporary file
+                        $l | out-file -Encoding ascii -Width 9999 $csvf
+                    }
+
+                } else {
+
+                    # parsing
+                    # in section, blank line terminates
+                    if ($l -notmatch '^\s*$') {
+                        $l | out-file -Append -Encoding ascii -Width 9999 $csvf
+                    } else {
+                        # at end; parse was good
+                        # import the csv and insert into the datasource table
+                        $datasource[$section] = import-csv $csvf
+
+                        # reset parser
+                        $in = $false
+                        $section = $null
+                    }
+                }
+
+            } elseif ($l -match '^\[===\s(.*)\s===\]') {
+
+                # done at the start of the System block
+                if ($matches[1] -eq 'System') { break }
+                
+                # otherwise prepare to parse
+                $section = $matches[1]
+                $in = $true
+                $firstline = $true
+            }
+        
+        } while (-not $sr.EndOfStream)
+    }
+
+    END {
+        $datasource        
+        $sr.Close()
+        del $csvf
+    }
+}
+
 # helper function which trims the full-length disk state
 function Format-SSBCacheDiskState(
     [string] $DiskState
@@ -1997,11 +2101,6 @@ function Get-PCStorageReportSSBCache
         [ReportLevelType]
         $ReportLevel
     )
-
-    BEGIN {
-
-        $csvf = New-TemporaryFile
-    }
 
     <#
     These are the possible DiskStates
@@ -2039,69 +2138,46 @@ function Get-PCStorageReportSSBCache
     CacheDiskState;
     #>
 
-    PROCESS {
+    dir $Path\*cluster.log | sort -Property BaseName |% {
 
-        dir $Path\*cluster.log | sort -Property BaseName |% {
+        $node = "<unknown>"
+        if ($_.BaseName -match "^(.*)_cluster$") {
+            $node = $matches[1]
+        }
 
-            $node = "<unknown>"
-            if ($_.BaseName -match "^(.*)_cluster$") {
-                $node = $matches[1]
+        Write-Output ("-"*40) "Node: $node"
+
+
+        ##
+        # Parse cluster log for the SBL Disk section
+        ## 
+
+        $data = Get-ClusterLogDataSources $_.FullName
+
+        ##
+        # With a an SBL Disks section, provide commentary
+        ##
+
+        $d = $data['SBL Disks']
+
+        if ($d) {
+
+            ##
+            # Table of raw data, friendly cache device numbering
+            ##
+
+            $idmap = @{}
+            $d |% {
+                $idmap[$_.DiskId] = $_.DeviceNumber
             }
 
-            Write-Output ("-"*40) "Node: $node"
-
-
-            ##
-            # Parse cluster log for the SBL Disk section
-            ## 
-
-            $sr = [System.IO.StreamReader]$_.FullName
-
-            $in = $false
-            $parse = $false
-            $(do {
-                $l = $sr.ReadLine()
-        
-                # Heuristic ...
-                # SBL Disks comes before System
-
-                if ($in) {
-                    # in section, blank line terminates
-                    if ($l -notmatch '^\s*$') {
-                        $l
-                    } else {
-                        # parse was good
-                        $parse = $true
-                        break
-                    }
-                } elseif ($l -match '^\[=== SBL Disks') {
-                    $in = $true
-                } elseif ($l -match '^\[=== System') {
-                    break
-                }
-        
-            } while (-not $sr.EndOfStream)) > $csvf
-
-            ##
-            # With a good parse, provide commentary
-            ##
-
-            if ($parse) {
-                $d = import-csv $csvf
-
-                ##
-                # Table of raw data, friendly cache device numbering
-                ##
-
-                $idmap = @{}
-                $d |% {
-                    $idmap[$_.DiskId] = $_.DeviceNumber
-                }
-
-                if ($ReportLevel -eq [ReportLevelType]::Full) {
-                    $d | sort IsSblCacheDevice,CacheDeviceId,DiskState | ft -AutoSize @{ Label = 'DiskState'; Expression = { Format-SSBCacheDiskState $_.DiskState }},
-                        DiskId,DeviceNumber,@{
-                        Label = 'CacheDeviceNumber'; Expression = {
+            if ($ReportLevel -eq [ReportLevelType]::Full) {
+                $d | sort IsSblCacheDevice,CacheDeviceId,DiskState | ft -AutoSize @{ Label = 'DiskState'; Expression = { Format-SSBCacheDiskState $_.DiskState }},
+                    DiskId,ProductId,Serial,@{
+                        Label = 'Device#'; Expression = {$_.DeviceNumber}
+                    },
+                    @{
+                        Label = 'CacheDevice#'; Expression = {
                             if ($_.IsSblCacheDevice -eq 'true') {
                                 '= cache'
                             } elseif ($idmap.ContainsKey($_.CacheDeviceId)) {
@@ -2113,93 +2189,90 @@ function Get-PCStorageReportSSBCache
                                 "= not present $($_.CacheDeviceId)"
                             }
                         }
-                    },HasSeekPenalty,PathId,BindingAttributes,DirtyPages
-                }
+                    },@{
+                        Label = 'SeekPenalty'; Expression = {$_.HasSeekPenalty}
+                    },
+                    PathId,BindingAttributes,DirtyPages
+            }
 
-                ##
-                # Now do basic testing of device counts
-                ##
+            ##
+            # Now do basic testing of device counts
+            ##
 
-                $dcache = $d |? IsSblCacheDevice -eq 'true'
-                $dcap = $d |? IsSblCacheDevice -ne 'true'
+            $dcache = $d |? IsSblCacheDevice -eq 'true'
+            $dcap = $d |? IsSblCacheDevice -ne 'true'
 
-                Write-Output "Device counts: cache $($dcache.count) capacity $($dcap.count)"
+            Write-Output "Device counts: cache $($dcache.count) capacity $($dcap.count)"
         
-                ##
-                # Test cache bindings if we do have cache present
-                ##
+            ##
+            # Test cache bindings if we do have cache present
+            ##
 
-                if ($dcache) {
+            if ($dcache) {
 
-                    # first uneven check, the basic count case
-                    $uneven = $false
-                    if ($dcap.count % $dcache.count) {
-                        $uneven = $true
-                        Write-Warning "Capacity device count does not evenly distribute to cache devices"
-                    }
-
-                    # now look for unbound devices
-                    $unbound = $dcap |? CacheDeviceId -eq '{00000000-0000-0000-0000-000000000000}'
-                    if ($unbound) {
-                        Write-Warning "There are $(@($unbound).count) unbound capacity device(s)"
-                    }
-
-                    # unbound devices give us the second uneven case
-                    if (-not $uneven -and ($dcap.count - @($unbound).count) % $dcache.count) {
-                        $uneven = $true
-                    }
-
-                    $gdev = $dcap |? DiskState -eq 'CacheDiskStateInitializedAndBound' | group -property CacheDeviceId
-
-                    if (@($gdev).count -ne $dcache.count) {
-                        Write-Warning "Not all cache devices in use"
-                    }
-
-                    $gdist = $gdev |% { $_.count } | group
-
-                    # in any given round robin binding of devices, there should be at most two counts; n and n-1
-
-                    # single ratio
-                    if (@($gdist).count -eq 1) {
-                        Write-Output "Binding ratio is even: 1:$($gdist.name)"
-                    } else {
-                        # group names are n in the 1:n binding ratios
-                        $delta = [math]::Abs([int]$gdist[0].name - [int]$gdist[1].name)
-
-                        if ($delta -eq 1 -and $uneven) {
-                            Write-Output "Binding ratios are as expected for uneven device ratios"
-                        } else {
-                            Write-Warning "Binding ratios are uneven"
-                        }
-
-                        # form list of group sizes
-                        $s = $($gdist |% {
-                            "1:$($_.name) ($($_.count) total)"
-                        }) -join ", "
-
-                        Write-Output "Groups: $s"
-                    }
+                # first uneven check, the basic count case
+                $uneven = $false
+                if ($dcap.count % $dcache.count) {
+                    $uneven = $true
+                    Write-Warning "Capacity device count does not evenly distribute to cache devices"
                 }
 
-                ##
-                # Provide summary of diskstate if more than one is present in the results
-                ##
+                # now look for unbound devices
+                $unbound = $dcap |? CacheDeviceId -eq '{00000000-0000-0000-0000-000000000000}'
+                if ($unbound) {
+                    Write-Warning "There are $(@($unbound).count) unbound capacity device(s)"
+                }
 
-                $g = $d | group -property DiskState
+                # unbound devices give us the second uneven case
+                if (-not $uneven -and ($dcap.count - @($unbound).count) % $dcache.count) {
+                    $uneven = $true
+                }
 
-                if (@($g).count -ne 1) {
-                    write-output "Disk State Summary:"
-                    $g | sort -property Name | ft @{ Label = 'DiskState'; Expression = { Format-SSBCacheDiskState $_.Name}},@{ Label = "Number of Disks"; Expression = { $_.Count }}
+                $gdev = $dcap |? DiskState -eq 'CacheDiskStateInitializedAndBound' | group -property CacheDeviceId
+
+                if (@($gdev).count -ne $dcache.count) {
+                    Write-Warning "Not all cache devices in use"
+                }
+
+                $gdist = $gdev |% { $_.count } | group
+
+                # in any given round robin binding of devices, there should be at most two counts; n and n-1
+
+                # single ratio
+                if (@($gdist).count -eq 1) {
+                    Write-Output "Binding ratio is even: 1:$($gdist.name)"
                 } else {
-                    write-output "All disks are in $(Format-SSBCacheDiskState $g.name)"
+                    # group names are n in the 1:n binding ratios
+                    $delta = [math]::Abs([int]$gdist[0].name - [int]$gdist[1].name)
+
+                    if ($delta -eq 1 -and $uneven) {
+                        Write-Output "Binding ratios are as expected for uneven device ratios"
+                    } else {
+                        Write-Warning "Binding ratios are uneven"
+                    }
+
+                    # form list of group sizes
+                    $s = $($gdist |% {
+                        "1:$($_.name) ($($_.count) total)"
+                    }) -join ", "
+
+                    Write-Output "Groups: $s"
                 }
             }
+
+            ##
+            # Provide summary of diskstate if more than one is present in the results
+            ##
+
+            $g = $d | group -property DiskState
+
+            if (@($g).count -ne 1) {
+                write-output "Disk State Summary:"
+                $g | sort -property Name | ft @{ Label = 'DiskState'; Expression = { Format-SSBCacheDiskState $_.Name}},@{ Label = "Number of Disks"; Expression = { $_.Count }}
+            } else {
+                write-output "All disks are in $(Format-SSBCacheDiskState $g.name)"
+            }
         }
-    }
-
-    END {
-
-        del $csvf
     }
 }
 
@@ -2604,703 +2677,7 @@ function Get-PCStorageReport
     }
 }
 
-<#
-.SYNOPSIS
-    Collect All WOSS related logs/events/... for Diagonistic
-
-.DESCRIPTION
-
-.PARAMETER StartTime
-    The start time for collected logs, default value is two hours before current time
-
-.PARAMETER  EndTime
-    The end time for collected logs, default value is current time
-
-.PARAMETER  TragetFolderPath
-    The targetPosition unc path, default value is $env:temp
-
-.PARAMETER  Credential
-    The PSCredential object to run this script
-
-.PARAMETER  SettingsStoreLiteralPath
-    The Woss Settings Store location
-
-.PARAMETER  $LogPrefix
-    The Prefix for all the logs stored in public Azure blob
-    
-.EXAMPLE
-    $secpasswd = ConvertTo-SecureString "Password!" -AsPlainText -Force
-    $credential = New-Object System.Management.Automation.PSCredential ($UserName, $secpasswd)
-    $start = Get-Date -Date "2015-08-17 08:00:00"
-    $end=Get-Date -Date "2015-08-17 09:00:00"
-
-    Get-PCAzureStackACSDiagnosticInfo -StartTime $start -EndTime $end -Credential $credential -TargetFolderPath \\shared\SMB\LogCollect -Verbose
-#>
-
-function Get-PCAzureStackACSDiagnosticInfo
-{
-    param(
-        [Parameter(Mandatory = $false)]
-        [System.DateTime] $StartTime = (Get-Date).AddHours(-2),
-        [Parameter(Mandatory = $false)]
-        [System.DateTime] $EndTime = (Get-Date),
-        [Parameter(Mandatory = $true)]
-        [PSCredential] $Credential, 
-        [Parameter(Mandatory = $false)]
-        [System.String] $TargetFolderPath = $env:temp,
-        [Parameter(Mandatory = $false)]
-        [System.String] $SettingsStoreLiteralPath,
-        [Parameter(Mandatory = $false)]
-        [System.String] $LogPrefix
-    )
-
-    Write-Verbose "Set error action to Stop."
-    $ErrorActionPreference = "Stop"
-    
-    if($StartTime -gt $EndTime)
-    {
-        Write-Error "Parameter StartTime is greater than EndTime, pls check your input and run the command again."
-        exit
-    }
-
-    function global:EstablishSmbConnection
-    {
-    Param(
-        [Parameter(
-            Mandatory = $True,
-            ParameterSetName = '',
-            Position = 0)]
-            [string[]]$remoteUNC,
-        [Parameter(
-            Mandatory = $True,
-            ParameterSetName = '',
-            Position = 1)]
-            [PSCredential] $Credential
-        )
-        $ret = $True
-
-        Write-Verbose('Check SMB connection on computers')
-
-    # Inline C# helper class to connect/disconnect an SMB share using the specified credential
-
-        $Assemblies = (
-        'mscorlib'
-        )
-
-        $source = @'
-        using System;
-        using System.Runtime.InteropServices;
-
-        public class WossDeploymentNetUseHelper
-        {
-            [DllImport("Mpr.dll", CallingConvention = CallingConvention.Winapi)]
-            private static extern int WNetUseConnection
-             (
-                 IntPtr hwndOwner,
-                 NETRESOURCE lpNetResource,
-                 string lpPassword,
-                 string lpUserID,
-                 Connect dwFlags,
-                 string lpAccessName,
-                 string lpBufferSize,
-                 string lpResult
-             );
-
-            [DllImport("Mpr.dll", CallingConvention = CallingConvention.Winapi)]
-            public static extern int WNetCancelConnection(string Name, bool Force);
-
-            public enum ResourceScope
-            {
-                CONNECTED = 0x00000001,
-                GLOBALNET = 0x00000002,
-                REMEMBERED = 0x00000003,
-            }
-
-            public enum ResourceType
-            {
-                ANY = 0x00000000,
-                DISK = 0x00000001,
-                PRINT = 0x00000002,
-            }
-
-            public enum ResourceDisplayType
-            {
-                GENERIC = 0x00000000,
-                DOMAIN = 0x00000001,
-                SERVER = 0x00000002,
-                SHARE = 0x00000003,
-                FILE = 0x00000004,
-                GROUP = 0x00000005,
-                NETWORK = 0x00000006,
-                ROOT = 0x00000007,
-                SHAREADMIN = 0x00000008,
-                DIRECTORY = 0x00000009,
-                TREE = 0x0000000A,
-                NDSCONTAINER = 0x0000000A,
-            }
-
-            [Flags]
-            public enum ResourceUsage
-            {
-                CONNECTABLE = 0x00000001,
-                CONTAINER = 0x00000002,
-                NOLOCALDEVICE = 0x00000004,
-                SIBLING = 0x00000008,
-                ATTACHED = 0x00000010,
-            }
-
-            [Flags]
-            public enum Connect
-            {
-                UPDATE_PROFILE = 0x00000001,
-                INTERACTIVE = 0x00000008,
-                PROMPT = 0x00000010,
-                REDIRECT = 0x00000080,
-                LOCALDRIVE = 0x00000100,
-                COMMANDLINE = 0x00000800,
-                CMD_SAVECRED = 0x00001000,
-            }
-
-            [StructLayout(LayoutKind.Sequential)]
-            private class NETRESOURCE
-            {
-                public ResourceScope dwScope = 0;
-                public ResourceType dwType = 0;
-                public ResourceDisplayType dwDisplayType = 0;
-                public ResourceUsage dwUsage = 0;
-
-                public string lpLocalName = null;
-                public string lpRemoteName = null;
-                public string lpComment = null;
-                public string lpProvider = null;
-            }
-
-            public static int NetUseSmbShare(string UncPath, string username, string password)
-            {
-                NETRESOURCE nr = new NETRESOURCE();
-                nr.dwType = ResourceType.DISK;
-                nr.lpRemoteName = UncPath;
-                int ret = WNetUseConnection(IntPtr.Zero, nr, password, username, 0, null, null, null);
-                return ret;
-            }
-        }
-'@
-        Add-Type  -TypeDefinition $source -ReferencedAssemblies $Assemblies
-        
-        Foreach($path in $remoteUNC){
-            $err = [WossDeploymentNetUseHelper]::NetUseSmbShare($path, $Credential.GetNetworkCredential().UserName, $Credential.GetNetworkCredential().Password)
-            # The share has an existing connection from another user and WNetUseConnection returns ERROR_SESSION_CREDENTIAL_CONFLICT
-            if(($err -eq 0) -or ($err -eq 1219))
-            {
-                 Write-Verbose('SMB {0} connection successfully established.' -f $path) 
-            }
-            else{
-                Write-Error('{0} cannot be accessed, error: {1}' -f $path, $err) 
-                $ret = $false
-            }
-        }
-        return $ret
-    }   
-        
-    function Upload-WossLogs
-    {
-        param(
-            [Parameter(Mandatory = $true)]
-            [System.String[]] $LogPaths,
-        
-            [Parameter(Mandatory = $true)]
-            [System.String] $TargetFolderPath,
-        
-            [Parameter(Mandatory = $false)]
-            [System.String] $LogPrefix
-        )
-
-        if(![string]::IsNullOrEmpty($TargetFolderPath))
-        {
-            foreach ($path in $LogPaths)
-            {        
-                if(Test-Path $path -pathtype Leaf)
-                {
-                    $parentPath = (get-item $path).Directory.Name
-                }
-                $TargetPath = Join-Path (Join-Path $TargetFolderPath $LogPrefix) $parentPath
-                if(!(Test-Path -Path $TargetPath )){
-                    New-Item -ItemType directory -Path $TargetPath
-                }
-                Write-Verbose "Upload log $path to share folder $TargetPath"
-                Copy-Item $path $TargetPath -Recurse -Force
-            }
-            Write-Output "logs have been uploaded to share folder"
-        }
-    }   
-    
-    function Get-AcsNodeLog
-    {
-    [CmdletBinding()]
-    param(
-            [Parameter(Mandatory = $true)]
-            [System.String[]] $RoleList,
-            
-            [Parameter(Mandatory = $false)]
-            [System.String[]] $BinLogRoot,
-            
-            [Parameter(Mandatory = $true)]
-            [System.DateTime] $StartTime,
-            
-            [Parameter(Mandatory = $true)]
-            [System.DateTime] $EndTime,
-            
-            [Parameter(Mandatory = $true)]
-            [System.String] $ComputerName,
-
-            [Parameter(Mandatory = $false)]
-            [PSCredential] $Credential,
-            
-            [Parameter(Mandatory = $true)]
-            [System.String] $TargetFolderPath,
-            
-            [Parameter(Mandatory = $false)]
-            [System.String] $LogPrefix
-        )
-
-        Write-Verbose "Create temp folder..."
-        $tempLogFolder = Join-Path $env:TEMP ([System.Guid]::NewGuid())
-        New-Item -ItemType directory -Path $tempLogFolder
-        Write-Verbose "Temp foler is $tempLogFolder"
-        
-        $LogPrefix = "$LogPrefix$ComputerName"
-        
-        Write-Verbose "Set firewall rule to enable remote log collect."
-        $sc = {
-            $isEventLogInEnabled = (Get-NetFirewallRule -Name "RemoteEventLogSvc-In-TCP").Enabled
-            if($isEventLogInEnabled -eq "False")
-            {
-                Enable-NetFirewallRule -Name "RemoteEventLogSvc-In-TCP"
-            }
-            $isEventLogInEnabled
-        }
-
-        if($Credential -ne $null)
-        {
-            $isEventLogInEnabled = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock $sc
-        }
-        else
-        {
-            $isEventLogInEnabled = Invoke-Command -ComputerName $ComputerName -ScriptBlock $sc
-        }
-
-        $sc = {
-            $isFPSEnabled = (Get-NetFirewallRule -Name "FPS-SMB-In-TCP").Enabled
-            if($isFPSEnabled -eq "False")
-            {
-                Enable-NetFirewallRule -Name "FPS-SMB-In-TCP"
-            }
-            $isFPSEnabled
-        }
-        
-        if($Credential -ne $null)
-        {
-            $isFPSEnabled = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock $sc
-        }
-        else
-        {
-            $isFPSEnabled = Invoke-Command -ComputerName $ComputerName -ScriptBlock $sc
-        }
-
-        Write-Verbose "Get Cosmos Log file List"
-
-        if($null -ne $BinLogRoot)
-        {
-            foreach ($root in $BinLogRoot) {
-
-                $rawFiles = Get-ChildItem $root | Where-Object {$_.Extension -eq ".bin"}
-                if($null -eq $rawFiles)
-                {
-                    continue
-                }
-                $firstFile = $rawFiles | Where-Object {$_.LastWriteTime -ge $StartTime} | Select-Object -First 1
-                if($null -eq $firstFile)
-                {
-                    $firstFile = $rawFiles[-2]
-                }
-
-                $CosmosLogList = @()
-                $getFile = $false
-                foreach($file in $rawFiles)
-                {
-                    if($file.FullName -eq $firstFile.FullName)
-                    {
-                        $getFile = $true
-                    }
-                    if(($getFile -eq $true) -and ((Get-Content $file.FullName -Raw) -ne "")){
-                        $CosmosLogList += $file.FullName
-                    }
-                    if($file.LastWriteTime -ge $EndTime)
-                    {
-                        break
-                    }
-                }
-
-                if(($null -ne $CosmosLogList) -and ($CosmosLogList.count -gt 0)){
-                    Upload-WossLogs -LogPaths $CosmosLogList -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-                }
-                else
-                {
-                    Write-Verbose "$root has no log to copy."
-                }
-            }
-            Write-Verbose "Cosmos logs copy complete."
-        }
-
-        if($RoleList.Contains("TableServer") -or $RoleList.Contains("TableMaster") -or $RoleList.Contains("AccountAndContainer") -or $RoleList.Contains("Metrics"))
-        {
-            Write-Verbose "Collect Events."
-            $eventRootFolder = "\\$ComputerName\" + $env:SystemRoot.replace(":","$")+"\System32\Winevt\Logs\"
-            $applicationEventFile = $eventRootFolder + "Application.evtx"
-            $smbClientConnectivityEventFile = $eventRootFolder + "Microsoft-Windows-SmbClient%4Connectivity.evtx"
-            $smbClientOperationalEventFile = $eventRootFolder + "Microsoft-Windows-SmbClient%4Operational.evtx"
-            $smbClientSecurityEventFile = $eventRootFolder + "Microsoft-Windows-SmbClient%4Security.evtx"
-            $wossEventAdminFile = $eventRootFolder + "Microsoft-AzureStack-ACS%4Admin.evtx"
-            $wossEventOperationalFile = $eventRootFolder + "Microsoft-AzureStack-ACS%4Operational.evtx"
-            $wossEventStorageAccountFile = $eventRootFolder + "Microsoft-AzureStack-ACS%4StorageAccount.evtx"
-            
-            Upload-WossLogs -LogPaths $applicationEventFile -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-
-            Upload-WossLogs -LogPaths $smbClientConnectivityEventFile -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-            Upload-WossLogs -LogPaths $smbClientOperationalEventFile -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-            Upload-WossLogs -LogPaths $smbClientSecurityEventFile -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-
-            Upload-WossLogs -LogPaths $wossEventAdminFile -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-            Upload-WossLogs -LogPaths $wossEventOperationalFile -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-            Upload-WossLogs -LogPaths $wossEventStorageAccountFile -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-
-            Write-Verbose "Finish collecting Application, ACS and SMBClient events"
-        }
-        
-        Write-Verbose "Collect Dump files"
-        if($Credential -ne $null)
-        {
-            $dumpkeys = Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {Get-ChildItem "hklm:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -ErrorAction SilentlyContinue}
-        }
-        else
-        {
-            $dumpkeys = Invoke-Command -ComputerName $ComputerName -ScriptBlock {Get-ChildItem "hklm:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -ErrorAction SilentlyContinue}
-        }
-        $collectDumpExeNameList = ("blobsvc.exe","Fabric.exe","FabricDCA.exe","FabricGateway.exe","FabricHost.exe","FabricIS.exe","FabricMdsAgentSvc.exe","FabricMonSvc.exe","FabricMonSvc.exe","FabricRM.exe","FabricRS.exe","FrontEnd.Table.exe","FrontEnd.Blob.exe","FrontEnd.Queue.exe","Metrics.exe","TableMaster.exe","TableServer.exe","MonAgentHost.exe","AgentCore.exe")
-
-        foreach ($dumpkey in $dumpkeys)
-        {
-            $isExeContained = $collectDumpExeNameList.Contains($dumpkey.Name)
-            if($isExeContained)
-            {
-                $dumpFolder = ($dumpkey| Get-ItemProperty).DumpFolder
-                
-                $dumpFolder = "\\$ComputerName\" + $dumpFolder.replace(":","$")
-                
-                $dumpfiles = Get-ChildItem $dumpFolder | Where-Object {$_.CreationTime -ge $StartTime -and $_.CreationTime -le $EndTime}
-                foreach ($dumpfilePath in $dumpfiles) {
-                    if(!(Test-Path -Path $dumpDestinationPath )){
-                        New-Item -ItemType directory -Path $dumpDestinationPath
-                    }
-
-                    Upload-WossLogs -LogPaths $dumpfilePath -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-                }
-            }
-        }
-        Write-Verbose "Finish collecting Dump files" 
-        
-        Write-Verbose "Cleanup temp folder" 
-        Remove-Item $tempLogFolder -Recurse -Force
-        
-        Write-Verbose "Reset firewall status back."
-        
-        if($isEventLogInEnabled -eq "False"){
-            if($Credential -ne $null)
-            {
-                Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {Disable-NetFirewallRule -Name "RemoteEventLogSvc-In-TCP"}
-            }
-            else
-            {
-                Invoke-Command -ComputerName $ComputerName -ScriptBlock {Disable-NetFirewallRule -Name "RemoteEventLogSvc-In-TCP"}
-            }
-        }
-
-        if($isFPSEnabled -eq "False"){
-            if($Credential -ne $null)
-            {
-                Invoke-Command -ComputerName $ComputerName -Credential $Credential -ScriptBlock {Disable-NetFirewallRule -Name "FPS-SMB-In-TCP"}
-            }
-            else
-            {
-                Invoke-Command -ComputerName $ComputerName -ScriptBlock {Disable-NetFirewallRule -Name "FPS-SMB-In-TCP"}
-            }        
-        }
-
-        Write-Verbose "Node $ComputerName Log Collector completed."
-    }
-
-    if($LogPrefix -eq $null){
-        $LogPrefix = get-date -Format yyyyMMddHHmmss
-    }
-    $LogPrefix += "\"
-    
-    if([string]::IsNullOrEmpty($SettingsStoreLiteralPath))
-    {
-        $settingskey = Get-ItemProperty "hklm:\SOFTWARE\Microsoft\WOSS\Deployment"
-        $SettingsStoreLiteralPath = $settingskey.SettingsStore
-    }
-
-    $tempLogFolder = Join-Path $env:TEMP ([System.Guid]::NewGuid())
-    New-Item -ItemType directory -Path $tempLogFolder
-    Write-Verbose "Temp foler is $tempLogFolder"
-    
-    if(![string]::IsNullOrEmpty($TargetFolderPath))
-    {
-        if(-not (Test-Path $TargetFolderPath))
-        {
-            Write-Verbose "Establish SMB connection to TargetFolder"
-            if($Credential -ne $null)
-            {
-                EstablishSmbConnection -remoteUNC $TargetFolderPath -Credential $Credential
-            }
-            else
-            {
-                net use $TargetFolderPath
-            }
-        }
-        $OriTargetFolderPath = $TargetFolderPath
-        $TargetFolderPath = Join-Path $TargetFolderPath (get-date -Format yyyyMMddHHmmss)
-        if(!(Test-Path -Path $TargetFolderPath)){
-            New-Item -ItemType directory -Path $TargetFolderPath
-        }
-    }
-
-    Write-Verbose "Copy Settings Store..."
-
-    $settingsPrefix = $LogPrefix + "Settings\"
-    Upload-WossLogs -LogPaths $SettingsStoreLiteralPath.TrimStart("file:") -TargetFolderPath $TargetFolderPath -LogPrefix $settingsPrefix
-
-    Write-Verbose "Get Deploy Settings..."
-
-    $SettingsFile = Get-ChildItem $SettingsStoreLiteralPath.TrimStart("file:") | Where-Object {$_.Extension -eq ".xml"} | Select-Object -Last 1
-
-    [xml]$xmlDoc = Get-Content $SettingsFile.FullName
-
-    $Settings = $xmlDoc.Settings
-
-    $clusterStatusFile = Join-Path $tempLogFolder "WossDeploymentStatus.txt"
-    $Settings["Deployment"] > $clusterStatusFile
-    
-    Upload-WossLogs -LogPaths $clusterStatusFile -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-
-    Write-Verbose "Get Woss Node List"
-    $NodeListDefinationDict = @{}
-    $NodeListDefinationDict.Add("MetricsMasterNodeList", "Metrics")
-    $NodeListDefinationDict.Add("MetricsRunnerNodeList", "Metrics")
-    $NodeListDefinationDict.Add("BlobFENodeList", "BlobFrontEnd")
-    $NodeListDefinationDict.Add("TableFENodeList", "TableFrontEnd")
-    $NodeListDefinationDict.Add("QueueFENodeList", "QueueFrontEnd")
-    $NodeListDefinationDict.Add("TMNodeList", "TableMaster")
-    $NodeListDefinationDict.Add("TSNodeList", "TableServer")
-    $NodeListDefinationDict.Add("MonitoringServiceNodeList", "MonitoringService")
-    $NodeListDefinationDict.Add("ACNodeList", "AccountAndContainer")
-    $NodeListDefinationDict.Add("BlobBackEndNodeList", "BlobSvc")
-
-    $WossNodeList = @{}
-    foreach($defination in $NodeListDefinationDict.Keys)
-    {
-        foreach($node in $Settings.Deployment[$defination].'#text'.split('|'))
-        {
-            if($WossNodeList.ContainsKey($node) -eq $false)
-            {
-                $WossNodeList.Add($node, @())
-            }
-            $WossNodeList[$node]+=$NodeListDefinationDict[$defination]
-        }
-    }
-    
-    Write-Verbose "Perparation Completed"
-
-    Write-Verbose "Set error action to Continue."
-    $ErrorActionPreference = "Continue"
-
-    $blobServiceStatusFile = Join-Path $tempLogFolder "BlobServiceStatus.txt"
-    sc.exe query blobsvc >> $blobServiceStatusFile
-    
-    Upload-WossLogs -LogPaths $blobServiceStatusFile -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-
-    Write-Output "Get Service Fabric Health Status Completed"
-
-    Write-Verbose "Trigger Log collect on Each Woss Node"
-    # temp solution, hardcode SRP node as MAS-XRP01
-
-    $WossNodeList.Add("MAS-XRP01",("SRP"))
-    
-    $domain = $env:UserDNSDOMAIN
-    $WossNodeList.Add($domain.split('.')[0].replace("-","") + "-XRP01" , ("SRP"))
-    
-    Write-Verbose "Check if AD module is installed"
-    $adModule = (Get-Module -Name ActiveDirectory)
-    if($null -eq $adModule)
-    {
-        Import-Module ServerManager
-        Add-WindowsFeature RSAT-AD-PowerShell
-        Import-Module ActiveDirectory
-    }
-
-    foreach ($node in $WossNodeList.GetEnumerator())
-    {
-        $LogFolders = @()
-        $roleList = @()
-        foreach ($role in $node.Value)
-        {
-            if($role -eq "BlobSvc") {
-                $logpath = $Settings.BlobSvc.CosmosLogDirectory
-            }
-            else {
-                # temp solution, hardcode SRP path 
-                if($role -eq "SRP") {
-                    try {
-                        Get-ADComputer $($node.Key) -ErrorAction Stop
-                    }
-                    catch {
-                        Write-Verbose "Cannot find node: $($node.Key)"
-                        continue
-                    }
-
-                    $logpath = "%programdata%\Microsoft\AzureStack\Logs\StorageResourceProvider"
-                }
-                else {
-                    $logpath = $Settings[$role]["LogPath"].'#text'
-                }
-            }
-            if($null -ne $logpath) {
-                $logpath = [System.Environment]::ExpandEnvironmentVariables($logpath)
-                $logpath = "\\$($node.Key)\" + $logpath.replace(":","$")
-                $LogFolders += $logpath
-            }
-            $roleList += $role
-        }
-        if($LogFolders.Count -gt 0)
-        {
-            $uniLogFolders = $LogFolders | Select-Object -uniq
-        }
-        else
-        {
-            continue
-        }
-
-        Write-Verbose "Start collect on Node: $($node.Key) from $uniLogFolders"
-
-        if($uniLogFolders.Count -gt 0)
-        {
-            if(-not (Test-Path $TargetFolderPath))
-            {
-                Write-Verbose "Establish SMB connection to source Folder"
-                if($Credential -ne $null)
-                {
-                    EstablishSmbConnection -remoteUNC $uniLogFolders[0] -Credential $Credential
-                }
-                else
-                {
-                    net use -remoteUNC $uniLogFolders[0]
-                }
-            }
-        }
-
-        Get-AcsNodeLog -RoleList $roleList -BinLogRoot $uniLogFolders -StartTime $StartTime -EndTime $EndTime -TargetFolderPath $TargetFolderPath -Credential $Credential -ComputerName $($node.Key) -LogPrefix $LogPrefix
-        Write-Verbose "Get log on Node: $($node.Key) Completed"
-    }
-
-    Write-Verbose "Get Cosmos log from all nodes Completed"
-    
-    Write-Verbose "Get Failover Cluster log"
-    foreach ($node in $WossNodeList.GetEnumerator())
-    {
-        if($node.Value -contains "BlobBackEndNodeList")
-        {
-            if($Credential -ne $null)
-            {
-                Invoke-Command -ComputerName $($node.Key) -Credential $Credential -ScriptBlock {Get-ClusterLog -UseLocalTime}
-            }
-            else
-            {
-                Invoke-Command -ComputerName $($node.Key) -ScriptBlock {Get-ClusterLog -UseLocalTime}
-            }
-            $clusterlogpath = [System.Environment]::ExpandEnvironmentVariables("%windir%\Cluster\Reports\Cluster.log")
-            $clusterlogpath = "\\$($node.Key)\" + $clusterlogpath.replace(":","$")
-            Upload-WossLogs -LogPaths $clusterlogpath -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-            break
-        }
-    }
-    Write-Verbose "Get Failover Cluster log complete"
-
-    Write-Verbose "Get Service Fabric Log List"
-    $DCARoot = $Settings.Deployment.FabricDiagnosticStore.TrimStart("file:") 
-    $winFabLogList = Get-ChildItem $DCARoot | Where-Object {$_.LastWriteTime -ge $StartTime -and $_.CreationTime -le $EndTime}
-
-    $winFabLogFolder = Join-Path $tempLogFolder "WinFabLogs"
-    New-Item -ItemType directory -Path $winFabLogFolder
-
-    Write-Verbose "Start copying Logs in folder $winFabLogFolder start at $StartTime and End at $EndTime"
-    foreach ($filepath in $winFabLogList) {
-        $fileName = Split-Path -Path $filepath.FullName -Leaf
-        $parentFolder = Split-Path -Path (Split-Path -Path $filepath.FullName -Parent) -Leaf
-        $destinationPath = Join-Path $winFabLogFolder $parentFolder
-        
-        if(!(Test-Path -Path $destinationPath )){
-            New-Item -ItemType directory -Path $destinationPath
-        }
-
-        $destinationFile = Join-Path $destinationPath $fileName
-        Copy-Item $filepath.FullName -Destination $destinationFile -Force -Recurse
-    }
-    Write-Verbose "Compact winfabric log folder"
-
-    Add-Type -Assembly System.IO.Compression.FileSystem
-    $compressionLevel = [System.IO.Compression.CompressionLevel]::Optimal
-    $zipfilename = Join-Path $env:TEMP "ServiceFabricLogs.zip"
-    if(Test-Path -Path $zipfilename)
-    {
-        Remove-Item -Path $zipfilename
-    }
-
-    $fileSystemDllPath = [System.IO.Path]::Combine([System.IO.Path]::Combine($env:Windir,"Microsoft.NET\Framework64\v4.0.30319"), "System.IO.Compression.FileSystem.dll")
-
-    Add-Type -Path $fileSystemDllPath
-    [System.IO.Compression.ZipFile]::CreateFromDirectory($winFabLogFolder, $zipfilename, $compressionLevel, $false) 
-    
-    Upload-WossLogs -LogPaths $zipfilename -TargetFolderPath $TargetFolderPath -LogPrefix $LogPrefix
-
-    Write-Verbose "Log Files was compacted into $zipfilename"
-
-    Write-Verbose "Remove win fabric temp log folder"
-    Remove-Item $winFabLogFolder -Recurse -Force
-
-    Write-Output "Get Service Fabric Log Completed"
-
-    if(![string]::IsNullOrEmpty($OriTargetFolderPath))
-    {
-        Write-Verbose "Compact log folder"
-        $logName = get-date -Format yyyyMMddHHmmss
-        $zipfilename = Join-Path $OriTargetFolderPath "ACSLogs_$logName.zip" 
-        $compressionLevel = [System.IO.Compression.CompressionLevel]::Fastest
-
-        [System.IO.Compression.ZipFile]::CreateFromDirectory($TargetFolderPath, $zipfilename, $compressionLevel, $false)
-        Write-Verbose "Your log files was compacted into $zipfilename"
-
-        Write-Verbose "Cleanup share folder" 
-        Remove-Item $TargetFolderPath -Recurse -Force
-    }
-
-    Write-Verbose "Cleanup temp folder" 
-    Remove-Item $tempLogFolder -Recurse -Force
-    
-    Write-Verbose "Log Collector completed."
-}
-
 New-Alias -Name getpcsdi -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
 New-Alias -Name Test-StorageHealth -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
-New-Alias -Name getacslog -Value Get-PCAzureStackACSDiagnosticInfo -Description "Collects diagnostic information of Azure Stack Storage"
 
-Export-ModuleMember -Alias * -Function Get-PCStorageDiagnosticInfo,Get-PCAzureStackACSDiagnosticInfo,Get-PCStorageReport
+Export-ModuleMember -Alias * -Function Get-PCStorageDiagnosticInfo,Get-PCStorageReport
