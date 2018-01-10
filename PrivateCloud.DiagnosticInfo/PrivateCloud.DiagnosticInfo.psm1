@@ -1558,6 +1558,7 @@ function Get-PCStorageDiagnosticInfo
                            'Microsoft-Windows-Network',
                            'Microsoft-Windows-TCPIP',
                            'ClusterAware',
+                           'Microsoft-Windows-HostGuardian',
                            'Microsoft-Windows-Kernel' | Foreach-Object { "*$_*" }
 
             # Core logs to gather, by explicit names.
