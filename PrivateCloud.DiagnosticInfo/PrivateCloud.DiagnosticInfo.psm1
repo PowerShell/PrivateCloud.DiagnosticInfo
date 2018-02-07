@@ -1410,7 +1410,7 @@ function Get-PCStorageDiagnosticInfo
 
 		$PerfRaw=Get-Counter -Counter $set.Paths -SampleInterval 1 -MaxSamples $PerfSamples -ErrorAction Ignore -WarningAction Ignore
 		Write-Progress -Activity "Gathering counters" -CurrentOperation "Exporting counters"
-		$PerfRaw | Export-counter -Path ($Path + "GetCounters.blg") -Force -FileFormat “BLG”
+		$PerfRaw | Export-counter -Path ($Path + "GetCounters.blg") -Force -FileFormat Â“BLGÂ”
 		Write-Progress -Activity "Gathering counters" -Completed
 
 		if ($ProcessCounter) {
@@ -2696,3 +2696,4 @@ New-Alias -Name getpcsdi -Value Get-PCStorageDiagnosticInfo -Description "Collec
 New-Alias -Name Test-StorageHealth -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
 
 Export-ModuleMember -Alias * -Function Get-PCStorageDiagnosticInfo,Get-PCStorageReport
+
