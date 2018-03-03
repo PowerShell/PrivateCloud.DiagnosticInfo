@@ -1568,6 +1568,7 @@ function Get-PCStorageDiagnosticInfo
                            'Microsoft-Windows-Hyper-V',
                            'Microsoft-Windows-ResumeKeyFilter',
                            'Microsoft-Windows-REFS',
+                           'Microsoft-Windows-WMI-Activity',
                            'Microsoft-Windows-NTFS',
                            'Microsoft-Windows-NDIS',
                            'Microsoft-Windows-Network',
