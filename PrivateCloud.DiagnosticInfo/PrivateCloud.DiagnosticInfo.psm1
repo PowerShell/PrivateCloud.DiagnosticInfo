@@ -590,8 +590,8 @@ function Get-PCStorageDiagnosticInfo
     #
     # Phase 1
     #
-
-    "`n<<< Phase 1 - Storage Health Overview >>>`n"
+    $TimeStamp=Get-Date
+    "`n<<< $TimeStamp - Phase 1 - Storage Health Overview >>>`n"
 
     #
     # Get-Cluster
@@ -1130,8 +1130,8 @@ function Get-PCStorageDiagnosticInfo
     #
     # Phase 2
     #
-
-    "`n<<< Phase 2 - details on unhealthy components >>>`n"
+    $TimeStamp=Get-Date
+    "`n<<< $TimeStamp - Phase 2 - details on unhealthy components >>>`n"
 
     $Failed = $False
 
@@ -1216,8 +1216,8 @@ function Get-PCStorageDiagnosticInfo
     #
     # Phase 3
     #
-
-    "`n<<< Phase 3 - Firmware and drivers >>>`n"
+    $TimeStamp=Get-Date
+    "`n<<< $TimeStamp - Phase 3 - Firmware and drivers >>>`n"
 
     "Devices and drivers by Model and Driver Version per cluster node" 
 
@@ -1389,8 +1389,8 @@ function Get-PCStorageDiagnosticInfo
     #
     # Phase 5
     #
-
-    "<<< Phase 5 - Storage Performance >>>`n"
+    $TimeStamp=Get-Date
+    "<<< $TimeStamp - Phase 5 - Storage Performance >>>`n"
 
     If ((-not $Read) -and (-not $IncludePerformance)) {
        "Performance was excluded by a parameter`n"
@@ -1519,7 +1519,8 @@ function Get-PCStorageDiagnosticInfo
     # Phase 6
     #
 
-    "<<< Phase 6 - Recent Error events >>>`n"
+    $TimeStamp=Get-Date
+    "<<< $TimeStamp - Phase 6 - Recent Error events >>>`n"
 
     If ((-not $Read) -and (-not $IncludeEvents)) {
        "Events were excluded by a parameter`n"
@@ -1759,8 +1760,8 @@ function Get-PCStorageDiagnosticInfo
     [System.GC]::Collect()
 
     If (-not $read) {
-
-        "<<< Phase 7 - Compacting files for transport >>>`n"
+        $TimeStamp=Get-Date
+        "<<< $TimeStamp - Phase 7 - Compacting files for transport >>>`n"
 
         $ZipSuffix = '-{0}{1:00}{2:00}-{3:00}{4:00}' -f $TodayDate.Year,$TodayDate.Month,$TodayDate.Day,$TodayDate.Hour,$TodayDate.Minute
         $ZipSuffix = "-" + $Cluster.Name + $ZipSuffix
