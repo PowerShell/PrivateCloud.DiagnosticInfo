@@ -1579,7 +1579,7 @@ function Get-PCStorageDiagnosticInfo
             # Core logs to gather, by explicit names.
             $LogPatterns += 'System','Application'
 
-            $Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node -Force
+            $Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node -Force -ErrorAction Ignore -WarningAction Ignore
             $Logs | Foreach-Object {
         
                 $FileSuffix = $Node+"_Event_"+$_.LogName.Replace("/","-")+".EVTX"
@@ -1714,19 +1714,6 @@ function Get-PCStorageDiagnosticInfo
     If ($Read) { 
         Try { $ErrorSummary = Import-Clixml ($Path + "GetAllErrors.XML") }
         Catch { $ErrorSummary = @() }
-    }
-
-    If ($Read -or $IncludeEvents) {
-        If (-not $ErrorSummary) {
-            "No errors found`n" 
-        } Else { 
-
-            #
-            # Output the final error summary
-            #
-            "Summary of Error Events (in the last $HoursOfEvents hours) by LogName and EventId"
-            $ErrorSummary | Sort-Object Total -Descending | Select-Object * -ExcludeProperty Group, Values | Format-Table  -AutoSize
-        }
     }
 
     if ($S2DEnabled -ne $true) { 
