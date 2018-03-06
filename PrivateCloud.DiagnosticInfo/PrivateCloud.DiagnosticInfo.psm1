@@ -414,7 +414,7 @@ function Get-PCStorageDiagnosticInfo
         Try { $ClusterName = (Get-Cluster -Name $ClusterName).Name }
         Catch { ShowError("Cluster could not be contacted. `nError="+$_.Exception.Message) }
 
-        $AccessNode = (Get-ClusterNode -Cluster $ClusterName | Where-Object State -like "Up")[0].Name + "." + (Get-Cluster -Name $ClusterName).Domain
+        $AccessNode = (Get-ClusterNode -Cluster $ClusterName)[0].Name + "." + (Get-Cluster -Name $ClusterName).Domain
 
         Try { $Volumes = Get-Volume -CimSession $AccessNode  }
         Catch { ShowError("Unable to get Volumes. `nError="+$_.Exception.Message) }
@@ -655,7 +655,7 @@ function Get-PCStorageDiagnosticInfo
 
     # Select an access node, which will be used to query the cluster
 
-    $AccessNode = ($ClusterNodes | Where-Object State -like "Up")[0].Name + "." + $Cluster.Domain
+    $AccessNode = ($ClusterNodes)[0].Name + "." + $Cluster.Domain
     "Access node                : $AccessNode `n"
     
     #
@@ -866,7 +866,7 @@ function Get-PCStorageDiagnosticInfo
     # Cluster node health
 
     $NodesTotal = NCount($ClusterNodes)
-    $NodesHealthy = NCount($ClusterNodes | Where-Object State -like "Up")
+    $NodesHealthy = NCount($ClusterNodes | Where {$_.State -like "Paused" -or $_.State -like "Up"})
     "Cluster Nodes up              : $NodesHealthy / $NodesTotal"
 
     If ($NodesTotal -lt $ExpectedNodes) { ShowWarning("Fewer nodes than the $ExpectedNodes expected") }
@@ -883,7 +883,7 @@ function Get-PCStorageDiagnosticInfo
     # Cluster network health
 
     $NetsTotal = NCount($ClusterNetworks)
-    $NetsHealthy = NCount($ClusterNetworks | Where-Object State -like "Up")
+    $NetsHealthy = NCount($ClusterNetworks | Where {$_.State -like "Up"})
     "Cluster Networks up           : $NetsHealthy / $NetsTotal"
     
 
@@ -1401,7 +1401,7 @@ function Get-PCStorageDiagnosticInfo
         "Please wait for $PerfSamples seconds while performance samples are collected."
 		Write-Progress -Activity "Gathering counters" -CurrentOperation "Start monitoring"
 
-        $PerfNodes = $ClusterNodes | Where-Object State -like "Up" | Foreach-Object {$_.Name}
+        $PerfNodes = $ClusterNodes | Foreach-Object {$_.Name}
 		$set=Get-Counter -ListSet *"virtual disk"*, *"hybrid"*, *"cluster storage"*, *"cluster csv"*,*"storage spaces"* -ComputerName $PerfNodes
 
         #$PerfCounters = "reads/sec","writes/sec","read latency","write latency"
@@ -1544,7 +1544,7 @@ function Get-PCStorageDiagnosticInfo
         "Exporting Event Logs..." 
 
         $AllErrors = @();
-        $Logs = Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes | Where-Object State -like "Up") {
+        $Logs = Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes) {
 
             Param([int] $Hours)
             # Calculate number of milliseconds and prepare the WEvtUtil parameter to filter based on date/time
@@ -1626,11 +1626,11 @@ function Get-PCStorageDiagnosticInfo
         "Gathering System Info, Reports and Minidump files ..." 
 
         $Count1 = 0
-        $Total1 = NCount($ClusterNodes | Where-Object State -like "Up")
+        $Total1 = NCount($ClusterNodes)
     
         If ($Total1 -gt 0) {
     
-            $ClusterNodes | Where-Object State -like "Up" | Foreach-Object {
+            $ClusterNodes | Foreach-Object {
 
                 $Progress = ( $Count1 / $Total1 ) * 100
                 Write-Progress -Activity "Gathering System Info, Reports and Minidump files" -PercentComplete $Progress
