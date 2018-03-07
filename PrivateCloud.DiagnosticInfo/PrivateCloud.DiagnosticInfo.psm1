@@ -96,7 +96,11 @@ function Get-PCStorageDiagnosticInfo
         [parameter(ParameterSetName="Write", Position=1, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $ClusterName = ".",
-
+		
+        [parameter(ParameterSetName="Write", Position=1, Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Nodelist = "",
+		
         [parameter(ParameterSetName="Write", Position=2, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $ZipPrefix = $($env:userprofile + "\HealthTest"),
@@ -185,9 +189,46 @@ function Get-PCStorageDiagnosticInfo
     Set-StrictMode -Version Latest
 
     #
-    # Count number of elements in an array, including checks for $null or single object
+    # Makes a list of cluster nodes - filtered for if they are available, and hides the different options
+	# passing cluster/nodes to the script
     #
 
+	$FilteredNodelist = @()
+
+	Function GetFilteredNodeList {
+		if ($FilteredNodelist.Count -eq 0)
+		{
+			if ($Nodelist -ne "")
+			{
+				foreach ($node in $Nodelist.split(","))
+				{
+					if (Test-Connection -ComputerName $node -Quiet -TimeToLive 5)
+					{
+						$FilteredNodelist += @(New-Object -TypeName PSObject -Prop (@{"Name"=$node;"State"="Up"}))
+					}
+				}
+			}
+			else
+			{
+				foreach ($node in (Get-ClusterNode -Cluster $ClusterName))
+				{
+					if ($node.State -ne "Down")
+					{
+						$FilteredNodelist += @($node)
+					}
+					elseif (Test-Connection -ComputerName $node.Name -Quiet -TimeToLive 5)
+					{
+						$FilteredNodelist += @($node)
+					}
+				}
+			}
+		}
+		Return $FilteredNodelist
+	}
+
+    #
+    # Count number of elements in an array, including checks for $null or single object
+    #
     Function NCount { 
         Param ([object] $Item) 
         If ($null -eq $Item) {
@@ -363,8 +404,8 @@ function Get-PCStorageDiagnosticInfo
         Param ([String] $PoolName)
         $healthyPDs = ""
         If ($PoolName) {
-            $totalPDs = (Get-StoragePool -FriendlyName $PoolName -CimSession $ClusterName | Get-PhysicalDisk).Count
-            $healthyPDs = (Get-StoragePool -FriendlyName $PoolName -CimSession $ClusterName | Get-PhysicalDisk | Where-Object HealthStatus -eq "Healthy" ).Count
+            $totalPDs = (Get-StoragePool -FriendlyName $PoolName -CimSession $ClusterName -ErrorAction SilentlyContinue | Get-PhysicalDisk).Count
+            $healthyPDs = (Get-StoragePool -FriendlyName $PoolName -CimSession $ClusterName -ErrorAction SilentlyContinue | Get-PhysicalDisk | Where-Object HealthStatus -eq "Healthy" ).Count
         }
         else {
             ShowError("No storage pool specified")
@@ -414,7 +455,9 @@ function Get-PCStorageDiagnosticInfo
         Try { $ClusterName = (Get-Cluster -Name $ClusterName).Name }
         Catch { ShowError("Cluster could not be contacted. `nError="+$_.Exception.Message) }
 
-        $AccessNode = (Get-ClusterNode -Cluster $ClusterName)[0].Name + "." + (Get-Cluster -Name $ClusterName).Domain
+		$NodeList = GetFilteredNodeList
+		
+        $AccessNode = $NodeList[0].Name + "." + (Get-Cluster -Name $ClusterName).Domain
 
         Try { $Volumes = Get-Volume -CimSession $AccessNode  }
         Catch { ShowError("Unable to get Volumes. `nError="+$_.Exception.Message) }
@@ -452,10 +495,10 @@ function Get-PCStorageDiagnosticInfo
                 Write-Output $o
             }
 
-            $AssocPool = Get-StoragePool -CimSession $AccessNode
+            $AssocPool = Get-StoragePool -CimSession $AccessNode -ErrorAction SilentlyContinue
             $AssocPool | Foreach-Object {
                 $AssocPName = $_.FriendlyName
-                Get-StoragePool -CimSession $AccessNode -FriendlyName $AssocPName | 
+                Get-StoragePool -CimSession $AccessNode -FriendlyName $AssocPName  | 
                 Get-VirtualDisk -CimSession $AccessNode | Foreach-Object {
                     $AssocVD = $_
                     $Associations | Foreach-Object {
@@ -592,6 +635,16 @@ function Get-PCStorageDiagnosticInfo
     #
     $TimeStamp=Get-Date
     "`n<<< $TimeStamp - Phase 1 - Storage Health Overview >>>`n"
+	
+    # Cluster Nodes
+
+    If ($Read) {
+        $ClusterNodes = Import-Clixml ($Path + "GetClusterNode.XML")
+    } else {
+        Try { $ClusterNodes = GetFilteredNodeList }
+        Catch { ShowError("Unable to get Cluster Nodes. `nError="+$_.Exception.Message) }
+        $ClusterNodes | Export-Clixml ($Path + "GetClusterNode.XML")
+    }
 
     #
     # Get-Cluster
@@ -600,7 +653,17 @@ function Get-PCStorageDiagnosticInfo
     If ($Read) {
         $Cluster = Import-Clixml ($Path + "GetCluster.XML")
     } else {
-        Try { $Cluster = Get-Cluster -Name $ClusterName }
+        Try { 
+				if ($ClusterName -eq ".")
+				{
+					$Cluster = Get-Cluster -Name $ClusterNodes[0].Name
+					$ClusterName = $Cluster.Name
+				}
+				else
+				{
+					$Cluster = Get-Cluster -Name $ClusterName
+				}
+			}
         Catch { ShowError("Cluster could not be contacted. `nError="+$_.Exception.Message) }
         If ($null -eq $Cluster) { ShowError("Server is not in a cluster") }
         $Cluster | Export-Clixml ($Path + "GetCluster.XML")
@@ -618,6 +681,11 @@ function Get-PCStorageDiagnosticInfo
         }
     }
 
+    # Select an access node, which will be used to query the cluster
+
+    $AccessNode = ($ClusterNodes)[0].Name + "." + $Cluster.Domain
+    "Access node                : $AccessNode `n"
+    
     #
     # Test if it's a scale-out file server
     #
@@ -643,21 +711,7 @@ function Get-PCStorageDiagnosticInfo
     # Show health
     #
 
-    # Cluster Nodes
 
-    If ($Read) {
-        $ClusterNodes = Import-Clixml ($Path + "GetClusterNode.XML")
-    } else {
-        Try { $ClusterNodes = Get-ClusterNode -Cluster $ClusterName }
-        Catch { ShowError("Unable to get Cluster Nodes. `nError="+$_.Exception.Message) }
-        $ClusterNodes | Export-Clixml ($Path + "GetClusterNode.XML")
-    }
-
-    # Select an access node, which will be used to query the cluster
-
-    $AccessNode = ($ClusterNodes)[0].Name + "." + $Cluster.Domain
-    "Access node                : $AccessNode `n"
-    
     #
     # Verify deduplication prerequisites on access node, if in Write mode.
     #
@@ -694,7 +748,7 @@ function Get-PCStorageDiagnosticInfo
 					$nodeIndex = $phyDisk.StorageNodeObjectId.IndexOf("SN:")
 					$nodeLength = $phyDisk.StorageNodeObjectId.Length
 					$storageNodeName = $phyDisk.StorageNodeObjectId.Substring($nodeIndex+3, $nodeLength-($nodeIndex+4))  
-					$poolName = ($pd | Get-StoragePool -CimSession $clusterCimSession | Where-Object IsPrimordial -eq $false).FriendlyName
+					$poolName = ($pd | Get-StoragePool -CimSession $clusterCimSession -ErrorAction SilentlyContinue | Where-Object IsPrimordial -eq $false).FriendlyName
 					if (-not $poolName) {
 						continue
 					}
@@ -758,7 +812,7 @@ function Get-PCStorageDiagnosticInfo
             } 
 
             Try {
-                $NonHealthyPools = Get-StoragePool | ? IsPrimordial -eq $false
+                $NonHealthyPools = Get-StoragePool -ErrorAction SilentlyContinue | ? IsPrimordial -eq $false
                 foreach ($NonHealthyPool in $NonHealthyPools) {
                     $faultyDisks = $NonHealthyPool | Get-PhysicalDisk 
                     $faultySSU = $faultyDisks | Get-StorageFaultDomain -type StorageScaleUnit
@@ -781,13 +835,13 @@ function Get-PCStorageDiagnosticInfo
 
                 Write-Progress -Activity "Gathering SBL connectivity" -currentOperation "collecting from $node"
                 if ($Read) {
-                    $endpoints = Import-Clixml ($Path + $node + "_ClusPort.xml")
+                    $endpoints = Import-Clixml ($Path + $node.Name + "_ClusPort.xml")
                 } else {
                     $endpoints = Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $node
-                    $endpoints | Export-Clixml ($Path + $node + "_ClusPort.xml")
+                    $endpoints | Export-Clixml ($Path + $node.Name + "_ClusPort.xml")
                 }
 
-                $endpoints | Show-SBLConnectivity $node
+                $endpoints | Show-SBLConnectivity $node.Name
             }
             Write-Progress -Activity "Gathering SBL connectivity" -Completed
         } Catch {
@@ -836,7 +890,7 @@ function Get-PCStorageDiagnosticInfo
 					Write-Output $o
 				}
 
-				$AssocPool = Get-StoragePool -CimSession $AccessNode
+				$AssocPool = Get-StoragePool -CimSession $AccessNode -ErrorAction SilentlyContinue
 				$AssocPool | Foreach-Object {
 					$AssocPName = $_.FriendlyName
 					$AssocPOpStatus = $_.OperationalStatus
@@ -1054,7 +1108,7 @@ function Get-PCStorageDiagnosticInfo
         $StoragePools = Import-Clixml ($Path + "GetStoragePool.XML")
     } else {
         Try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-              $StoragePools =Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $SubSystem }
+              $StoragePools =Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $SubSystem -ErrorAction SilentlyContinue }
         Catch { ShowError("Unable to get Storage Pools. `nError="+$_.Exception.Message) }
         $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML")
     }
@@ -1222,22 +1276,22 @@ function Get-PCStorageDiagnosticInfo
     "Devices and drivers by Model and Driver Version per cluster node" 
 
     If ($Read) {
-        $clusterNodeNames = (Get-ClusterNode -Cluster $ClusterName).Name
+        $clusterNodeNames = GetFilteredNodeList
         foreach ($node in $clusterNodeNames) {
-            "`nCluster Node: $node"
-            $Drivers = Import-Clixml ($Path + $node + "_GetDrivers.XML")
+            "`nCluster Node:" + $node.Name
+            $Drivers = Import-Clixml ($Path + $node.Name + "_GetDrivers.XML")
             $RelevantDrivers = $Drivers | Where-Object { ($_.DeviceName -like "LSI*") -or ($_.DeviceName -like "Mellanox*") -or ($_.DeviceName -like "Chelsio*") } | 
             Group-Object DeviceName, DriverVersion | 
             Select-Object @{Expression={$_.Name};Label="Device Name, Driver Version"}
             $RelevantDrivers
         }         
     } else {
-        $clusterNodeNames = (Get-ClusterNode -Cluster $ClusterName).Name
+        $clusterNodeNames = GetFilteredNodeList
         foreach ($node in $clusterNodeNames) { 
-            "`nCluster Node: $node"
-            Try { $Drivers = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $node }
-            Catch { ShowError("Unable to get Drivers on node $node. `nError="+$_.Exception.Message) }
-            $Drivers | Export-Clixml ($Path + $node + "_GetDrivers.XML")
+            "`nCluster Node:" + $node.Name
+            Try { $Drivers = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $node.Name }
+            Catch { ShowError("Unable to get Drivers on node " + $node.Name + ". `nError="+$_.Exception.Message) }
+            $Drivers | Export-Clixml ($Path + $node.Name + "_GetDrivers.XML")
             $RelevantDrivers = $Drivers | Where-Object { ($_.DeviceName -like "LSI*") -or ($_.DeviceName -like "Mellanox*") -or ($_.DeviceName -like "Chelsio*") } | 
             Group-Object DeviceName, DriverVersion | 
             Select-Object @{Expression={$_.Name};Label="Device Name, Driver Version"}
@@ -1544,7 +1598,7 @@ function Get-PCStorageDiagnosticInfo
         "Exporting Event Logs..." 
 
         $AllErrors = @();
-        $Logs = Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes) {
+        $Logs = Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name {
 
             Param([int] $Hours)
             # Calculate number of milliseconds and prepare the WEvtUtil parameter to filter based on date/time
@@ -1574,9 +1628,11 @@ function Get-PCStorageDiagnosticInfo
                            'Microsoft-Windows-NDIS',
                            'Microsoft-Windows-Network',
                            'Microsoft-Windows-TCPIP',
-                           'ClusterAware',
+                           'Microsoft-Windows-ClusterAwareUpdating',
                            'Microsoft-Windows-HostGuardian',
-                           'Microsoft-Windows-Kernel' | Foreach-Object { "*$_*" }
+                           'Microsoft-Windows-Kernel',
+						   'Microsoft-Windows-StorageSpaces',
+						   'Microsoft-Windows-SMB' | Foreach-Object { "*$_*" }
 
             # Core logs to gather, by explicit names.
             $LogPatterns += 'System','Application'
@@ -1641,11 +1697,35 @@ function Get-PCStorageDiagnosticInfo
                 $LocalFile = $Path+$Node+"_SystemInfo.TXT"
                 SystemInfo.exe /S $Node >$LocalFile
 
-                # Gather Network Adapter information for a given node
+				$CmdsToLog = @("Get-NetAdapter",
+								"Get-NetAdapterAdvancedProperty",
+								"Get-NetIpAddress",
+								"Get-NetRoute",
+								"Get-NetQosPolicy",
+								"Get-NetIPv4Protocol",
+								"Get-NetIPv6Protocol",
+								"Get-NetOffloadGlobalSetting",
+								"Get-NetPrefixPolicy",
+								"Get-NetTCPConnection",
+								"Get-NetTcpSetting",
+								"Get-NetAdapterBinding",
+								"Get-NetAdapterChecksumOffload",
+								"Get-NetAdapterLso",
+								"Get-NetAdapterRss",
+								"Get-NetAdapterRdma",
+								"Get-NetAdapterIPsecOffload",
+								"Get-NetAdapterPacketDirect", 
+								"Get-NetAdapterRsc",
+								"Get-NetLbfoTeam",
+								"Get-NetLbfoTeamNic",
+								"Get-NetLbfoTeamMember");
 
-                $LocalFile = $Path+"GetNetAdapter_"+$Node+".XML"
-                Try { Get-NetAdapter -CimSession $Node >$LocalFile }
-                Catch { ShowWarning("Unable to get a list of network adapters for node $Node") }
+				foreach ($cmd in $CmdsToLog)
+				{
+					$LocalFile = $Path + ($cmd -replace "-","") + $Node+".XML"
+					Try { Invoke-Expression "$cmd -CimSession $Node" >$LocalFile }
+					Catch { ShowWarning("$cmd failed for node $Node") }
+				}
 
                 # Gather SMB Network information for a given node
 
