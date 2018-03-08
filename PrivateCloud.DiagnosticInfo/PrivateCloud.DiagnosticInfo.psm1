@@ -99,7 +99,7 @@ function Get-PCStorageDiagnosticInfo
 		
         [parameter(ParameterSetName="Write", Position=1, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [string] $Nodelist = "",
+        [string[]] $Nodelist = "",
 		
         [parameter(ParameterSetName="Write", Position=2, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
@@ -191,21 +191,20 @@ function Get-PCStorageDiagnosticInfo
     #
     # Makes a list of cluster nodes - filtered for if they are available, and hides the different options
 	# passing cluster/nodes to the script
-    #
+    #	
 
 	$FilteredNodelist = @()
 
 	Function GetFilteredNodeList {
 		if ($FilteredNodelist.Count -eq 0)
 		{
+			$NodesToPing = @();
+			
 			if ($Nodelist -ne "")
 			{
-				foreach ($node in $Nodelist.split(","))
+				foreach ($node in $Nodelist)
 				{
-					if (Test-Connection -ComputerName $node -Quiet -TimeToLive 5)
-					{
-						$FilteredNodelist += @(New-Object -TypeName PSObject -Prop (@{"Name"=$node;"State"="Up"}))
-					}
+					$NodesToPing += @(New-Object -TypeName PSObject -Prop (@{"Name"=$node;"State"="Up"}))
 				}
 			}
 			else
@@ -216,14 +215,23 @@ function Get-PCStorageDiagnosticInfo
 					{
 						$FilteredNodelist += @($node)
 					}
-					elseif (Test-Connection -ComputerName $node.Name -Quiet -TimeToLive 5)
+					else
 					{
-						$FilteredNodelist += @($node)
+						$NodesToPing += @($node)
 					}
 				}
 			}
+			
+			foreach ($node in $NodesToPing)
+			{
+				if (Test-Connection -ComputerName $node.Name -Quiet -TimeToLive 5)
+				{
+					$FilteredNodelist += @($node)
+				}
+			}
+
 		}
-		Return $FilteredNodelist
+		Return $FilteredNodelist	
 	}
 
     #
@@ -250,7 +258,7 @@ function Get-PCStorageDiagnosticInfo
         $Associations | Foreach-Object {
             If ($_.VolumeID -eq $Volume) { $Result = $_.CSVPath }
              }
-        Return $Result
+        Return $Result	
     }
 
     Function VolumeToCSV {
@@ -1718,20 +1726,15 @@ function Get-PCStorageDiagnosticInfo
 								"Get-NetAdapterRsc",
 								"Get-NetLbfoTeam",
 								"Get-NetLbfoTeamNic",
-								"Get-NetLbfoTeamMember");
+								"Get-NetLbfoTeamMember",
+								"Get-SmbServerNetworkInterface");
 
 				foreach ($cmd in $CmdsToLog)
 				{
-					$LocalFile = $Path + ($cmd -replace "-","") + $Node+".XML"
+					$LocalFile = $Path + ($cmd -replace "-","") + $Node+".TXT"
 					Try { Invoke-Expression "$cmd -CimSession $Node" >$LocalFile }
 					Catch { ShowWarning("$cmd failed for node $Node") }
 				}
-
-                # Gather SMB Network information for a given node
-
-                $LocalFile = $Path+"GetSmbServerNetworkInterface_"+$Node+".XML"
-                Try { Get-SmbServerNetworkInterface -CimSession $Node >$LocalFile } 
-                Catch { ShowWarning("Unable to get a list of SMB network interfaces for node $Node") }
 
                 if ($IncludeDumps -eq $true) {
                     # Enumerate minidump files for a given node
