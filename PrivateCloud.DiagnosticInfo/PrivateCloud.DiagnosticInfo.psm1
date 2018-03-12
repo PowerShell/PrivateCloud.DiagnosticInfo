@@ -200,7 +200,7 @@ function Get-PCStorageDiagnosticInfo
 		{
 			$NodesToPing = @();
 			
-			if ($Nodelist -ne "")
+			if ($Nodelist.Count -gt 0)
 			{
 				foreach ($node in $Nodelist)
 				{
