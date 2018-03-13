@@ -1708,8 +1708,6 @@ function Get-PCStorageDiagnosticInfo
 
         $null = Wait-Job $j
         Show-JobRuntime $j.ChildJobs
-#        $Logs = Receive-Job $j
-#        Remove-Job $j
 
         Show-Update "Copying Event Logs...."
 
@@ -1731,13 +1729,7 @@ function Get-PCStorageDiagnosticInfo
 
         Remove-Job $j
         Remove-Job $copyjobs
-<#
-        $Logs |% {
-            # Copy event log files and remove them from the source
-            Copy-Item $_ $Path -Force -ErrorAction SilentlyContinue
-            Remove-Item $_ -Force -ErrorAction SilentlyContinue
-        }
-#>
+
         Show-Update "Gathering System Info, Reports and Minidump files ..." 
 
         $Count1 = 0
@@ -1906,6 +1898,7 @@ function Get-PCStorageDiagnosticInfo
         try {
             Show-Update "Creating Zip file ..."
 
+            [Reflection.Assembly]::LoadWithPartialName("System.IO.Compression.FileSystem")
             [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
             Show-Update "Zip File Name : $ZipPath"
 
