@@ -1898,18 +1898,19 @@ function Get-PCStorageDiagnosticInfo
         try {
             Show-Update "Creating Zip file ..."
 
-            [Reflection.Assembly]::LoadWithPartialName("System.IO.Compression.FileSystem")
+            Add-Type -Assembly System.IO.Compression.FileSystem
             [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
             Show-Update "Zip File Name : $ZipPath"
 
             Show-Update "Cleaning up temporary directory $Path"
             Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
 
-            Show-Update "Cleaning up CimSessions"
-            Get-CimSession | Remove-CimSession
         } catch {
             Show-Error("Error creating the ZIP file!`nContent remains available at $Path") 
         }
+
+        Show-Update "Cleaning up CimSessions"
+        Get-CimSession | Remove-CimSession
     }
 
     Show-Update "COMPLETE"
