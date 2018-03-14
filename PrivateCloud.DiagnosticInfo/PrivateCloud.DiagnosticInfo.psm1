@@ -805,26 +805,7 @@ function Get-PCStorageDiagnosticInfo
     #
     # Generate SBL Connectivity report based on input clusport information
     #
-
-    function Show-SBLConnectivity($node)
-    {
-        BEGIN {
-            $disks = 0
-            $enc = 0
-            $ssu = 0
-        }
-        PROCESS {
-            switch ($_.DeviceType) {
-                0 { $disks += 1 }
-                1 { $enc += 1 }
-                2 { $ssu += 1 }
-            }
-        }
-        END {
-            "$node has $disks disks, $enc enclosures, and $ssu scaleunit"
-        }
-    }
-
+    
     if ($S2DEnabled -eq $true) {
 
         #
@@ -832,6 +813,9 @@ function Get-PCStorageDiagnosticInfo
         #
 
         if (-not $Read) {
+
+            Show-Update "Unhealthy VD"
+
             try {
                 $NonHealthyVDs = Get-VirtualDisk | where {$_.HealthStatus -ne "Healthy" -OR $_.OperationalStatus -ne "OK"}
                 $NonHealthyVDs | Export-Clixml ($Path + "NonHealthyVDs.XML")
@@ -844,42 +828,38 @@ function Get-PCStorageDiagnosticInfo
                 Show-Warning("Not able to query extents for faulted virtual disks")
             } 
 
+            Show-Update "SSB Disks and SSU"
+
             try {
-                $NonHealthyPools = Get-StoragePool -ErrorAction SilentlyContinue | ? IsPrimordial -eq $false
-                foreach ($NonHealthyPool in $NonHealthyPools) {
-                    $faultyDisks = $NonHealthyPool | Get-PhysicalDisk 
-                    $faultySSU = $faultyDisks | Get-StorageFaultDomain -type StorageScaleUnit
-                    $faultyDisks | Export-Clixml($Path + $NonHealthyPool.FriendlyName + "_Disks.xml")
-                    $faultySSU | Export-Clixml($Path + $NonHealthyPool.FriendlyName + "_SSU.xml")
+                Get-StoragePool -ErrorAction SilentlyContinue | ? IsPrimordial -eq $false |% {
+                    $Disks = $_ | Get-PhysicalDisk 
+                    $Disks | Export-Clixml($Path + $_.FriendlyName + "_Disks.xml")
+                    
+                    $SSU = Get-StorageFaultDomain -StorageSubsystem (Get-StorageSubSystem Clustered*) -Type StorageScaleUnit
+                    $SSU | Export-Clixml($Path + $_.FriendlyName + "_SSU.xml")
                 }
             } catch {
                 Show-Warning("Not able to query faulty disks and SSU for faulted pools")
-            } 
-        }
+            }
 
-        #
-        # Gather and report
-        #
+            Show-Update "SSB Connectivity"
 
-        try {
-            Write-Progress -Activity "Gathering SBL connectivity"
-            "SBL Connectivity"
-            foreach($node in $ClusterNodes |? { $_.State.ToString() -eq 'Up' }) {
-
-                Write-Progress -Activity "Gathering SBL connectivity" -currentOperation "collecting from $node"
-                if ($Read) {
-                    $endpoints = Import-Clixml ($Path + $node.Name + "_ClusPort.xml")
-                } else {
-                    $endpoints = Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $node
-                    $endpoints | Export-Clixml ($Path + $node.Name + "_ClusPort.xml")
+            try {
+                $j = $ClusterNodes |? { $_.State.ToString() -eq 'Up' } |% {
+                    $node = $_.Name
+                    Start-Job -Name $node {
+                        Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $using:node |
+                            Export-Clixml (Join-Path $using:Path ($using:node + "_ClusPort.xml"))
+                    }
                 }
 
-                $endpoints | Show-SBLConnectivity $node.Name
+                $null = $j | Wait-Job
+                $j | Receive-Job
+                $j | Remove-Job
+
+            } catch {
+                Show-Warning "Gathering SBL connectivity failed"
             }
-            Write-Progress -Activity "Gathering SBL connectivity" -Completed
-        } catch {
-            Write-Progress -Activity "Gathering SBL connectivity" -Completed
-            Show-Warning("Gathering SBL connectivity failed")
         }
     }
 
@@ -1649,8 +1629,6 @@ function Get-PCStorageDiagnosticInfo
 
             # Log prefixes to gather. Note that this is a simple pattern match; for instance, there are a number of
             # different providers that match *Microsoft-Windows-Storage*: Storage, StorageManagement, StorageSpaces, etc.
-            #
-            # TODO: make this a prefix match for self-documentatability. Confirm ClusterAware updating's prefix and do it.
             $LogPatterns = 'Microsoft-Windows-Storage',
                            'Microsoft-Windows-SMB',
                            'Microsoft-Windows-FailoverClustering',
@@ -1667,12 +1645,23 @@ function Get-PCStorageDiagnosticInfo
                            'Microsoft-Windows-HostGuardian',
                            'Microsoft-Windows-Kernel',
 						   'Microsoft-Windows-StorageSpaces',
-						   'Microsoft-Windows-SMB' |% { "*$_*" }
+						   'Microsoft-Windows-SMB' |% { "$_*" }
+
+            $LogPatternsToExclude = 'Microsoft-Windows-FailoverClustering/Diagnostic',
+                                    'Microsoft-Windows-FailoverClustering-Client/Diagnostic' |% { "$_*" }
 
             # Core logs to gather, by explicit names.
             $LogPatterns += 'System','Application'
 
             $Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node -Force -ErrorAction Ignore -WarningAction Ignore
+
+            # now apply exclusions
+            $Logs = $Logs |? {
+                $Log = $_.LogName
+                $m = ($LogPatternsToExclude |% { $Log -like $_ } | measure -sum).sum
+                -not $m
+            }
+            
             $Logs |% {
         
                 $FileSuffix = $Node+"_Event_"+$_.LogName.Replace("/","-")+".EVTX"
@@ -1932,10 +1921,11 @@ enum ReportLevelType
 enum ReportType
 {
     All = 0
-    SSBCache = 1
-    StorageLatency = 2
-    StorageFirmware = 3
-    LSIEvent = 4
+    SSBCache
+    SSBConnectivity
+    StorageLatency
+    StorageFirmware
+    LSIEvent
 }
 
 # helper function to parse the csv-demarcated sections of the cluster log
@@ -2234,6 +2224,48 @@ function Get-PCStorageReportSSBCache
                 write-output "All disks are in $(Format-SSBCacheDiskState $g.name)"
             }
         }
+    }
+}
+
+function Get-PCStorageReportSSBConnectivity
+{
+    param(
+        [parameter(Position=0, Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $Path,
+
+        [parameter(Mandatory=$true)]
+        [ReportLevelType]
+        $ReportLevel
+    )
+
+    function Show-SSBConnectivity($node)
+    {
+        BEGIN {
+            $disks = 0
+            $enc = 0
+            $ssu = 0
+        }
+        PROCESS {
+            switch ($_.DeviceType) {
+                0 { $disks += 1 }
+                1 { $enc += 1 }
+                2 { $ssu += 1 }
+            }
+        }
+        END {
+            "$node has $disks disks, $enc enclosures, and $ssu scaleunit"
+        }
+    }
+
+    dir $path\*_ClusPort.xml | sort -Property BaseName |% {
+
+        if ($_.BaseName -match "^(.*)_ClusPort$") {
+            $node = $matches[1]
+        }
+
+        Import-Clixml $_ | Show-SSBConnectivity $node
     }
 }
 
@@ -2598,6 +2630,8 @@ function Get-PCStorageReport
         $Report = [ReportType]::All
     )
 
+    $Path = (gi $Path).FullName
+
     if (-not (Test-Path $Path)) {
         Write-Error "Path is not accessible. Please check and try again: $Path"
         return
@@ -2618,6 +2652,9 @@ function Get-PCStorageReport
         switch ($r) {
             { $_ -eq [ReportType]::SSBCache } {
                 Get-PCStorageReportSSBCache $Path -ReportLevel:$ReportLevel
+            }
+            { $_ -eq [ReportType]::SSBConnectivity } {
+                Get-PCStorageReportSSBConnectivity $Path -ReportLevel:$ReportLevel
             }
             { $_ -eq [ReportType]::StorageLatency } {
                 Get-PCStorageReportStorageLatency $Path -ReportLevel:$ReportLevel
