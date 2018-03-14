@@ -835,7 +835,7 @@ function Get-PCStorageDiagnosticInfo
                     $Disks = $_ | Get-PhysicalDisk 
                     $Disks | Export-Clixml($Path + $_.FriendlyName + "_Disks.xml")
                     
-                    $SSU = Get-StorageFaultDomain -StorageSubsystem (Get-StorageSubSystem Clustered*) -Type StorageScaleUnit
+                    $SSU = $Disks | Get-StorageFaultDomain -type StorageScaleUnit | group FriendlyName |% { $_.Group[0] }
                     $SSU | Export-Clixml($Path + $_.FriendlyName + "_SSU.xml")
                 }
             } catch {
