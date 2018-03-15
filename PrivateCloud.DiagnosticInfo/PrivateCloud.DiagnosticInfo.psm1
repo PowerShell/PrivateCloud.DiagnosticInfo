@@ -1755,6 +1755,9 @@ function Get-PCStorageDiagnosticInfo
                 $LocalFile = $Path+$Node+"_SystemInfo.TXT"
                 SystemInfo.exe /S $Node >$LocalFile
 
+                # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
+                # will be trimmed to "cmd" for logging
+                # node will be appended for execution
 				$CmdsToLog = "Get-NetAdapter -CimSession",
                                 "Get-NetAdapterAdvancedProperty -CimSession",
                                 "Get-NetIpAddress -CimSession",
@@ -1782,7 +1785,8 @@ function Get-PCStorageDiagnosticInfo
 
 				foreach ($cmd in $CmdsToLog)
 				{
-					$LocalFile = $Path + ($cmd -replace "-","") + $Node + ".TXT"
+                    # truncate cmd string to the cmd itself
+					$LocalFile = $Path + (($cmd.split(' '))[0] -replace "-","") + "-$($Node).TXT"
 					try {
                         iex "$cmd $Node" | Out-File -Width 9999 -Encoding ascii -FilePath $LocalFile
                     } catch {
