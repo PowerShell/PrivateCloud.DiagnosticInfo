@@ -58,6 +58,19 @@ function Show-JobRuntime(
 }
 
 #
+#  Convert an absolute local path to the equivalent remote path via SMB admin shares
+#  ex: c:\foo\bar & scratch -> \\scratch\C$\foo\bar
+#
+
+function Get-AdminSharePathFromLocal(
+    [string] $node,
+    [string] $local
+    )
+{
+    "\\"+$node+"\"+$local[0]+"$\"+$local.Substring(3,$local.Length-3)
+}
+
+#
 # Checks if the current version of module is the latest version
 #
 function Compare-ModuleVersion {
@@ -1301,8 +1314,6 @@ function Get-PCStorageDiagnosticInfo
         }
 
         $null = $j | Wait-Job
-        Show-JobRuntime $j
-
         $j | Receive-Job
         $j | Remove-Job
     }
@@ -1311,20 +1322,30 @@ function Get-PCStorageDiagnosticInfo
         "`nCluster Node: $node"
         Import-Clixml ($Path + $node + "_GetDrivers.XML") |? {
             ($_.DeviceCLass -eq 'SCSIADAPTER') -or ($_.DeviceCLass -eq 'NET') } |
-            Group-Object DeviceName, DriverVersion |
+            Group-Object DeviceName,DriverVersion |
             Sort Name |
-            Select-Object @{Expression={$_.Name};Label="Device Name, Driver Version"}
+            ft -AutoSize Count,
+                @{ Expression = { $_.Group[0].DeviceName }; Label = "DeviceName" },
+                @{ Expression = { $_.Group[0].DriverVersion }; Label = "DriverVersion" },
+                @{ Expression = { $_.Group[0].DriverDate }; Label = "DriverDate" }
     }
 
     "`nPhysical disks by Media Type, Model and Firmware Version" 
-    $PhysicalDisks | Group-Object MediaType, Model, FirmwareVersion | Format-Table Count, @{Expression={$_.Name};Label="Media Type, Model, Firmware Version"} -AutoSize
+    $PhysicalDisks | Group-Object MediaType,Model,FirmwareVersion |
+        ft -AutoSize Count,
+            @{ Expression = { $_.Group[0].Model }; Label="Model" },
+            @{ Expression = { $_.Group[0].FirmwareVersion }; Label="FirmwareVersion" },
+            @{ Expression = { $_.Group[0].MediaType }; Label="MediaType" }
 
  
     if ( -not (Get-Command *StorageEnclosure*) ) {
         Show-Warning("Storage Enclosure commands not available. See http://support.microsoft.com/kb/2913766/en-us")
     } else {
         "Storage Enclosures by Model and Firmware Version"
-        $StorageEnclosures | Group-Object Model, FirmwareVersion | Format-Table Count, @{Expression={$_.Name};Label="Model, Firmware Version"} -AutoSize
+        $StorageEnclosures | Group-Object Model,FirmwareVersion |
+            ft -AutoSize Count,
+                @{ Expression = { $_.Group[0].Model }; Label="Model" },
+                @{ Expression = { $_.Group[0].FirmwareVersion }; Label="FirmwareVersion" }
     }
     
     #
@@ -1696,7 +1717,6 @@ function Get-PCStorageDiagnosticInfo
         }
 
         $null = Wait-Job $j
-        Show-JobRuntime $j.ChildJobs
 
         Show-Update "Copying Event Logs...."
 
@@ -1714,8 +1734,6 @@ function Get-PCStorageDiagnosticInfo
         }
 
         $null = Wait-Job $copyjobs
-        Show-JobRuntime $copyjobs
-
         Remove-Job $j
         Remove-Job $copyjobs
 
@@ -1737,43 +1755,49 @@ function Get-PCStorageDiagnosticInfo
                 $LocalFile = $Path+$Node+"_SystemInfo.TXT"
                 SystemInfo.exe /S $Node >$LocalFile
 
-				$CmdsToLog = @("Get-NetAdapter",
-								"Get-NetAdapterAdvancedProperty",
-								"Get-NetIpAddress",
-								"Get-NetRoute",
-								"Get-NetQosPolicy",
-								"Get-NetIPv4Protocol",
-								"Get-NetIPv6Protocol",
-								"Get-NetOffloadGlobalSetting",
-								"Get-NetPrefixPolicy",
-								"Get-NetTCPConnection",
-								"Get-NetTcpSetting",
-								"Get-NetAdapterBinding",
-								"Get-NetAdapterChecksumOffload",
-								"Get-NetAdapterLso",
-								"Get-NetAdapterRss",
-								"Get-NetAdapterRdma",
-								"Get-NetAdapterIPsecOffload",
-								"Get-NetAdapterPacketDirect", 
-								"Get-NetAdapterRsc",
-								"Get-NetLbfoTeam",
-								"Get-NetLbfoTeamNic",
-								"Get-NetLbfoTeamMember",
-								"Get-SmbServerNetworkInterface");
+				$CmdsToLog = "Get-NetAdapter -CimSession",
+                                "Get-NetAdapterAdvancedProperty -CimSession",
+                                "Get-NetIpAddress -CimSession",
+                                "Get-NetRoute -CimSession",
+                                "Get-NetQosPolicy -CimSession",
+                                "Get-NetIPv4Protocol -CimSession",
+                                "Get-NetIPv6Protocol -CimSession",
+                                "Get-NetOffloadGlobalSetting -CimSession",
+                                "Get-NetPrefixPolicy -CimSession",
+                                "Get-NetTCPConnection -CimSession",
+                                "Get-NetTcpSetting -CimSession",
+                                "Get-NetAdapterBinding -CimSession",
+                                "Get-NetAdapterChecksumOffload -CimSession",
+                                "Get-NetAdapterLso -CimSession",
+                                "Get-NetAdapterRss -CimSession",
+                                "Get-NetAdapterRdma -CimSession",
+                                "Get-NetAdapterIPsecOffload -CimSession",
+                                "Get-NetAdapterPacketDirect -CimSession", 
+                                "Get-NetAdapterRsc -CimSession",
+                                "Get-NetLbfoTeam -CimSession",
+                                "Get-NetLbfoTeamNic -CimSession",
+                                "Get-NetLbfoTeamMember -CimSession",
+                                "Get-SmbServerNetworkInterface -CimSession",
+                                "Get-HotFix -ComputerName"
 
 				foreach ($cmd in $CmdsToLog)
 				{
-					$LocalFile = $Path + ($cmd -replace "-","") + $Node+".TXT"
-					try { Invoke-Expression "$cmd -CimSession $Node" >$LocalFile }
-					catch { ShowWarning("$cmd failed for node $Node") }
+					$LocalFile = $Path + ($cmd -replace "-","") + $Node + ".TXT"
+					try {
+                        iex "$cmd $Node" | Out-File -Width 9999 -Encoding ascii -FilePath $LocalFile
+                    } catch {
+                        Show-Warning("'$cmd $node' failed for node $Node")
+                    }
 				}
+
+                $NodePath = Invoke-Command -ComputerName $Node { $env:SystemRoot }
 
                 if ($IncludeDumps -eq $true) {
                     # Enumerate minidump files for a given node
 
-                    try { $NodePath = Invoke-Command -ComputerName $Node { Get-Content Env:\SystemRoot }
-                          $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)+"\Minidump\*.dmp"
-                          $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
+                    try {
+                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "Minidump\*.dmp"))
+                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
                     catch { $DmpFiles = ""; Show-Warning("Unable to get minidump files for node $Node") }
 
                     # Copy minidump files from the node
@@ -1784,9 +1808,9 @@ function Get-PCStorageDiagnosticInfo
                         catch { Show-Warning("Could not copy minidump file $_.FullName") }
                     }        
 
-                    try { $NodePath = Invoke-Command -ComputerName $Node { Get-Content Env:\SystemRoot }
-                          $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)+"\LiveKernelReports\*.dmp"
-                          $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
+                    try { 
+                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LiveKernelReports\*.dmp"))
+                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
                     catch { $DmpFiles = ""; Show-Warning("Unable to get LiveKernelReports files for node $Node") }
 
                     # Copy LiveKernelReports files from the node
@@ -1798,9 +1822,9 @@ function Get-PCStorageDiagnosticInfo
                     }        
                 }
 
-                try {$NodePath = Invoke-Command -ComputerName $Node { Get-Content Env:\SystemRoot }
-                     $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)+"\Cluster\Reports\*.*"
-                     $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
+                try {
+                    $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "Cluster\Reports\*.*"))
+                    $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
                 catch { $RepFiles = ""; Show-Warning("Unable to get reports for node $Node") }
 
                 # Copy logs from the Report directory
@@ -2298,8 +2322,10 @@ function Get-PCStorageReportStorageLatency
 
             param($dofull)
 
+            # hash for devices, label schema, and whether values are absolute counts or split success/faul
             $buckhash = @{}
             $bucklabels = $null
+            $buckvalueschema = $null
 
             $evs = @()
 
@@ -2335,9 +2361,37 @@ function Get-PCStorageReportStorageLatency
 
                 # only need to get the bucket label schema once
                 # the number of labels and the number of bucket counts should be equal
-                if ($bucklabels -eq $null) { $bucklabels = $xh['IoLatencyBuckets'] -split ',\s+' }
-                $buckvalues = $xh.Keys |? { $_ -like 'BucketIoCount*' } | sort |% { [int] $xh[$_] }
-                if ($bucklabels.count -ne $buckvalues.count) { throw "misparsed 505 event latency buckets: labels $($bucklabels.count) values $($buckvalues.count)" }
+                # determine the count schema at the same time
+                if ($bucklabels -eq $null) {
+                    $bucklabels = $xh['IoLatencyBuckets'] -split ',\s+'
+
+                    # is the count scheme split (RS5) or combined (RS1)?
+                    # match 1 is the bucket type
+                    # match 2 is the value bucket number (1 .. n)
+                    if ($xh.ContainsKey("BucketIoSuccess1")) {
+                        $buckvalueschema = "^BucketIo(Success|Failed)(\d+)$"
+                    } else {
+                        $buckvalueschema = "^BucketIo(Count)(\d+)$"
+                    }
+                }
+
+                # counting array for each bucket
+                $buckvalues = @($null) * $bucklabels.length
+
+                $xh.Keys |% {
+                    if ($_ -match $buckvalueschema) {
+
+                        # the schema parses the bucket number into match 2
+                        # number is 1-based
+                        $buckvalues[([int] $matches[2]) - 1] += [int] $xh[$_]
+                    }
+                }
+
+                # if the counting array contains null entries, we got confused matching
+                # counts to the label schema
+                if ($buckvalues -contains $null) {
+                    throw "misparsed 505 event latency buckets: labels $($bucklabels.count) values $(($buckvalues | measure).count)"
+                }
 
                 if (-not $buckhash.ContainsKey($dev)) {
                     # new device
