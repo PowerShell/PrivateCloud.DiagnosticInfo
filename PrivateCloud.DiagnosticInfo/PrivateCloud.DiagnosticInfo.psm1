@@ -4,7 +4,13 @@
  #                                                 #
  ##################################################>
 
- Import-Module Storage
+Import-Module Storage
+Import-Module SmbShare
+Import-Module SmbWitness
+Import-Module FailoverClusters
+Import-Module CimCmdlets
+Import-Module StorageSubSystem
+Add-Type -assembly "system.io.compression.filesystem"
 
 <##################################################
 #  Helper functions                               #
@@ -1501,7 +1507,7 @@ function Get-PCStorageDiagnosticInfo
 
 		$PerfRaw=Get-Counter -Counter $set.Paths -SampleInterval 1 -MaxSamples $PerfSamples -ErrorAction Ignore -WarningAction Ignore
 		Write-Progress -Activity "Gathering counters" -CurrentOperation "Exporting counters"
-		$PerfRaw | Export-counter -Path ($Path + "GetCounters.blg") -Force -FileFormat “BLG”
+		$PerfRaw | Export-counter -Path ($Path + "GetCounters.blg") -Force -FileFormat Â“BLGÂ”
 		Write-Progress -Activity "Gathering counters" -Completed
 
 		if ($ProcessCounter) {
