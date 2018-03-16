@@ -1638,8 +1638,13 @@ function Get-PCStorageDiagnosticInfo
 
             Param([int] $Hours)
             # Calculate number of milliseconds and prepare the WEvtUtil parameter to filter based on date/time
-            $MSecs = $Hours * 60 * 60 * 1000
-            
+
+            if ($Hours -ne -1) {
+                $MSecs = $Hours * 60 * 60 * 1000
+            } else {
+                $MSecs = -1
+            }               
+
             $QLevel = "*[System[(Level=2)]]"
             $QTime = "*[System[TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
             $QLevelAndTime = "*[System[(Level=2) and TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
@@ -1691,7 +1696,7 @@ function Get-PCStorageDiagnosticInfo
 
                 # Export filtered log file using the WEvtUtil command-line tool
                 # This includes filtering the events to errors (Level=2) that happened in recent hours.
-                if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management") {
+                if (($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management") -Or ($MSecs -eq -1)) {
                     WEvtUtil.exe epl $_.LogName $NodeFile /q:$QLevel /ow:true
                 } else {
                     WEvtUtil.exe epl $_.LogName $NodeFile /q:$QLevelAndTime /ow:true
@@ -1707,7 +1712,7 @@ function Get-PCStorageDiagnosticInfo
 
                 # Export unfiltered log file using the WEvtUtil command-line tool
             
-                if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management") {
+                if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management"  -Or ($MSecs -eq -1)) {
                     WEvtUtil.exe epl $_.LogName $UnfilteredNodeFile /ow:true
                 } else {
                     WEvtUtil.exe epl $_.LogName $UnfilteredNodeFile /q:$QTime /ow:true
