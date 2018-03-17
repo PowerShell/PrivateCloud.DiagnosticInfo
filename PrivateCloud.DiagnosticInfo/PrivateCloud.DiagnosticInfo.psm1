@@ -58,6 +58,19 @@ function Show-JobRuntime(
 }
 
 #
+#  Convert an absolute local path to the equivalent remote path via SMB admin shares
+#  ex: c:\foo\bar & scratch -> \\scratch\C$\foo\bar
+#
+
+function Get-AdminSharePathFromLocal(
+    [string] $node,
+    [string] $local
+    )
+{
+    "\\"+$node+"\"+$local[0]+"$\"+$local.Substring(3,$local.Length-3)
+}
+
+#
 # Checks if the current version of module is the latest version
 #
 function Compare-ModuleVersion {
@@ -805,26 +818,7 @@ function Get-PCStorageDiagnosticInfo
     #
     # Generate SBL Connectivity report based on input clusport information
     #
-
-    function Show-SBLConnectivity($node)
-    {
-        BEGIN {
-            $disks = 0
-            $enc = 0
-            $ssu = 0
-        }
-        PROCESS {
-            switch ($_.DeviceType) {
-                0 { $disks += 1 }
-                1 { $enc += 1 }
-                2 { $ssu += 1 }
-            }
-        }
-        END {
-            "$node has $disks disks, $enc enclosures, and $ssu scaleunit"
-        }
-    }
-
+    
     if ($S2DEnabled -eq $true) {
 
         #
@@ -832,6 +826,9 @@ function Get-PCStorageDiagnosticInfo
         #
 
         if (-not $Read) {
+
+            Show-Update "Unhealthy VD"
+
             try {
                 $NonHealthyVDs = Get-VirtualDisk | where {$_.HealthStatus -ne "Healthy" -OR $_.OperationalStatus -ne "OK"}
                 $NonHealthyVDs | Export-Clixml ($Path + "NonHealthyVDs.XML")
@@ -844,42 +841,38 @@ function Get-PCStorageDiagnosticInfo
                 Show-Warning("Not able to query extents for faulted virtual disks")
             } 
 
+            Show-Update "SSB Disks and SSU"
+
             try {
-                $NonHealthyPools = Get-StoragePool -ErrorAction SilentlyContinue | ? IsPrimordial -eq $false
-                foreach ($NonHealthyPool in $NonHealthyPools) {
-                    $faultyDisks = $NonHealthyPool | Get-PhysicalDisk 
-                    $faultySSU = $faultyDisks | Get-StorageFaultDomain -type StorageScaleUnit
-                    $faultyDisks | Export-Clixml($Path + $NonHealthyPool.FriendlyName + "_Disks.xml")
-                    $faultySSU | Export-Clixml($Path + $NonHealthyPool.FriendlyName + "_SSU.xml")
+                Get-StoragePool -ErrorAction SilentlyContinue | ? IsPrimordial -eq $false |% {
+                    $Disks = $_ | Get-PhysicalDisk 
+                    $Disks | Export-Clixml($Path + $_.FriendlyName + "_Disks.xml")
+                    
+                    $SSU = $Disks | Get-StorageFaultDomain -type StorageScaleUnit | group FriendlyName |% { $_.Group[0] }
+                    $SSU | Export-Clixml($Path + $_.FriendlyName + "_SSU.xml")
                 }
             } catch {
                 Show-Warning("Not able to query faulty disks and SSU for faulted pools")
-            } 
-        }
+            }
 
-        #
-        # Gather and report
-        #
+            Show-Update "SSB Connectivity"
 
-        try {
-            Write-Progress -Activity "Gathering SBL connectivity"
-            "SBL Connectivity"
-            foreach($node in $ClusterNodes |? { $_.State.ToString() -eq 'Up' }) {
-
-                Write-Progress -Activity "Gathering SBL connectivity" -currentOperation "collecting from $node"
-                if ($Read) {
-                    $endpoints = Import-Clixml ($Path + $node.Name + "_ClusPort.xml")
-                } else {
-                    $endpoints = Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $node
-                    $endpoints | Export-Clixml ($Path + $node.Name + "_ClusPort.xml")
+            try {
+                $j = $ClusterNodes |? { $_.State.ToString() -eq 'Up' } |% {
+                    $node = $_.Name
+                    Start-Job -Name $node {
+                        Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $using:node |
+                            Export-Clixml (Join-Path $using:Path ($using:node + "_ClusPort.xml"))
+                    }
                 }
 
-                $endpoints | Show-SBLConnectivity $node.Name
+                $null = $j | Wait-Job
+                $j | Receive-Job
+                $j | Remove-Job
+
+            } catch {
+                Show-Warning "Gathering SBL connectivity failed"
             }
-            Write-Progress -Activity "Gathering SBL connectivity" -Completed
-        } catch {
-            Write-Progress -Activity "Gathering SBL connectivity" -Completed
-            Show-Warning("Gathering SBL connectivity failed")
         }
     }
 
@@ -1321,8 +1314,6 @@ function Get-PCStorageDiagnosticInfo
         }
 
         $null = $j | Wait-Job
-        Show-JobRuntime $j
-
         $j | Receive-Job
         $j | Remove-Job
     }
@@ -1331,20 +1322,30 @@ function Get-PCStorageDiagnosticInfo
         "`nCluster Node: $node"
         Import-Clixml ($Path + $node + "_GetDrivers.XML") |? {
             ($_.DeviceCLass -eq 'SCSIADAPTER') -or ($_.DeviceCLass -eq 'NET') } |
-            Group-Object DeviceName, DriverVersion |
+            Group-Object DeviceName,DriverVersion |
             Sort Name |
-            Select-Object @{Expression={$_.Name};Label="Device Name, Driver Version"}
+            ft -AutoSize Count,
+                @{ Expression = { $_.Group[0].DeviceName }; Label = "DeviceName" },
+                @{ Expression = { $_.Group[0].DriverVersion }; Label = "DriverVersion" },
+                @{ Expression = { $_.Group[0].DriverDate }; Label = "DriverDate" }
     }
 
     "`nPhysical disks by Media Type, Model and Firmware Version" 
-    $PhysicalDisks | Group-Object MediaType, Model, FirmwareVersion | Format-Table Count, @{Expression={$_.Name};Label="Media Type, Model, Firmware Version"} -AutoSize
+    $PhysicalDisks | Group-Object MediaType,Model,FirmwareVersion |
+        ft -AutoSize Count,
+            @{ Expression = { $_.Group[0].Model }; Label="Model" },
+            @{ Expression = { $_.Group[0].FirmwareVersion }; Label="FirmwareVersion" },
+            @{ Expression = { $_.Group[0].MediaType }; Label="MediaType" }
 
  
     if ( -not (Get-Command *StorageEnclosure*) ) {
         Show-Warning("Storage Enclosure commands not available. See http://support.microsoft.com/kb/2913766/en-us")
     } else {
         "Storage Enclosures by Model and Firmware Version"
-        $StorageEnclosures | Group-Object Model, FirmwareVersion | Format-Table Count, @{Expression={$_.Name};Label="Model, Firmware Version"} -AutoSize
+        $StorageEnclosures | Group-Object Model,FirmwareVersion |
+            ft -AutoSize Count,
+                @{ Expression = { $_.Group[0].Model }; Label="Model" },
+                @{ Expression = { $_.Group[0].FirmwareVersion }; Label="FirmwareVersion" }
     }
     
     #
@@ -1654,8 +1655,6 @@ function Get-PCStorageDiagnosticInfo
 
             # Log prefixes to gather. Note that this is a simple pattern match; for instance, there are a number of
             # different providers that match *Microsoft-Windows-Storage*: Storage, StorageManagement, StorageSpaces, etc.
-            #
-            # TODO: make this a prefix match for self-documentatability. Confirm ClusterAware updating's prefix and do it.
             $LogPatterns = 'Microsoft-Windows-Storage',
                            'Microsoft-Windows-SMB',
                            'Microsoft-Windows-FailoverClustering',
@@ -1672,12 +1671,23 @@ function Get-PCStorageDiagnosticInfo
                            'Microsoft-Windows-HostGuardian',
                            'Microsoft-Windows-Kernel',
 						   'Microsoft-Windows-StorageSpaces',
-						   'Microsoft-Windows-SMB' |% { "*$_*" }
+						   'Microsoft-Windows-SMB' |% { "$_*" }
+
+            $LogPatternsToExclude = 'Microsoft-Windows-FailoverClustering/Diagnostic',
+                                    'Microsoft-Windows-FailoverClustering-Client/Diagnostic' |% { "$_*" }
 
             # Core logs to gather, by explicit names.
             $LogPatterns += 'System','Application'
 
             $Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node -Force -ErrorAction Ignore -WarningAction Ignore
+
+            # now apply exclusions
+            $Logs = $Logs |? {
+                $Log = $_.LogName
+                $m = ($LogPatternsToExclude |% { $Log -like $_ } | measure -sum).sum
+                -not $m
+            }
+            
             $Logs |% {
         
                 $FileSuffix = $Node+"_Event_"+$_.LogName.Replace("/","-")+".EVTX"
@@ -1712,9 +1722,6 @@ function Get-PCStorageDiagnosticInfo
         }
 
         $null = Wait-Job $j
-        Show-JobRuntime $j.ChildJobs
-#        $Logs = Receive-Job $j
-#        Remove-Job $j
 
         Show-Update "Copying Event Logs...."
 
@@ -1732,17 +1739,9 @@ function Get-PCStorageDiagnosticInfo
         }
 
         $null = Wait-Job $copyjobs
-        Show-JobRuntime $copyjobs
-
         Remove-Job $j
         Remove-Job $copyjobs
-<#
-        $Logs |% {
-            # Copy event log files and remove them from the source
-            Copy-Item $_ $Path -Force -ErrorAction SilentlyContinue
-            Remove-Item $_ -Force -ErrorAction SilentlyContinue
-        }
-#>
+
         Show-Update "Gathering System Info, Reports and Minidump files ..." 
 
         $Count1 = 0
@@ -1761,43 +1760,53 @@ function Get-PCStorageDiagnosticInfo
                 $LocalFile = $Path+$Node+"_SystemInfo.TXT"
                 SystemInfo.exe /S $Node >$LocalFile
 
-				$CmdsToLog = @("Get-NetAdapter",
-								"Get-NetAdapterAdvancedProperty",
-								"Get-NetIpAddress",
-								"Get-NetRoute",
-								"Get-NetQosPolicy",
-								"Get-NetIPv4Protocol",
-								"Get-NetIPv6Protocol",
-								"Get-NetOffloadGlobalSetting",
-								"Get-NetPrefixPolicy",
-								"Get-NetTCPConnection",
-								"Get-NetTcpSetting",
-								"Get-NetAdapterBinding",
-								"Get-NetAdapterChecksumOffload",
-								"Get-NetAdapterLso",
-								"Get-NetAdapterRss",
-								"Get-NetAdapterRdma",
-								"Get-NetAdapterIPsecOffload",
-								"Get-NetAdapterPacketDirect", 
-								"Get-NetAdapterRsc",
-								"Get-NetLbfoTeam",
-								"Get-NetLbfoTeamNic",
-								"Get-NetLbfoTeamMember",
-								"Get-SmbServerNetworkInterface");
+                # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
+                # will be trimmed to "cmd" for logging
+                # node will be appended for execution
+				$CmdsToLog = "Get-NetAdapter -CimSession",
+                                "Get-NetAdapterAdvancedProperty -CimSession",
+                                "Get-NetIpAddress -CimSession",
+                                "Get-NetRoute -CimSession",
+                                "Get-NetQosPolicy -CimSession",
+                                "Get-NetIPv4Protocol -CimSession",
+                                "Get-NetIPv6Protocol -CimSession",
+                                "Get-NetOffloadGlobalSetting -CimSession",
+                                "Get-NetPrefixPolicy -CimSession",
+                                "Get-NetTCPConnection -CimSession",
+                                "Get-NetTcpSetting -CimSession",
+                                "Get-NetAdapterBinding -CimSession",
+                                "Get-NetAdapterChecksumOffload -CimSession",
+                                "Get-NetAdapterLso -CimSession",
+                                "Get-NetAdapterRss -CimSession",
+                                "Get-NetAdapterRdma -CimSession",
+                                "Get-NetAdapterIPsecOffload -CimSession",
+                                "Get-NetAdapterPacketDirect -CimSession", 
+                                "Get-NetAdapterRsc -CimSession",
+                                "Get-NetLbfoTeam -CimSession",
+                                "Get-NetLbfoTeamNic -CimSession",
+                                "Get-NetLbfoTeamMember -CimSession",
+                                "Get-SmbServerNetworkInterface -CimSession",
+                                "Get-HotFix -ComputerName"
 
 				foreach ($cmd in $CmdsToLog)
 				{
-					$LocalFile = $Path + ($cmd -replace "-","") + $Node+".TXT"
-					try { Invoke-Expression "$cmd -CimSession $Node" >$LocalFile }
-					catch { ShowWarning("$cmd failed for node $Node") }
+                    # truncate cmd string to the cmd itself
+					$LocalFile = $Path + (($cmd.split(' '))[0] -replace "-","") + "-$($Node).TXT"
+					try {
+                        iex "$cmd $Node" | Out-File -Width 9999 -Encoding ascii -FilePath $LocalFile
+                    } catch {
+                        Show-Warning("'$cmd $node' failed for node $Node")
+                    }
 				}
+
+                $NodePath = Invoke-Command -ComputerName $Node { $env:SystemRoot }
 
                 if ($IncludeDumps -eq $true) {
                     # Enumerate minidump files for a given node
 
-                    try { $NodePath = Invoke-Command -ComputerName $Node { Get-Content Env:\SystemRoot }
-                          $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)+"\Minidump\*.dmp"
-                          $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
+                    try {
+                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "Minidump\*.dmp"))
+                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
                     catch { $DmpFiles = ""; Show-Warning("Unable to get minidump files for node $Node") }
 
                     # Copy minidump files from the node
@@ -1808,9 +1817,9 @@ function Get-PCStorageDiagnosticInfo
                         catch { Show-Warning("Could not copy minidump file $_.FullName") }
                     }        
 
-                    try { $NodePath = Invoke-Command -ComputerName $Node { Get-Content Env:\SystemRoot }
-                          $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)+"\LiveKernelReports\*.dmp"
-                          $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
+                    try { 
+                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LiveKernelReports\*.dmp"))
+                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
                     catch { $DmpFiles = ""; Show-Warning("Unable to get LiveKernelReports files for node $Node") }
 
                     # Copy LiveKernelReports files from the node
@@ -1822,9 +1831,9 @@ function Get-PCStorageDiagnosticInfo
                     }        
                 }
 
-                try {$NodePath = Invoke-Command -ComputerName $Node { Get-Content Env:\SystemRoot }
-                     $RPath = "\\"+$Node+"\"+$NodePath.Substring(0,1)+"$\"+$NodePath.Substring(3,$NodePath.Length-3)+"\Cluster\Reports\*.*"
-                     $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
+                try {
+                    $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "Cluster\Reports\*.*"))
+                    $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
                 catch { $RepFiles = ""; Show-Warning("Unable to get reports for node $Node") }
 
                 # Copy logs from the Report directory
@@ -1911,17 +1920,19 @@ function Get-PCStorageDiagnosticInfo
         try {
             Show-Update "Creating Zip file ..."
 
+            Add-Type -Assembly System.IO.Compression.FileSystem
             [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
             Show-Update "Zip File Name : $ZipPath"
 
             Show-Update "Cleaning up temporary directory $Path"
             Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
 
-            Show-Update "Cleaning up CimSessions"
-            Get-CimSession | Remove-CimSession
         } catch {
             Show-Error("Error creating the ZIP file!`nContent remains available at $Path") 
         }
+
+        Show-Update "Cleaning up CimSessions"
+        Get-CimSession | Remove-CimSession
     }
 
     Show-Update "COMPLETE"
@@ -1943,10 +1954,11 @@ enum ReportLevelType
 enum ReportType
 {
     All = 0
-    SSBCache = 1
-    StorageLatency = 2
-    StorageFirmware = 3
-    LSIEvent = 4
+    SSBCache
+    SSBConnectivity
+    StorageLatency
+    StorageFirmware
+    LSIEvent
 }
 
 # helper function to parse the csv-demarcated sections of the cluster log
@@ -2248,6 +2260,48 @@ function Get-PCStorageReportSSBCache
     }
 }
 
+function Get-PCStorageReportSSBConnectivity
+{
+    param(
+        [parameter(Position=0, Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $Path,
+
+        [parameter(Mandatory=$true)]
+        [ReportLevelType]
+        $ReportLevel
+    )
+
+    function Show-SSBConnectivity($node)
+    {
+        BEGIN {
+            $disks = 0
+            $enc = 0
+            $ssu = 0
+        }
+        PROCESS {
+            switch ($_.DeviceType) {
+                0 { $disks += 1 }
+                1 { $enc += 1 }
+                2 { $ssu += 1 }
+            }
+        }
+        END {
+            "$node has $disks disks, $enc enclosures, and $ssu scaleunit"
+        }
+    }
+
+    dir $path\*_ClusPort.xml | sort -Property BaseName |% {
+
+        if ($_.BaseName -match "^(.*)_ClusPort$") {
+            $node = $matches[1]
+        }
+
+        Import-Clixml $_ | Show-SSBConnectivity $node
+    }
+}
+
 function Get-PCStorageReportStorageLatency
 {
     param(
@@ -2277,8 +2331,10 @@ function Get-PCStorageReportStorageLatency
 
             param($dofull)
 
+            # hash for devices, label schema, and whether values are absolute counts or split success/faul
             $buckhash = @{}
             $bucklabels = $null
+            $buckvalueschema = $null
 
             $evs = @()
 
@@ -2314,9 +2370,37 @@ function Get-PCStorageReportStorageLatency
 
                 # only need to get the bucket label schema once
                 # the number of labels and the number of bucket counts should be equal
-                if ($bucklabels -eq $null) { $bucklabels = $xh['IoLatencyBuckets'] -split ',\s+' }
-                $buckvalues = $xh.Keys |? { $_ -like 'BucketIoCount*' } | sort |% { [int] $xh[$_] }
-                if ($bucklabels.count -ne $buckvalues.count) { throw "misparsed 505 event latency buckets: labels $($bucklabels.count) values $($buckvalues.count)" }
+                # determine the count schema at the same time
+                if ($bucklabels -eq $null) {
+                    $bucklabels = $xh['IoLatencyBuckets'] -split ',\s+'
+
+                    # is the count scheme split (RS5) or combined (RS1)?
+                    # match 1 is the bucket type
+                    # match 2 is the value bucket number (1 .. n)
+                    if ($xh.ContainsKey("BucketIoSuccess1")) {
+                        $buckvalueschema = "^BucketIo(Success|Failed)(\d+)$"
+                    } else {
+                        $buckvalueschema = "^BucketIo(Count)(\d+)$"
+                    }
+                }
+
+                # counting array for each bucket
+                $buckvalues = @($null) * $bucklabels.length
+
+                $xh.Keys |% {
+                    if ($_ -match $buckvalueschema) {
+
+                        # the schema parses the bucket number into match 2
+                        # number is 1-based
+                        $buckvalues[([int] $matches[2]) - 1] += [int] $xh[$_]
+                    }
+                }
+
+                # if the counting array contains null entries, we got confused matching
+                # counts to the label schema
+                if ($buckvalues -contains $null) {
+                    throw "misparsed 505 event latency buckets: labels $($bucklabels.count) values $(($buckvalues | measure).count)"
+                }
 
                 if (-not $buckhash.ContainsKey($dev)) {
                     # new device
@@ -2609,6 +2693,8 @@ function Get-PCStorageReport
         $Report = [ReportType]::All
     )
 
+    $Path = (gi $Path).FullName
+
     if (-not (Test-Path $Path)) {
         Write-Error "Path is not accessible. Please check and try again: $Path"
         return
@@ -2629,6 +2715,9 @@ function Get-PCStorageReport
         switch ($r) {
             { $_ -eq [ReportType]::SSBCache } {
                 Get-PCStorageReportSSBCache $Path -ReportLevel:$ReportLevel
+            }
+            { $_ -eq [ReportType]::SSBConnectivity } {
+                Get-PCStorageReportSSBConnectivity $Path -ReportLevel:$ReportLevel
             }
             { $_ -eq [ReportType]::StorageLatency } {
                 Get-PCStorageReportStorageLatency $Path -ReportLevel:$ReportLevel
