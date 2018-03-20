@@ -863,6 +863,8 @@ function Get-PCStorageDiagnosticInfo
                     Start-Job -Name $node {
                         Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $using:node |
                             Export-Clixml (Join-Path $using:Path ($using:node + "_ClusPort.xml"))
+                        Get-CimInstance -Namespace root\wmi -ClassName ClusBfltDeviceInformation -ComputerName $using:node |
+                            Export-Clixml (Join-Path $using:Path ($using:node + "_ClusBflt.xml"))
                     }
                 }
 
