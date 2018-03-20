@@ -1671,6 +1671,7 @@ function Get-PCStorageDiagnosticInfo
                            'Microsoft-Windows-HostGuardian',
                            'Microsoft-Windows-Kernel',
 						   'Microsoft-Windows-StorageSpaces',
+                           'Microsoft-Windows-DataIntegrityScan',
 						   'Microsoft-Windows-SMB' |% { "$_*" }
 
             $LogPatternsToExclude = 'Microsoft-Windows-FailoverClustering/Diagnostic',
@@ -1762,38 +1763,45 @@ function Get-PCStorageDiagnosticInfo
 
                 # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
                 # will be trimmed to "cmd" for logging
-                # node will be appended for execution
-				$CmdsToLog = "Get-NetAdapter -CimSession",
-                                "Get-NetAdapterAdvancedProperty -CimSession",
-                                "Get-NetIpAddress -CimSession",
-                                "Get-NetRoute -CimSession",
-                                "Get-NetQosPolicy -CimSession",
-                                "Get-NetIPv4Protocol -CimSession",
-                                "Get-NetIPv6Protocol -CimSession",
-                                "Get-NetOffloadGlobalSetting -CimSession",
-                                "Get-NetPrefixPolicy -CimSession",
-                                "Get-NetTCPConnection -CimSession",
-                                "Get-NetTcpSetting -CimSession",
-                                "Get-NetAdapterBinding -CimSession",
-                                "Get-NetAdapterChecksumOffload -CimSession",
-                                "Get-NetAdapterLso -CimSession",
-                                "Get-NetAdapterRss -CimSession",
-                                "Get-NetAdapterRdma -CimSession",
-                                "Get-NetAdapterIPsecOffload -CimSession",
-                                "Get-NetAdapterPacketDirect -CimSession", 
-                                "Get-NetAdapterRsc -CimSession",
-                                "Get-NetLbfoTeam -CimSession",
-                                "Get-NetLbfoTeamNic -CimSession",
-                                "Get-NetLbfoTeamMember -CimSession",
-                                "Get-SmbServerNetworkInterface -CimSession",
-                                "Get-HotFix -ComputerName"
+                # _C_ token will be replaced with node for cimsession/computername callouts
+				$CmdsToLog = "Get-NetAdapter -CimSession _C_",
+                                "Get-NetAdapterAdvancedProperty -CimSession _C_",
+                                "Get-NetIpAddress -CimSession _C_",
+                                "Get-NetRoute -CimSession _C_",
+                                "Get-NetQosPolicy -CimSession _C_",
+                                "Get-NetIPv4Protocol -CimSession _C_",
+                                "Get-NetIPv6Protocol -CimSession _C_",
+                                "Get-NetOffloadGlobalSetting -CimSession _C_",
+                                "Get-NetPrefixPolicy -CimSession _C_",
+                                "Get-NetTCPConnection -CimSession _C_",
+                                "Get-NetTcpSetting -CimSession _C_",
+                                "Get-NetAdapterBinding -CimSession _C_",
+                                "Get-NetAdapterChecksumOffload -CimSession _C_",
+                                "Get-NetAdapterLso -CimSession _C_",
+                                "Get-NetAdapterRss -CimSession _C_",
+                                "Get-NetAdapterRdma -CimSession _C_",
+                                "Get-NetAdapterIPsecOffload -CimSession _C_",
+                                "Get-NetAdapterPacketDirect -CimSession _C_", 
+                                "Get-NetAdapterRsc -CimSession _C_",
+                                "Get-NetLbfoTeam -CimSession _C_",
+                                "Get-NetLbfoTeamNic -CimSession _C_",
+                                "Get-NetLbfoTeamMember -CimSession _C_",
+                                "Get-SmbServerNetworkInterface -CimSession _C_",
+                                "Get-HotFix -ComputerName _C_",
+                                "Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_"
 
 				foreach ($cmd in $CmdsToLog)
 				{
                     # truncate cmd string to the cmd itself
-					$LocalFile = $Path + (($cmd.split(' '))[0] -replace "-","") + "-$($Node).TXT"
+					$LocalFile = $Path + (($cmd.split(' '))[0] -replace "-","") + "-$($Node)"
 					try {
-                        iex "$cmd $Node" | Out-File -Width 9999 -Encoding ascii -FilePath $LocalFile
+
+                        $out = iex ($cmd -replace '_C_',$Node)
+
+                        # capture as txt and xml for quick analysis according to taste
+                        $out | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
+                        $out | Export-Clixml -Path "$LocalFile.xml"
+
                     } catch {
                         Show-Warning("'$cmd $node' failed for node $Node")
                     }
