@@ -195,7 +195,7 @@ function Get-PCStorageDiagnosticInfo
 
         [parameter(ParameterSetName="Write", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [int] $HoursOfEvents = 48,
+        [int] $HoursOfEvents = -1,
 
 		[parameter(ParameterSetName="Write", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
