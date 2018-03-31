@@ -10,7 +10,7 @@
 RootModule = 'PrivateCloud.DiagnosticInfo.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.0.14'
+ModuleVersion = '1.0.15'
 
 # ID used to uniquely identify this module
 GUID = '7e0bc824-c371-4936-98e6-b7216ba5f348'
@@ -25,7 +25,7 @@ CompanyName = 'Microsoft Corporation'
 Copyright = '(c) 2016 Microsoft Corporation. All rights reserved.'
 
 # Description of the functionality provided by this module
-Description = 'Evaluates and reports the cloud health'
+Description = 'Evaluates and Reports Windows Software Defined Data Center (SDDC) Health'
 
 # Minimum version of the Windows PowerShell engine required by this module
 # PowerShellVersion = ''
@@ -64,9 +64,8 @@ Description = 'Evaluates and reports the cloud health'
 # NestedModules = @()
 
 # Functions to export from this module
-FunctionsToExport = @('Get-PCStorageDiagnosticInfo',
-                      'Get-PCStorageReport'
-                      'Get-PCAzureStackACSDiagnosticInfo')
+FunctionsToExport = 'Get-SddcDiagnosticInfo',
+                    'Show-SddcDiagnosticReport'
 
 # Cmdlets to export from this module
 # CmdletsToExport = ''
@@ -75,9 +74,10 @@ FunctionsToExport = @('Get-PCStorageDiagnosticInfo',
 # VariablesToExport = ''
 
 # Aliases to export from this module
-AliasesToExport = @('getpcsdi',
-                    'Test-StorageHealth',
-					'getacslog')
+AliasesToExport = 'gsddcdi',
+                  'Get-PCStorageDiagnosticInfo',
+                  'getpcsdi',
+                  'Get-PCStorageReport'
 
 # List of all modules packaged with this module
 # ModuleList = @()

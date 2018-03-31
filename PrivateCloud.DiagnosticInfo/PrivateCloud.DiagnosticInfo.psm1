@@ -90,44 +90,40 @@ function Compare-ModuleVersion {
 
 <# 
     .SYNOPSIS 
-       Report on Storage Cluster Health
+       Get state and diagnostic information for all software-defined datacenter (SDDC) features in a Windows Server 2016 cluster
 
     .DESCRIPTION 
-       Show Storage Cluster Health information for major cluster and storage objects.
-       Run from one of the nodes of the Storage Cluster or specify a cluster name.
+       Get state and diagnostic information for all software-defined datacenter (SDDC) features in a Windows Server 2016 cluster
+       Run from one of the nodes of the cluster or specify a cluster name.
        Results are saved to a folder (default C:\Users\<user>\HealthTest) for later review and replay.
 
     .LINK 
         To provide feedback and contribute visit https://github.com/PowerShell/PrivateCloud.Health
 
     .EXAMPLE 
-       Get-PCStorageDiagnosticInfo
+       Get-SddcDiagnosticInfo
  
-       Reports on overall storage cluster health, capacity, performance and events.
        Uses the default temporary working folder at C:\Users\<user>\HealthTest
        Saves the zipped results at C:\Users\<user>\HealthTest-<cluster>-<date>.ZIP
 
     .EXAMPLE 
-       Get-PCStorageDiagnosticInfo -WriteToPath C:\Test
+       Get-SddcDiagnosticInfo -WriteToPath C:\Test
  
-       Reports on overall storage cluster health, capacity, performance and events.
-       Uses the specified folder as the temporary working folder
+       Uses the specified folder as the temporary working folder.
 
     .EXAMPLE 
-       Get-PCStorageDiagnosticInfo -ClusterName Cluster1
+       Get-SddcDiagnosticInfo -ClusterName Cluster1
  
-       Reports on overall storage cluster health, capacity, performance and events.
-       Targets the storage cluster specified.
+       Targets the cluster specified.
 
     .EXAMPLE 
-       Get-PCStorageDiagnosticInfo -ReadFromPath C:\Test
+       Get-SddcDiagnosticInfo -ReadFromPath C:\Test
  
-       Reports on overall storage cluster health, capacity, performance and events.
        Results are obtained from the specified folder, not from a live cluster.
 
 #> 
 
-function Get-PCStorageDiagnosticInfo
+function Get-SddcDiagnosticInfo
 {
     [CmdletBinding(DefaultParameterSetName="Write")]
     [OutputType([String])]
@@ -1503,7 +1499,7 @@ function Get-PCStorageDiagnosticInfo
 
 		$PerfRaw=Get-Counter -Counter $set.Paths -SampleInterval 1 -MaxSamples $PerfSamples -ErrorAction Ignore -WarningAction Ignore
 		Write-Progress -Activity "Gathering counters" -CurrentOperation "Exporting counters"
-		$PerfRaw | Export-counter -Path ($Path + "GetCounters.blg") -Force -FileFormat “BLG”
+		$PerfRaw | Export-counter -Path ($Path + "GetCounters.blg") -Force -FileFormat BLG
 		Write-Progress -Activity "Gathering counters" -Completed
 
 		if ($ProcessCounter) {
@@ -1954,7 +1950,7 @@ function Get-PCStorageDiagnosticInfo
 
 enum ReportLevelType
 {
-    Summary
+    Summary = 0
     Standard
     Full
 }
@@ -1964,8 +1960,8 @@ enum ReportLevelType
 enum ReportType
 {
     All = 0
-    SSBCache
-    SSBConnectivity
+    StorageBusCache
+    StorageBusConnectivity
     StorageLatency
     StorageFirmware
     LSIEvent
@@ -1978,7 +1974,7 @@ function Get-ClusterLogDataSources(
     [string] $logname
     )
 {
-    
+
     BEGIN {
         $csvf = New-TemporaryFile
         $sr = [System.IO.StreamReader](gi $logname).FullName
@@ -2076,14 +2072,14 @@ function Get-ClusterLogDataSources(
 }
 
 # helper function which trims the full-length disk state
-function Format-SSBCacheDiskState(
+function Format-StorageBusCacheDiskState(
     [string] $DiskState
     )
 {
     $DiskState -replace 'CacheDiskState',''
 }
 
-function Get-PCStorageReportSSBCache
+function Get-StorageBusCacheReport
 {
     param(
         [parameter(Position=0, Mandatory=$true)]
@@ -2166,7 +2162,7 @@ function Get-PCStorageReportSSBCache
             }
 
             if ($ReportLevel -eq [ReportLevelType]::Full) {
-                $d | sort IsSblCacheDevice,CacheDeviceId,DiskState | ft -AutoSize @{ Label = 'DiskState'; Expression = { Format-SSBCacheDiskState $_.DiskState }},
+                $d | sort IsSblCacheDevice,CacheDeviceId,DiskState | ft -AutoSize @{ Label = 'DiskState'; Expression = { Format-StorageBusCacheDiskState $_.DiskState }},
                     DiskId,ProductId,Serial,@{
                         Label = 'Device#'; Expression = {$_.DeviceNumber}
                     },
@@ -2262,15 +2258,15 @@ function Get-PCStorageReportSSBCache
 
             if (@($g).count -ne 1) {
                 write-output "Disk State Summary:"
-                $g | sort -property Name | ft @{ Label = 'DiskState'; Expression = { Format-SSBCacheDiskState $_.Name}},@{ Label = "Number of Disks"; Expression = { $_.Count }}
+                $g | sort -property Name | ft @{ Label = 'DiskState'; Expression = { Format-StorageBusCacheDiskState $_.Name}},@{ Label = "Number of Disks"; Expression = { $_.Count }}
             } else {
-                write-output "All disks are in $(Format-SSBCacheDiskState $g.name)"
+                write-output "All disks are in $(Format-StorageBusCacheDiskState $g.name)"
             }
         }
     }
 }
 
-function Get-PCStorageReportSSBConnectivity
+function Get-StorageBusConnectivityReport
 {
     param(
         [parameter(Position=0, Mandatory=$true)]
@@ -2312,7 +2308,7 @@ function Get-PCStorageReportSSBConnectivity
     }
 }
 
-function Get-PCStorageReportStorageLatency
+function Get-StorageLatencyReport
 {
     param(
         [parameter(Position=0, Mandatory=$true)]
@@ -2552,7 +2548,7 @@ function Get-PCStorageReportStorageLatency
     }
 }
 
-function Get-PCStorageReportStorageFirmware
+function Get-StorageFirmwareReport
 {
     param(
         [parameter(Position=0, Mandatory=$true)]
@@ -2614,7 +2610,7 @@ function Get-PCStorageReportStorageFirmware
     }
 }
 
-function Get-PCStorageReportLsiEvent
+function Get-LsiEventReport
 {
     param(
         [parameter(Position=0, Mandatory=$true)]
@@ -2666,13 +2662,13 @@ function Get-PCStorageReportLsiEvent
 
 <#
 .SYNOPSIS
-    Show diagnostic reports based on information collected from Get-PCStorageDiagnosticInfo.
+    Show diagnostic reports based on information collected from Get-SddcDiagnosticInfo.
 
 .DESCRIPTION
-    Show diagnostic reports based on information collected from Get-PCStorageDiagnosticInfo.    
+    Show diagnostic reports based on information collected from Get-SddcDiagnosticInfo.
 
 .PARAMETER Path
-    Path to the the logs produced by Get-PCStorageDiagnosticInfo. This must be the un-zipped report (Expand-Archive).
+    Path to the the logs produced by Get-SddcDiagnosticInfo. This must be the un-zipped report (Expand-Archive).
 
 .PARAMETER ReportLevel
     Controls the level of detail in the report. By default standard reports are shown. Full detail may be extensive.
@@ -2681,11 +2677,11 @@ function Get-PCStorageReportLsiEvent
     Specifies individual reports to produce. By default all reports will be shown.
 
 .EXAMPLE
-    Get-PCStorageTriageReport -Path C:\log -Report Full
+    Show-SddcReport -Path C:\log -Report Full
 
 #>
 
-function Get-PCStorageReport
+function Show-SddcDiagnosticReport
 {
     [CmdletBinding()]
     param(
@@ -2723,20 +2719,20 @@ function Get-PCStorageReport
         $t0 = Get-Date
 
         switch ($r) {
-            { $_ -eq [ReportType]::SSBCache } {
-                Get-PCStorageReportSSBCache $Path -ReportLevel:$ReportLevel
+            { $_ -eq [ReportType]::StorageBusCache } {
+                Get-StorageBusCacheReport $Path -ReportLevel:$ReportLevel
             }
-            { $_ -eq [ReportType]::SSBConnectivity } {
-                Get-PCStorageReportSSBConnectivity $Path -ReportLevel:$ReportLevel
+            { $_ -eq [ReportType]::StorageBusConnectivity } {
+                Get-StorageBusConnectivityReport $Path -ReportLevel:$ReportLevel
             }
             { $_ -eq [ReportType]::StorageLatency } {
-                Get-PCStorageReportStorageLatency $Path -ReportLevel:$ReportLevel
+                Get-StorageLatencyReport $Path -ReportLevel:$ReportLevel
             }
             { $_ -eq [ReportType]::StorageFirmware } {
-                Get-PCStorageReportStorageFirmware $Path -ReportLevel:$ReportLevel
+                Get-StorageFirmwareReport $Path -ReportLevel:$ReportLevel
             }
             { $_ -eq [ReportType]::LsiEvent } {
-                Get-PCStorageReportLsiEvent $Path -ReportLevel:$ReportLevel
+                Get-LsiEventReport $Path -ReportLevel:$ReportLevel
             }
             default {
                 throw "Internal Error: unknown report type $r"
@@ -2748,7 +2744,11 @@ function Get-PCStorageReport
     }
 }
 
-New-Alias -Name getpcsdi -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
-New-Alias -Name Test-StorageHealth -Value Get-PCStorageDiagnosticInfo -Description "Collects & reports the Storage Cluster state & diagnostic information"
+# DEPRECATED New-Alias -Value Get-SddcDiagnosticInfo -Name Test-StorageHealth # Original name when Jose started (CPSv1)
+New-Alias -Value Get-SddcDiagnosticInfo -Name Get-PCStorageDiagnosticInfo # Name until 02/2018, changed for inclusiveness
+New-Alias -Value Get-SddcDiagnosticInfo -Name getpcsdi # Shorthand for Get-PCStorageDiagnosticInfo
+New-Alias -Value Get-SddcDiagnosticInfo -Name gsddcdi # New alias
 
-Export-ModuleMember -Alias * -Function Get-PCStorageDiagnosticInfo,Get-PCStorageReport
+New-Alias -Value Show-SddcDiagnosticReport -name Get-PCStorageReport
+
+Export-ModuleMember -Alias * -Function Get-SddcDiagnosticInfo,Show-SddcDiagnosticReport
