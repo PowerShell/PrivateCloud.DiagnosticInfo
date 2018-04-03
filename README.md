@@ -58,6 +58,129 @@ Test-StorageHealth -ReadFromPath D:\Folder
 Test-StorageHealth -IncludeEvents:$false
 ```
 
-# What to expect next ?
+# What to expect next?
 A lot of improvements and new cmdlets to analyze SDDC system health.
 Provide feedback on what you'd like to see.
+
+# What does the cmdlet output include?
+## Files Collected
+ 0_CloudHealthSummary.log
+## XML Files
+-	GetAllErrors.XML
+-	GetAssociations.XML
+-	GetCluster.XML
+-	GetClusterGroup.XML
+-	GetClusterNetwork.XML
+-	GetClusterNode.XML
+-	GetClusterResource.XML
+-	GetClusterSharedVolume.XML
+-	GetDedupVolume.XML
+-	GetNetAdapter_NodeName.FQDN.XML
+-	GetParameters.XML
+-	GetPhysicalDisk.XML
+-	GetReliabilityCounter.XML
+-	GetSmbOpenFile.XML
+-	GetSmbServerNetworkInterface_NodeName.FQDN.XML
+-	GetSmbWitness.XML
+-	GetStorageEnclosure.XML
+-	GetStorageNodeView.XML
+-	GetStoragePool.XML
+-	GetVirtualDisk.XML
+-	GetVolume.XML
+-	NonHealthyVDs.XML
+-	NodeName_GetDrivers.XML
+
+## Cluster & Health log
+- NodeName.FQDN_cluster.log
+- NodeName.FQDN_health.log
+## System Information (MSInfo32)
+- NodeName.FQDN_SystemInfo.TXT
+## Event Logs (unfiltered)
+ - NodeName_UnfilteredEvent_Application.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-BranchCacheSMB-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-CloudStorageWizard-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-DiskDiagnostic-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-DiskDiagnosticDataCollector-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-DiskDiagnosticResolver-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-ClusBflt-Management.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-ClusBflt-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-Clusport-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-CsvFs-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-Diagnostic.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-DiagnosticVerbose.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-Manager-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-Manager-Diagnostic.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-Manager-Tracing.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-NetFt-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-WMIProvider-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Compute-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Compute-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Config-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Config-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Guest-Drivers-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Guest-Drivers-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-High-Availability-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Hypervisor-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Hypervisor-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Shared-VHDX-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Shared-VHDX-Reservation.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-StorageVSP-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-VID-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-VMMS-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-VMMS-Networking.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-VMMS-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-VMMS-Storage.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-VmSwitch-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Worker-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-ApphelpCache-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-Boot-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-EventTracing-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-IO-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-PnP-Configuration.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-Power-Thermal-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-ShimEngine-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-StoreMgr-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-WDI-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-WHEA-Errors.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-WHEA-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Ntfs-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Ntfs-WHC.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-ResumeKeyFilter-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-ScmDisk0101-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-SmbClient-Connectivity.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-SMBClient-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-SmbClient-Security.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-SMBDirect-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-SMBServer-Audit.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-SMBServer-Connectivity.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-SMBServer-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-SMBServer-Security.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-SMBWitnessClient-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-SMBWitnessClient-Informational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-SMBWitnessServer-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Storage-ATAPort-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Storage-ATAPort-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Storage-ClassPnP-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Storage-ClassPnP-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Storage-Disk-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Storage-Disk-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Storage-Storport-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Storage-Storport-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-Storage-Tiering-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-StorageManagement-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-StorageSpaces-Driver-Diagnostic.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-StorageSpaces-Driver-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-StorageSpaces-ManagementAgent-WHC.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-StorageSpaces-SpaceManager-Diagnostic.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-StorageSpaces-SpaceManager-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-TerminalServices-PnPDevices-Admin.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-TerminalServices-PnPDevices-Operational.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-UserPnp-ActionCenter.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-UserPnp-DeviceInstall.EVTX
+ - NodeName_UnfilteredEvent_Microsoft-Windows-VHDMP-Operational.EVTX
+ - NodeName_UnfilteredEvent_System.EVTX     
+## Storage Diagnostics
+ - OperationalLog.evtx
+ - OperationalLog_0.MTA
+
