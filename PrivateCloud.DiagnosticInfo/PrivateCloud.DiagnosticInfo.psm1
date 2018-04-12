@@ -735,8 +735,8 @@ function Get-SddcDiagnosticInfo
             $NuGetProvider = Get-PackageProvider -Name NuGet | Where-Object -FilterScript {$_.Version -gt 2.8.5.201}
             If (-not $NuGetProvider) {
                 Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ErrorAction SilentlyContinue | Out-Null
-            }
-            $NuGetProvider = Get-PackageProvider -Name NuGet | Where-Object -FilterScript {$_.Version -gt 2.8.5.201}
+	        $NuGetProvider = Get-PackageProvider -Name NuGet | Where-Object -FilterScript {$_.Version -gt 2.8.5.201}    
+	    }
 
             If ($NuGetProvider) {
                 Compare-ModuleVersion
