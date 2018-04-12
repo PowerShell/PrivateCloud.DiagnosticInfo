@@ -24,6 +24,10 @@ Update-Module PrivateCloud.DiagnosticInfo -Verbose
 Download the latest module from github - https://github.com/PowerShell/PrivateCloud.DiagnosticInfo/archive/master.zip and extract directory PrivateCloud.DiagnosticInfo to the correct powershell modules path pointed by $env:PSModulePath
 
 ``` PowerShell
+# Allowing Tls12 and Tls11 -- e.g. github now requires Tls12
+# If this is not set, the Invoke-WebRequest fails with "The request was aborted: Could not create SSL/TLS secure channel."
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11
+
 Invoke-WebRequest -Uri "https://github.com/PowerShell/PrivateCloud.DiagnosticInfo/archive/master.zip" -outfile "$env:TEMP\master.zip" -Verbose
 Expand-Archive -Path "$env:TEMP\master.zip" -DestinationPath "$env:TEMP" -Force -Verbose
 Copy-Item -Recurse -Path "$env:TEMP\PrivateCloud.DiagnosticInfo-master\PrivateCloud.DiagnosticInfo" -Destination "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules\" -Force -Verbose
