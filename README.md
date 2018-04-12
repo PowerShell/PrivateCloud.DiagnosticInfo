@@ -1,8 +1,8 @@
 # PrivateCloud.DiagnosticInfo
 # Overview
-This module is used as a comprehensive diagnostic information gatherer for Microsoft Software Defined Datacenter solutions. It assumes deployment with compute and/or storage clusters running Windows Server 2016 or newer. The module has diagnostic commands like Get-PCStorageDiagnosticInfo (aka Test-StorageHealth) which performs specific health checks for Failover Clustering (Cluster, Resources, Networks, Nodes), Storage Spaces (Physical Disks, Enclosures, Virtual Disks), Cluster Shared Volumes, SMB File Shares and Deduplication. Sources available at Github ( http://github.com/Powershell/PrivateCloud.DiagnosticInfo) and download available via Powershell Gallery at (https://www.powershellgallery.com/packages/PrivateCloud.DiagnosticInfo)
+This module is used as a comprehensive diagnostic information gatherer for Microsoft Software Defined Datacenter solutions. It assumes deployment with compute and/or storage clusters running Windows Server 2016 or newer. The module has diagnostic commands like Get-SDDCDiagnosticInfo (a.k.a. Get-PCStorageDiagnosticInfo, previously known as Test-StorageHealth) which performs specific health checks for Failover Clustering (Cluster, Resources, Networks, Nodes), Storage Spaces (Physical Disks, Enclosures, Virtual Disks), Cluster Shared Volumes, SMB File Shares, and Deduplication. Sources available at Github ( http://github.com/Powershell/PrivateCloud.DiagnosticInfo) and download available via Powershell Gallery at (https://www.powershellgallery.com/packages/PrivateCloud.DiagnosticInfo)
 
-Test-StorageHealth command in this module includes several sections, including:
+Get-SDDCDiagnosticInfo command in this module includes several sections, including:
 1. Reporting of Storage Health, plus details on unhealthy components. 
 2. Reporting of Storage Capacity by Pool, Volume and Deduplicated volume. 
 3. Reporting of Storage Performance with IOPS and Latency per Volume 
@@ -24,38 +24,42 @@ Update-Module PrivateCloud.DiagnosticInfo -Verbose
 Download the latest module from github - https://github.com/PowerShell/PrivateCloud.DiagnosticInfo/archive/master.zip and extract directory PrivateCloud.DiagnosticInfo to the correct powershell modules path pointed by $env:PSModulePath
 
 ``` PowerShell
+# Allowing Tls12 and Tls11 -- e.g. github now requires Tls12
+# If this is not set, the Invoke-WebRequest fails with "The request was aborted: Could not create SSL/TLS secure channel."
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11
+
 Invoke-WebRequest -Uri "https://github.com/PowerShell/PrivateCloud.DiagnosticInfo/archive/master.zip" -outfile "$env:TEMP\master.zip" -Verbose
 Expand-Archive -Path "$env:TEMP\master.zip" -DestinationPath "$env:TEMP" -Force -Verbose
 Copy-Item -Recurse -Path "$env:TEMP\PrivateCloud.DiagnosticInfo-master\PrivateCloud.DiagnosticInfo" -Destination "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules\" -Force -Verbose
 Import-Module PrivateCloud.DiagnosticInfo -Verbose
 Get-Command -Module PrivateCloud.DiagnosticInfo
-Get-Help Test-StorageHealth
+Get-Help Get-SDDCDiagnosticInfo
 ``` 
 
 # To execute against a remote storage cluster
 Note: Example below runs against storage cluster name "CLUS01"
 ``` PowerShell
-Test-StorageHealth -ClusterName CLUS01 -Verbose
+Get-SDDCDiagnosticInfo -ClusterName CLUS01 -Verbose
 ```
 
 # To execute locally on clustered storage node
 ``` PowerShell
-Test-StorageHealth -Verbose
+Get-SDDCDiagnosticInfo -Verbose
 ```
 
 # To save results to a specified folder
 ``` PowerShell
-Test-StorageHealth -WriteToPath D:\Folder 
+Get-SDDCDiagnosticInfo -WriteToPath D:\Folder 
 ```
 
 # To review results previously save to a folder
 ``` PowerShell
-Test-StorageHealth -ReadFromPath D:\Folder 
+Get-SDDCDiagnosticInfo -ReadFromPath D:\Folder 
 ```
 
 # To exclude events from data collection
 ``` PowerShell
-Test-StorageHealth -IncludeEvents:$false
+Get-SDDCDiagnosticInfo -IncludeEvents:$false
 ```
 
 # What to expect next?

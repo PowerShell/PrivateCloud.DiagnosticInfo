@@ -7,68 +7,76 @@
  Import-Module Storage
 
 <##################################################
-#  Helper functions                               #
+#  Common Helper functions                        #
 ##################################################>
 
-#
-# Shows error, cancels script
-#
-function Show-Error(
-    [string] $Message,
-    [System.Management.Automation.ErrorRecord] $e = $null
-    )
-{
-    $Message = "$(get-date -format 's') : $Message - cmdlet was cancelled"
-    if ($e) {
-        Write-Error $Message
-        throw $e
-    } else {
-        Write-Error $Message -ErrorAction Stop
+$CommonFunc = {
+
+    #
+    # Shows error, cancels script
+    #
+    function Show-Error(
+        [string] $Message,
+        [System.Management.Automation.ErrorRecord] $e = $null
+        )
+    {
+        $Message = "$(get-date -format 's') : $Message - cmdlet was cancelled"
+        if ($e) {
+            Write-Error $Message
+            throw $e
+        } else {
+            Write-Error $Message -ErrorAction Stop
+        }
     }
-}
  
-#
-# Shows warning, script continues
-#
-function Show-Warning(
-    [string] $Message
-    )
-{
-    Write-Warning "$(get-date -format 's') : $Message"
-}
+    #
+    # Shows warning, script continues
+    #
+    function Show-Warning(
+        [string] $Message
+        )
+    {
+        Write-Warning "$(get-date -format 's') : $Message"
+    }
 
-#
-# Show arbitrary normal status message, with optional color coding
-#
-function Show-Update(
-    [string] $Message,
-    [System.ConsoleColor] $ForegroundColor = [System.ConsoleColor]::White
-    )
-{
-    Write-Host -ForegroundColor $ForegroundColor "$(get-date -format 's') : $Message"
-}
+    #
+    # Show arbitrary normal status message, with optional color coding
+    #
+    function Show-Update(
+        [string] $Message,
+        [System.ConsoleColor] $ForegroundColor = [System.ConsoleColor]::White
+        )
+    {
+        Write-Host -ForegroundColor $ForegroundColor "$(get-date -format 's') : $Message"
+    }
 
-function Show-JobRuntime(
-    [object[]] $jobs
-    )
-{
-    $jobs | sort Name,Location |% {
-        Show-Update "$($_.Name) [$($_.Location)]: Total $('{0:N1}' -f ($_.PSEndTime - $_.PSBeginTime).TotalSeconds)s : Start $($_.PSBeginTime.ToString('s')) - Stop $($_.PSEndTime.ToString('s'))"
+    function Show-JobRuntime(
+        [object[]] $jobs
+        )
+    {
+        $jobs | sort Name,Location |% {
+            Show-Update "$($_.Name) [$($_.Location)]: Total $('{0:N1}' -f ($_.PSEndTime - $_.PSBeginTime).TotalSeconds)s : Start $($_.PSBeginTime.ToString('s')) - Stop $($_.PSEndTime.ToString('s'))"
+        }
+    }
+
+    #
+    #  Convert an absolute local path to the equivalent remote path via SMB admin shares
+    #  ex: c:\foo\bar & scratch -> \\scratch\C$\foo\bar
+    #
+
+    function Get-AdminSharePathFromLocal(
+        [string] $node,
+        [string] $local
+        )
+    {
+        "\\"+$node+"\"+$local[0]+"$\"+$local.Substring(3,$local.Length-3)
     }
 }
 
-#
-#  Convert an absolute local path to the equivalent remote path via SMB admin shares
-#  ex: c:\foo\bar & scratch -> \\scratch\C$\foo\bar
-#
-
-function Get-AdminSharePathFromLocal(
-    [string] $node,
-    [string] $local
-    )
-{
-    "\\"+$node+"\"+$local[0]+"$\"+$local.Substring(3,$local.Length-3)
-}
+# evaluate into the main session
+# scriptblocks are flattened to strings on passing via $using
+# iex will be used there
+. $CommonFunc
 
 #
 # Checks if the current version of module is the latest version
@@ -1126,6 +1134,15 @@ function Get-SddcDiagnosticInfo
 
     if ($VDsHealthy -lt $VDsTotal) { Show-Warning("Unhealthy virtual disks detected") }
 
+    # Storage tier information
+    if ($Read) {
+        $StorageTiers = Import-Clixml ($Path + "GetStorageTier.XML")
+    } else {
+        try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+              $StorageTiers = Get-StorageTier -CimSession $AccessNode }
+        catch { Show-Error("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
+        $StorageTiers | Export-Clixml ($Path + "GetStorageTier.XML")
+    }
     # Storage pool health
 
     if ($Read) {
@@ -1161,6 +1178,14 @@ function Get-SddcDiagnosticInfo
 
     if ($PDsTotal -lt $ExpectedPhysicalDisks) { Show-Warning("Fewer physical disks than the $ExpectedPhysicalDisks expected") }
     if ($PDsHealthy -lt $PDsTotal) { Show-Warning("Unhealthy physical disks detected") }
+    if ($Read) {
+        $PhysicalDiskSNV = Import-Clixml ($Path + "GetPhysicalDiskSNV.XML")
+    } else {
+        try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+              $PhysicalDiskSNV = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $SubSystem | Get-PhysicalDiskSNV }
+        catch { Show-Error("Unable to get Physical Disk Storage Node View. `nError="+$_.Exception.Message) }
+        $PhysicalDiskSNV | Export-Clixml ($Path + "GetPhysicalDiskSNV.XML")
+    }
 
     # Reliability counters
 
@@ -1607,7 +1632,7 @@ function Get-SddcDiagnosticInfo
     #
     # Phase 6
     #
-    Show-Update "<<< Phase 6 - Recent Error events >>>`n" -ForegroundColor Cyan
+    Show-Update "<<< Phase 6 - Events and Logs >>>`n" -ForegroundColor Cyan
 
     if ((-not $Read) -and (-not $IncludeEvents)) {
        "Events were excluded by a parameter`n"
@@ -1635,21 +1660,21 @@ function Get-SddcDiagnosticInfo
         $j = Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob {
 
             Param([int] $Hours)
-            # Calculate number of milliseconds and prepare the WEvtUtil parameter to filter based on date/time
 
+            # import common functions
+            iex $using:CommonFunc
+
+            # Calculate number of milliseconds and prepare the WEvtUtil parameter to filter based on date/time
             if ($Hours -ne -1) {
                 $MSecs = $Hours * 60 * 60 * 1000
             } else {
                 $MSecs = -1
             }               
 
-            $QLevel = "*[System[(Level=2)]]"
             $QTime = "*[System[TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
-            $QLevelAndTime = "*[System[(Level=2) and TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
 
             $Node = $env:COMPUTERNAME
             $NodePath = [System.IO.Path]::GetTempPath()
-            $RPath = "\\$Node\$($NodePath[0])$\"+$NodePath.Substring(3,$NodePath.Length-3)
 
             # Log prefixes to gather. Note that this is a simple pattern match; for instance, there are a number of
             # different providers that match *Microsoft-Windows-Storage*: Storage, StorageManagement, StorageSpaces, etc.
@@ -1672,13 +1697,17 @@ function Get-SddcDiagnosticInfo
                            'Microsoft-Windows-DataIntegrityScan',
 						   'Microsoft-Windows-SMB' |% { "$_*" }
 
+            # Exclude verbose/lower value channels
+            # The FailoverClustering Diagnostics are reflected in the cluster logs, already gathered (and large)
+            # StorageSpaces Performance is very expensive to export and not usually needed
             $LogPatternsToExclude = 'Microsoft-Windows-FailoverClustering/Diagnostic',
-                                    'Microsoft-Windows-FailoverClustering-Client/Diagnostic' |% { "$_*" }
+                                    'Microsoft-Windows-FailoverClustering-Client/Diagnostic',
+                                    'Microsoft-Windows-StorageSpaces-Driver/Performance' |% { "$_*" }
 
             # Core logs to gather, by explicit names.
             $LogPatterns += 'System','Application'
 
-            $Logs = Get-WinEvent -ListLog $LogPatterns -ComputerName $Node -Force -ErrorAction Ignore -WarningAction Ignore
+            $Logs = Get-WinEvent -ListLog $LogPatterns -Force -ErrorAction Ignore -WarningAction Ignore
 
             # now apply exclusions
             $Logs = $Logs |? {
@@ -1686,41 +1715,24 @@ function Get-SddcDiagnosticInfo
                 $m = ($LogPatternsToExclude |% { $Log -like $_ } | measure -sum).sum
                 -not $m
             }
-            
-            $Logs |% {
-        
-                $FileSuffix = $Node+"_Event_"+$_.LogName.Replace("/","-")+".EVTX"
-                $NodeFile = $NodePath+$FileSuffix
-                $RFile = $RPath+$FileSuffix
-
-                # Export filtered log file using the WEvtUtil command-line tool
-                # This includes filtering the events to errors (Level=2) that happened in recent hours.
-                if (($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management") -Or ($MSecs -eq -1)) {
-                    WEvtUtil.exe epl $_.LogName $NodeFile /q:$QLevel /ow:true
-                } else {
-                    WEvtUtil.exe epl $_.LogName $NodeFile /q:$QLevelAndTime /ow:true
-                }
-                Write-Output $RFile
-            }
 
             $Logs |% {
         
-                $UnfilteredFileSuffix = $Node+"_UnfilteredEvent_"+$_.LogName.Replace("/","-")+".EVTX"
-                $UnfilteredNodeFile = $NodePath+$UnfilteredFileSuffix
-                $UnfilteredRFile = $RPath+$UnfilteredFileSuffix
+                $NodeFile = $NodePath+$Node+"_UnfilteredEvent_"+$_.LogName.Replace("/","-")+".EVTX"
 
                 # Export unfiltered log file using the WEvtUtil command-line tool
             
                 if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management"  -Or ($MSecs -eq -1)) {
-                    WEvtUtil.exe epl $_.LogName $UnfilteredNodeFile /ow:true
+                    WEvtUtil.exe epl $_.LogName $NodeFile /ow:true
                 } else {
-                    WEvtUtil.exe epl $_.LogName $UnfilteredNodeFile /q:$QTime /ow:true
+                    WEvtUtil.exe epl $_.LogName $NodeFile /q:$QTime /ow:true
                 }
-                Write-Output $UnfilteredRFile
+                Write-Output (Get-AdminSharePathFromLocal $Node $NodeFile)
             }
         }
 
         $null = Wait-Job $j
+        Show-JobRuntime $j.childjobs
 
         Show-Update "Copying Event Logs...."
 
@@ -1728,10 +1740,11 @@ function Get-SddcDiagnosticInfo
         $copyjobs = @()
         $j.ChildJobs |% {
             $logs = Receive-Job $_
+
             $copyjobs += start-job -Name "Copy $($_.Location)" {
 
                 $using:logs |% {
-                    Copy-Item $_ $using:Path -Force -ErrorAction SilentlyContinue
+                    Copy-Item $_ $using:Path -Force -ErrorAction SilentlyContinue -Verbose
                     Remove-Item $_ -Force -ErrorAction SilentlyContinue
                 }
             }
@@ -1743,26 +1756,23 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Gathering System Info, Reports and Minidump files ..." 
 
-        $Count1 = 0
-        $Total1 = NCount($ClusterNodes)
-    
-        if ($Total1 -gt 0) {
-    
-            $ClusterNodes |% {
+        $j = $ClusterNodes |% {
 
-                $Progress = ( $Count1 / $Total1 ) * 100
-                Write-Progress -Activity "Gathering System Info, Reports and Minidump files" -PercentComplete $Progress
-                $Node = $_.Name + "." + $Cluster.Domain
+            Start-Job -Name $_.Name -ArgumentList $_.Name,$Cluster.Domain {
+
+                param($NodeName,$DomainName)
+
+                $Node = "$NodeName.$DomainName"
 
                 # Gather SYSTEMINFO.EXE output for a given node
 
-                $LocalFile = $Path+$Node+"_SystemInfo.TXT"
+                $LocalFile = $using:Path+$Node+"_SystemInfo.TXT"
                 SystemInfo.exe /S $Node >$LocalFile
 
                 # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
                 # will be trimmed to "cmd" for logging
                 # _C_ token will be replaced with node for cimsession/computername callouts
-				$CmdsToLog = "Get-NetAdapter -CimSession _C_",
+			    $CmdsToLog = "Get-NetAdapter -CimSession _C_",
                                 "Get-NetAdapterAdvancedProperty -CimSession _C_",
                                 "Get-NetIpAddress -CimSession _C_",
                                 "Get-NetRoute -CimSession _C_",
@@ -1788,11 +1798,11 @@ function Get-SddcDiagnosticInfo
                                 "Get-HotFix -ComputerName _C_",
                                 "Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_"
 
-				foreach ($cmd in $CmdsToLog)
-				{
+			    foreach ($cmd in $CmdsToLog)
+			    {
                     # truncate cmd string to the cmd itself
-					$LocalFile = $Path + (($cmd.split(' '))[0] -replace "-","") + "-$($Node)"
-					try {
+				    $LocalFile = $using:Path + (($cmd.split(' '))[0] -replace "-","") + "-$($Node)"
+				    try {
 
                         $out = iex ($cmd -replace '_C_',$Node)
 
@@ -1803,11 +1813,11 @@ function Get-SddcDiagnosticInfo
                     } catch {
                         Show-Warning("'$cmd $node' failed for node $Node")
                     }
-				}
+			    }
 
                 $NodePath = Invoke-Command -ComputerName $Node { $env:SystemRoot }
 
-                if ($IncludeDumps -eq $true) {
+                if ($using:IncludeDumps -eq $true) {
                     # Enumerate minidump files for a given node
 
                     try {
@@ -1818,7 +1828,7 @@ function Get-SddcDiagnosticInfo
                     # Copy minidump files from the node
 
                     $DmpFiles |% {
-                        $LocalFile = $Path + $Node + "_" + $_.Name 
+                        $LocalFile = $using:Path + $Node + "_" + $_.Name 
                         try { Copy-Item $_.FullName $LocalFile } 
                         catch { Show-Warning("Could not copy minidump file $_.FullName") }
                     }        
@@ -1831,7 +1841,7 @@ function Get-SddcDiagnosticInfo
                     # Copy LiveKernelReports files from the node
 
                     $DmpFiles |% {
-                        $LocalFile = $Path + $Node + "_" + $_.Name 
+                        $LocalFile = $using:Path + $Node + "_" + $_.Name 
                         try { Copy-Item $_.FullName $LocalFile } 
                         catch { Show-Warning("Could not copy LiveKernelReports file $_.FullName") }
                     }        
@@ -1842,27 +1852,26 @@ function Get-SddcDiagnosticInfo
                     $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
                 catch { $RepFiles = ""; Show-Warning("Unable to get reports for node $Node") }
 
-                # Copy logs from the Report directory
+                # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
                 $RepFiles |% {
                     if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
-                        $LocalFile = $Path + $Node + "_" + $_.Name
+                        $LocalFile = $using:Path + $Node + "_" + $_.Name
                         try { Copy-Item $_.FullName $LocalFile }
                         catch { Show-Warning("Could not copy report file $_.FullName") }
                     }
                 }
-
-                $Count1++
             }
         }
+
+        $null = Wait-Job $j
+        Show-JobRuntime $j
+        Remove-Job $j
 
         Write-Progress -Activity "Gathering System Info and Minidump files" -Completed
 
         Show-Update "Receiving Cluster Logs..."
         $ClusterLogJob | Wait-Job | Receive-Job | ft -AutoSize
-        $ClusterLogJob | Remove-Job        
-
-        $errorFilePath = $Path + "\*"
-        Remove-Item -Path $errorFilePath -Include "*_Event_*.EVTX" -Recurse -Force -ErrorAction SilentlyContinue
+        $ClusterLogJob | Remove-Job
 
         Show-Update "All Logs Received`n"
     }
