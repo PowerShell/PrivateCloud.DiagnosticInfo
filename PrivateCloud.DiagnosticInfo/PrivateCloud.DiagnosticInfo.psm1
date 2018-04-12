@@ -731,7 +731,16 @@ function Get-SddcDiagnosticInfo
 
     if ($S2DEnabled -ne $true) {
         if ((Test-NetConnection -ComputerName 'www.microsoft.com' -Hops 1 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue).PingSucceeded) {
-            Compare-ModuleVersion
+            # The update check requires the NuGet provider version 2.8.5.201 or greater
+            $NuGetProvider = Get-PackageProvider -Name NuGet | Where-Object -FilterScript {$_.Version -gt 2.8.5.201}
+            If (-not $NuGetProvider) {
+                Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ErrorAction SilentlyContinue | Out-Null
+            }
+            $NuGetProvider = Get-PackageProvider -Name NuGet | Where-Object -FilterScript {$_.Version -gt 2.8.5.201}
+
+            If ($NuGetProvider) {
+                Compare-ModuleVersion
+            }
         }
     }
 
