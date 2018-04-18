@@ -133,6 +133,9 @@ function Compare-ModuleVersion {
 
 function Get-SddcDiagnosticInfo
 {
+    # disables the warning re: www.microsoft.com beacon check
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingComputerNameHardcoded", "")]
+
     [CmdletBinding(DefaultParameterSetName="Write")]
     [OutputType([String])]
 
@@ -730,6 +733,8 @@ function Get-SddcDiagnosticInfo
     "S2D Enabled                : $S2DEnabled"
 
     if ($S2DEnabled -ne $true) {
+        # note: this hardcoded beacon results in a powershell validation warning which we disable at the top of the fn
+        # if this is ever removed, remove the disable
         if ((Test-NetConnection -ComputerName 'www.microsoft.com' -Hops 1 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue).PingSucceeded) {
             # The update check requires the NuGet provider version 2.8.5.201 or greater
             $NuGetProvider = Get-PackageProvider -Name NuGet | ? {$_.Version -gt 2.8.5.201}
