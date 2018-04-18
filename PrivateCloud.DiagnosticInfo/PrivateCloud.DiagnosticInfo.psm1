@@ -83,11 +83,11 @@ $CommonFunc = {
 #
 function Compare-ModuleVersion {
     if ($PSVersionTable.PSVersion -lt [System.Version]"5.0.0") {
-        Show-Warning("Current PS Version does not support this operation. `nPlease check for updated module from PS Gallery and update using: Update-Module PrivateCloud.DiagnosticInfo")
+        Show-Warning "Current PS Version does not support this operation. `nPlease check for updated module from PS Gallery and update using: Update-Module PrivateCloud.DiagnosticInfo"
     }
     else {        
         if ((Find-Module -Name PrivateCloud.DiagnosticInfo).Version -gt (Get-Module PrivateCloud.DiagnosticInfo).Version) {        
-            Show-Warning ("There is an updated module available on PowerShell Gallery. Please update the module using: Update-Module PrivateCloud.DiagnosticInfo")
+            Show-Warning "There is an updated module available on PowerShell Gallery. Please update the module using: Update-Module PrivateCloud.DiagnosticInfo"
         }
     }
 }
@@ -765,7 +765,7 @@ function Get-SddcDiagnosticInfo
     $ScaleOutServers = $ClusterGroups | Where-Object GroupType -like "ScaleOut*"
     if ($null -eq $ScaleOutServers) { 
         if ($S2DEnabled -ne $true) {
-            Show-Warning("No Scale-Out File Server cluster roles found") 
+            Show-Warning "No Scale-Out File Server cluster roles found"
         }
     } else {
         $ScaleOutName = $ScaleOutServers[0].Name+"."+$Cluster.Domain
@@ -781,7 +781,7 @@ function Get-SddcDiagnosticInfo
         if ($(Invoke-Command -ComputerName $AccessNode {(-not (Get-Command -Module Deduplication))} )) { 
             $DedupEnabled = $false
             if ($S2DEnabled -ne $true) {
-                Show-Warning("Deduplication PowerShell not installed on cluster node.")
+                Show-Warning "Deduplication PowerShell not installed on cluster node."
             }
         }
     }
@@ -833,7 +833,7 @@ function Get-SddcDiagnosticInfo
     # Generate SBL Connectivity report based on input clusport information
     #
     
-    if ($S2DEnabled -eq $true) {
+    if ($S2DEnabled) {
 
         #
         # Gather only
@@ -852,7 +852,7 @@ function Get-SddcDiagnosticInfo
                     $NonHealthyExtents | Export-Clixml($Path + $NonHealthyVD.FriendlyName + "_Extents.xml")
                 }
             } catch {
-                Show-Warning("Not able to query extents for faulted virtual disks")
+                Show-Warning "Not able to query extents for faulted virtual disks"
             } 
 
             Show-Update "SSB Disks and SSU"
@@ -866,7 +866,7 @@ function Get-SddcDiagnosticInfo
                     $SSU | Export-Clixml($Path + $_.FriendlyName + "_SSU.xml")
                 }
             } catch {
-                Show-Warning("Not able to query faulty disks and SSU for faulted pools")
+                Show-Warning "Not able to query faulty disks and SSU for faulted pools"
             }
 
             Show-Update "SSB Connectivity"
@@ -965,8 +965,8 @@ function Get-SddcDiagnosticInfo
     $NodesHealthy = NCount($ClusterNodes | Where {$_.State -like "Paused" -or $_.State -like "Up"})
     "Cluster Nodes up              : $NodesHealthy / $NodesTotal"
 
-    if ($NodesTotal -lt $ExpectedNodes) { Show-Warning("Fewer nodes than the $ExpectedNodes expected") }
-    if ($NodesHealthy -lt $NodesTotal) { Show-Warning("Unhealthy nodes detected") }
+    if ($NodesTotal -lt $ExpectedNodes) { Show-Warning "Fewer nodes than the $ExpectedNodes expected" }
+    if ($NodesHealthy -lt $NodesTotal) { Show-Warning "Unhealthy nodes detected" }
 
     if ($Read) {
         $ClusterNetworks = Import-Clixml ($Path + "GetClusterNetwork.XML")
@@ -983,8 +983,8 @@ function Get-SddcDiagnosticInfo
     "Cluster Networks up           : $NetsHealthy / $NetsTotal"
     
 
-    if ($NetsTotal -lt $ExpectedNetworks) { Show-Warning("Fewer cluster networks than the $ExpectedNetworks expected") }
-    if ($NetsHealthy -lt $NetsTotal) { Show-Warning("Unhealthy cluster networks detected") }
+    if ($NetsTotal -lt $ExpectedNetworks) { Show-Warning "Fewer cluster networks than the $ExpectedNetworks expected" }
+    if ($NetsHealthy -lt $NetsTotal) { Show-Warning "Unhealthy cluster networks detected" }
 
     if ($Read) {
         $ClusterResources = Import-Clixml ($Path + "GetClusterResource.XML")
@@ -994,12 +994,30 @@ function Get-SddcDiagnosticInfo
         $ClusterResources | Export-Clixml ($Path + "GetClusterResource.XML")
     }
 
+
+    if ($Read) {
+        $ClusterResourceParameters = Import-Clixml ($Path + "GetClusterResourceParameters.XML")
+    } else {
+        try { $ClusterResourceParameters = Get-ClusterResource -Cluster $ClusterName | Get-ClusterParameter }
+        catch { Show-Error("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
+        $ClusterResourceParameters | Export-Clixml ($Path + "GetClusterResourceParameters.XML")
+    }
+
     # Cluster resource health
 
     $ResTotal = NCount($ClusterResources)
     $ResHealthy = NCount($ClusterResources | Where-Object State -like "Online")
     "Cluster Resources Online      : $ResHealthy / $ResTotal "
-    if ($ResHealthy -lt $ResTotal) { Show-Warning("Unhealthy cluster resources detected") }
+    if ($ResHealthy -lt $ResTotal) { Show-Warning "Unhealthy cluster resources detected" }
+
+    if ($S2DEnabled) {
+        $HealthProviderCount = @(($ClusterResourceParameters |? { $_.ClusterObject -eq 'Health' -and $_.Name -eq 'Providers' }).Value).Count
+        if ($HealthProviderCount) {
+            "Health Resource               : $HealthProviderCount health providers registered"
+        } else {
+            Show-Warning "Health Resource providers not registered"
+        }
+    }
 
     if ($Read) {
         $CSV = Import-Clixml ($Path + "GetClusterSharedVolume.XML")
@@ -1014,7 +1032,7 @@ function Get-SddcDiagnosticInfo
     $CSVTotal = NCount($CSV)
     $CSVHealthy = NCount($CSV | Where-Object State -like "Online")
     "Cluster Shared Volumes Online : $CSVHealthy / $CSVTotal"
-    if ($CSVHealthy -lt $CSVTotal) { Show-Warning("Unhealthy cluster shared volumes detected") }
+    if ($CSVHealthy -lt $CSVTotal) { Show-Warning "Unhealthy cluster shared volumes detected" }
 
     "`nHealthy Components count: [SMBShare -> CSV -> VirtualDisk -> StoragePool -> PhysicalDisk -> StorageEnclosure]"
 
@@ -1058,7 +1076,7 @@ function Get-SddcDiagnosticInfo
     $ShTotal = NCount($ShareStatus)
     $ShHealthy = NCount($ShareStatus | Where-Object Health -like "Accessible")
     "SMB CA Shares Accessible      : $ShHealthy / $ShTotal"
-    if ($ShHealthy -lt $ShTotal) { Show-Warning("Inaccessible CA shares detected") }
+    if ($ShHealthy -lt $ShTotal) { Show-Warning "Inaccessible CA shares detected" }
 
     # Open files 
 
@@ -1072,7 +1090,7 @@ function Get-SddcDiagnosticInfo
 
     $FileTotal = NCount( $SmbOpenFiles | Group-Object ClientComputerName)
     "Users with Open Files         : $FileTotal"
-    if ($FileTotal -eq 0) { Show-Warning("No users with open files") }
+    if ($FileTotal -eq 0) { Show-Warning "No users with open files" }
 
     # SMB witness
 
@@ -1086,7 +1104,7 @@ function Get-SddcDiagnosticInfo
 
     $WitTotal = NCount($SmbWitness | Where-Object State -eq RequestedNotifications | Group-Object ClientName)
     "Users with a Witness           : $WitTotal"
-    if ($WitTotal -eq 0) { Show-Warning("No users with a Witness") }
+    if ($WitTotal -eq 0) { Show-Warning "No users with a Witness" }
 
     # Volume health
 
@@ -1118,8 +1136,8 @@ function Get-SddcDiagnosticInfo
         $DedupHealthy = NCount($DedupVolumes | Where-Object LastOptimizationResult -eq 0 )
         "Dedup Volumes Healthy         : $DedupHealthy / $DedupTotal "
 
-        if ($DedupTotal -lt $ExpectedDedupVolumes) { Show-Warning("Fewer Dedup volumes than the $ExpectedDedupVolumes expected") }
-        if ($DedupHealthy -lt $DedupTotal) { Show-Warning("Unhealthy Dedup volumes detected") }
+        if ($DedupTotal -lt $ExpectedDedupVolumes) { Show-Warning "Fewer Dedup volumes than the $ExpectedDedupVolumes expected" }
+        if ($DedupHealthy -lt $DedupTotal) { Show-Warning "Unhealthy Dedup volumes detected" }
     } else {
         $DedupVolumes = @()
         $DedupTotal = 0
@@ -1142,7 +1160,7 @@ function Get-SddcDiagnosticInfo
     $VDsHealthy = NCount($VirtualDisks | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
     "Virtual Disks Healthy         : $VDsHealthy / $VDsTotal"
 
-    if ($VDsHealthy -lt $VDsTotal) { Show-Warning("Unhealthy virtual disks detected") }
+    if ($VDsHealthy -lt $VDsTotal) { Show-Warning "Unhealthy virtual disks detected" }
 
     # Storage tier information
     if ($Read) {
@@ -1168,8 +1186,8 @@ function Get-SddcDiagnosticInfo
     $PoolsHealthy = NCount($StoragePools | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
     "Storage Pools Healthy         : $PoolsHealthy / $PoolsTotal "
 
-    if ($PoolsTotal -lt $ExpectedPools) { Show-Warning("Fewer storage pools than the $ExpectedPools expected") }
-    if ($PoolsHealthy -lt $PoolsTotal) { Show-Warning("Unhealthy storage pools detected") }
+    if ($PoolsTotal -lt $ExpectedPools) { Show-Warning "Fewer storage pools than the $ExpectedPools expected" }
+    if ($PoolsHealthy -lt $PoolsTotal) { Show-Warning "Unhealthy storage pools detected" }
 
     # Physical disk health
 
@@ -1186,8 +1204,8 @@ function Get-SddcDiagnosticInfo
     $PDsHealthy = NCount($PhysicalDisks | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
     "Physical Disks Healthy        : $PDsHealthy / $PDsTotal"
 
-    if ($PDsTotal -lt $ExpectedPhysicalDisks) { Show-Warning("Fewer physical disks than the $ExpectedPhysicalDisks expected") }
-    if ($PDsHealthy -lt $PDsTotal) { Show-Warning("Unhealthy physical disks detected") }
+    if ($PDsTotal -lt $ExpectedPhysicalDisks) { Show-Warning "Fewer physical disks than the $ExpectedPhysicalDisks expected" }
+    if ($PDsHealthy -lt $PDsTotal) { Show-Warning "Unhealthy physical disks detected" }
     if ($Read) {
         $PhysicalDiskSNV = Import-Clixml ($Path + "GetPhysicalDiskSNV.XML")
     } else {
@@ -1203,7 +1221,7 @@ function Get-SddcDiagnosticInfo
         if (Test-Path ($Path + "GetReliabilityCounter.XML")) {
             $ReliabilityCounters = Import-Clixml ($Path + "GetReliabilityCounter.XML")
         } else {
-            Show-Warning("Reliability Counters not gathered for this capture")
+            Show-Warning "Reliability Counters not gathered for this capture"
         }
     } else {
         if ($IncludeReliabilityCounters -eq $true) {
@@ -1217,7 +1235,7 @@ function Get-SddcDiagnosticInfo
     # Storage enclosure health - only performed if the required KB is present
 
     if (-not (Get-Command *StorageEnclosure*)) {
-        Show-Warning("Storage Enclosure commands not available. See http://support.microsoft.com/kb/2913766/en-us")
+        Show-Warning "Storage Enclosure commands not available. See http://support.microsoft.com/kb/2913766/en-us"
     } else {
         if ($Read) {
             if (Test-Path ($Path + "GetStorageEnclosure.XML") -ErrorAction SilentlyContinue ) {
@@ -1236,8 +1254,8 @@ function Get-SddcDiagnosticInfo
         $EncsHealthy = NCount($StorageEnclosures | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
         "Storage Enclosures Healthy    : $EncsHealthy / $EncsTotal "
 
-        if ($EncsTotal -lt $ExpectedEnclosures) { Show-Warning("Fewer storage enclosures than the $ExpectedEnclosures expected") }
-        if ($EncsHealthy -lt $EncsTotal) { Show-Warning("Unhealthy storage enclosures detected") }
+        if ($EncsTotal -lt $ExpectedEnclosures) { Show-Warning "Fewer storage enclosures than the $ExpectedEnclosures expected" }
+        if ($EncsHealthy -lt $EncsTotal) { Show-Warning "Unhealthy storage enclosures detected" }
     }   
 
     #
@@ -1372,7 +1390,7 @@ function Get-SddcDiagnosticInfo
 
  
     if ( -not (Get-Command *StorageEnclosure*) ) {
-        Show-Warning("Storage Enclosure commands not available. See http://support.microsoft.com/kb/2913766/en-us")
+        Show-Warning "Storage Enclosure commands not available. See http://support.microsoft.com/kb/2913766/en-us"
     } else {
         "Storage Enclosures by Model and Firmware Version"
         $StorageEnclosures | Group-Object Model,FirmwareVersion |
@@ -1397,7 +1415,7 @@ function Get-SddcDiagnosticInfo
 				$Associations = $AssocJob | Wait-Job | Receive-Job
 				$AssocJob | Remove-Job
 				if ($null -eq $Associations) {
-					Show-Warning("Unable to get object associations")
+					Show-Warning "Unable to get object associations"
 				}
 				$Associations | Export-Clixml ($Path + "GetAssociations.XML")
 
@@ -1405,11 +1423,11 @@ function Get-SddcDiagnosticInfo
 				$SNVView = $SNVJob | Wait-Job | Receive-Job
 				$SNVJob | Remove-Job
 				if ($null -eq $SNVView) {
-					Show-Warning("Unable to get nodes storage view associations")
+					Show-Warning "Unable to get nodes storage view associations"
 				}
 				$SNVView | Export-Clixml ($Path + "GetStorageNodeView.XML")        
 			} catch {
-				Show-Warning("Not able to query associations..")
+				Show-Warning "Not able to query associations.."
 			}
 		}
 	}
@@ -1629,7 +1647,7 @@ function Get-SddcDiagnosticInfo
 				}
     
 			} else {
-				Show-Warning("Unable to collect performance information")
+				Show-Warning "Unable to collect performance information"
 				$PerfVolume = @()
 				$PerfDetail = @()
 			}
@@ -1821,7 +1839,7 @@ function Get-SddcDiagnosticInfo
                         $out | Export-Clixml -Path "$LocalFile.xml"
 
                     } catch {
-                        Show-Warning("'$cmd $node' failed for node $Node")
+                        Show-Warning "'$cmd $node' failed for node $Node"
                     }
 			    }
 
@@ -1833,7 +1851,7 @@ function Get-SddcDiagnosticInfo
                     try {
                         $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "Minidump\*.dmp"))
                         $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
-                    catch { $DmpFiles = ""; Show-Warning("Unable to get minidump files for node $Node") }
+                    catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $Node" }
 
                     # Copy minidump files from the node
 
@@ -1846,28 +1864,28 @@ function Get-SddcDiagnosticInfo
                     try { 
                         $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LiveKernelReports\*.dmp"))
                         $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
-                    catch { $DmpFiles = ""; Show-Warning("Unable to get LiveKernelReports files for node $Node") }
+                    catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $Node" }
 
                     # Copy LiveKernelReports files from the node
 
                     $DmpFiles |% {
                         $LocalFile = $using:Path + $Node + "_" + $_.Name 
                         try { Copy-Item $_.FullName $LocalFile } 
-                        catch { Show-Warning("Could not copy LiveKernelReports file $_.FullName") }
+                        catch { Show-Warning "Could not copy LiveKernelReports file $_.FullName" }
                     }        
                 }
 
                 try {
                     $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "Cluster\Reports\*.*"))
                     $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-                catch { $RepFiles = ""; Show-Warning("Unable to get reports for node $Node") }
+                catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $Node" }
 
                 # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
                 $RepFiles |% {
                     if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
                         $LocalFile = $using:Path + $Node + "_" + $_.Name
                         try { Copy-Item $_.FullName $LocalFile }
-                        catch { Show-Warning("Could not copy report file $_.FullName") }
+                        catch { Show-Warning "Could not copy report file $_.FullName" }
                     }
                 }
             }
