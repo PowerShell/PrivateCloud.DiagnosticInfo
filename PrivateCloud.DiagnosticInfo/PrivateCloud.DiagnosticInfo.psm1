@@ -135,6 +135,8 @@ function Get-SddcDiagnosticInfo
 {
     # disables the warning re: www.microsoft.com beacon check
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingComputerNameHardcoded", "")]
+    # aliases usage in this module is idiomatic, only using defaults
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
 
     [CmdletBinding(DefaultParameterSetName="Write")]
     [OutputType([String])]
@@ -1688,8 +1690,6 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Exporting Event Logs..." 
 
-        $AllErrors = @();
-
         $j = Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob {
 
             Param([int] $Hours)
@@ -1920,7 +1920,7 @@ function Get-SddcDiagnosticInfo
             $deleteStorageSubsystem = $false
             if (-not (Get-StorageSubsystem -FriendlyName Clustered*)) {
                 $storageProviderName = (Get-StorageProvider -CimSession $ClusterName | ? Manufacturer -match 'Microsoft').Name
-                $registeredSubSystem = Register-StorageSubsystem -ProviderName $storageProviderName -ComputerName $ClusterName -ErrorAction SilentlyContinue
+                $null = Register-StorageSubsystem -ProviderName $storageProviderName -ComputerName $ClusterName -ErrorAction SilentlyContinue
                 $deleteStorageSubsystem = $true
                 $storagesubsystemToDelete = Get-StorageSubsystem -FriendlyName Clustered*
             }
@@ -2012,10 +2012,13 @@ enum ReportType
 # helper function to parse the csv-demarcated sections of the cluster log
 # return value is a hashtable indexed by section name
 
-function Get-ClusterLogDataSources(
-    [string] $logname
-    )
+function Get-ClusterLogDataSource
 {
+    # aliases usage in this module is idiomatic, only using defaults
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+    param(
+        [string] $logname
+    )
 
     BEGIN {
         $csvf = New-TemporaryFile
@@ -2123,6 +2126,8 @@ function Format-StorageBusCacheDiskState(
 
 function Get-StorageBusCacheReport
 {
+    # aliases usage in this module is idiomatic, only using defaults
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -2184,7 +2189,7 @@ function Get-StorageBusCacheReport
         # Parse cluster log for the SBL Disk section
         ## 
 
-        $data = Get-ClusterLogDataSources $_.FullName
+        $data = Get-ClusterLogDataSource $_.FullName
 
         ##
         # With a an SBL Disks section, provide commentary
@@ -2310,6 +2315,8 @@ function Get-StorageBusCacheReport
 
 function Get-StorageBusConnectivityReport
 {
+    # aliases usage in this module is idiomatic, only using defaults
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -2352,6 +2359,8 @@ function Get-StorageBusConnectivityReport
 
 function Get-StorageLatencyReport
 {
+    # aliases usage in this module is idiomatic, only using defaults
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -2419,7 +2428,7 @@ function Get-StorageLatencyReport
                 # only need to get the bucket label schema once
                 # the number of labels and the number of bucket counts should be equal
                 # determine the count schema at the same time
-                if ($bucklabels -eq $null) {
+                if ($null -eq $bucklabels) {
                     $bucklabels = $xh['IoLatencyBuckets'] -split ',\s+'
 
                     # is the count scheme split (RS5) or combined (RS1)?
@@ -2527,7 +2536,7 @@ function Get-StorageLatencyReport
         $node = $_.Name
         remove-job $_
 
-        Write-Output ("-"*40) "Node: $node" "`nSample Period Count Report"
+        Write-Output ("-"*40),"Node: $node","`nSample Period Count Report"
 
         if ($buckhash.Count -eq 0) {
 
@@ -2578,7 +2587,7 @@ function Get-StorageLatencyReport
                 Write-Output "`nHighest Bucket ($($bucklabels[-1])) Latency Events"
 
                 $n = 0
-                if ($evs -ne $null) {
+                if ($null -ne $evs) {
                     $evs |? { $PhysicalDisksTable.ContainsKey($_.Device) } |% { $n += 1; $_ } | sort Time -Descending | ft -AutoSize ('Time','Device' + $pdattrs_ev + $bucklabels)
                 }
 
@@ -2592,6 +2601,8 @@ function Get-StorageLatencyReport
 
 function Get-StorageFirmwareReport
 {
+    # aliases usage in this module is idiomatic, only using defaults
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -2622,7 +2633,6 @@ function Get-StorageFirmwareReport
     Write-Output "Per Unit Firmware Report`n"
     $PhysicalDisks | group -Property Manufacturer,Model | sort Name |% {
 
-        $total = $_.Count
         $fwg = $_.Group | group -Property FirmwareVersion | sort -Property Count
 
         # if there is any variation, report
@@ -2654,6 +2664,8 @@ function Get-StorageFirmwareReport
 
 function Get-LsiEventReport
 {
+    # aliases usage in this module is idiomatic, only using defaults
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -2725,6 +2737,9 @@ function Get-LsiEventReport
 
 function Show-SddcDiagnosticReport
 {
+    # aliases usage in this module is idiomatic, only using defaults
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+
     [CmdletBinding()]
     param(
         [parameter(Position=0, Mandatory=$true)]
