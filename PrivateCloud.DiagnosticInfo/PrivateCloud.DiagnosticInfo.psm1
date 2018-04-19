@@ -1753,6 +1753,14 @@ function Get-SddcDiagnosticInfo
         
                 $NodeFile = $NodePath+$Node+"_UnfilteredEvent_"+$_.LogName.Replace("/","-")+".EVTX"
 
+                # analytical/debug channels can not be captured live
+                # if any are encountered (not normal), disable them temporarily for export
+                $directChannel = $false
+                if ($_.LogType -in @('Analytical','Debug') -and $_.IsEnabled) {
+                    $directChannel = $true
+                    WEvtUtil.exe sl /e:false $_.LogName
+                }
+
                 # Export unfiltered log file using the WEvtUtil command-line tool
             
                 if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management"  -Or ($MSecs -eq -1)) {
@@ -1760,6 +1768,11 @@ function Get-SddcDiagnosticInfo
                 } else {
                     WEvtUtil.exe epl $_.LogName $NodeFile /q:$QTime /ow:true
                 }
+
+                if ($directChannel -eq $true) {
+                    echo y | WEvtUtil.exe sl /e:true $_.LogName | out-null
+                }
+
                 Write-Output (Get-AdminSharePathFromLocal $Node $NodeFile)
             }
         }
