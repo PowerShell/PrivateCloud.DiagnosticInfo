@@ -739,11 +739,11 @@ function Get-SddcDiagnosticInfo
         # if this is ever removed, remove the disable
         if ((Test-NetConnection -ComputerName 'www.microsoft.com' -Hops 1 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue).PingSucceeded) {
             # The update check requires the NuGet provider version 2.8.5.201 or greater
-            $NuGetProvider = Get-PackageProvider -Name NuGet | ? {$_.Version -gt 2.8.5.201}
+            $NuGetProvider = Get-PackageProvider -Name NuGet |? {$_.Version -gt 2.8.5.201}
             If (-not $NuGetProvider) {
                 # Install NuGet provider if necessary -- this will surpress the prompt to install
                 Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ErrorAction SilentlyContinue | Out-Null
-                $NuGetProvider = Get-PackageProvider -Name NuGet | ? {$_.Version -gt 2.8.5.201}
+                $NuGetProvider = Get-PackageProvider -Name NuGet |? {$_.Version -gt 2.8.5.201}
             }
 
             If ($NuGetProvider) {
@@ -855,7 +855,7 @@ function Get-SddcDiagnosticInfo
                 $NonHealthyVDs | Export-Clixml ($Path + "NonHealthyVDs.XML")
 
                 foreach ($NonHealthyVD in $NonHealthyVDs) {
-                    $NonHealthyExtents = $NonHealthyVD | Get-PhysicalExtent | ? OperationalStatus -ne Active | sort-object VirtualDiskOffset, CopyNumber
+                    $NonHealthyExtents = $NonHealthyVD | Get-PhysicalExtent |? OperationalStatus -ne Active | sort-object VirtualDiskOffset, CopyNumber
                     $NonHealthyExtents | Export-Clixml($Path + $NonHealthyVD.FriendlyName + "_Extents.xml")
                 }
             } catch {
@@ -865,7 +865,7 @@ function Get-SddcDiagnosticInfo
             Show-Update "SSB Disks and SSU"
 
             try {
-                Get-StoragePool -ErrorAction SilentlyContinue | ? IsPrimordial -eq $false |% {
+                Get-StoragePool -ErrorAction SilentlyContinue |? IsPrimordial -eq $false |% {
                     $Disks = $_ | Get-PhysicalDisk 
                     $Disks | Export-Clixml($Path + $_.FriendlyName + "_Disks.xml")
                     
@@ -1623,7 +1623,7 @@ function Get-SddcDiagnosticInfo
 						"writes/sec" { $WriteIOPS += $Value }
 						"read latency" { $ReadLatency += $Value; if ($Value -gt 0) {$NonZeroRL++} }
 						"write latency" { $WriteLatency += $Value; if ($Value -gt 0) {$NonZeroWL++} }
-						default { Write-Warning ?Invalid counter? }
+						default { Write-Warning "Invalid counter $_" }
 					}
 
 					if ($_ -eq $Last) { 
@@ -1808,6 +1808,9 @@ function Get-SddcDiagnosticInfo
 
                 param($NodeName,$DomainName)
 
+                # import common functions
+                iex $using:CommonFunc
+
                 $Node = "$NodeName.$DomainName"
 
                 # Gather SYSTEMINFO.EXE output for a given node
@@ -1911,6 +1914,7 @@ function Get-SddcDiagnosticInfo
 
         $null = Wait-Job $j
         Show-JobRuntime $j
+        Receive-Job $j
         Remove-Job $j
 
         Write-Progress -Activity "Gathering System Info and Minidump files" -Completed
@@ -1932,7 +1936,7 @@ function Get-SddcDiagnosticInfo
             Show-Update "Gathering the storage diagnostic information"
             $deleteStorageSubsystem = $false
             if (-not (Get-StorageSubsystem -FriendlyName Clustered*)) {
-                $storageProviderName = (Get-StorageProvider -CimSession $ClusterName | ? Manufacturer -match 'Microsoft').Name
+                $storageProviderName = (Get-StorageProvider -CimSession $ClusterName |? Manufacturer -match 'Microsoft').Name
                 $null = Register-StorageSubsystem -ProviderName $storageProviderName -ComputerName $ClusterName -ErrorAction SilentlyContinue
                 $deleteStorageSubsystem = $true
                 $storagesubsystemToDelete = Get-StorageSubsystem -FriendlyName Clustered*
