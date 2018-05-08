@@ -630,6 +630,7 @@ function Get-SddcDiagnosticInfo
 
     #
     # Handle parameters to archive/pass into the summary report generator.
+    # XXX note expectedpools with S2D -> 1. Should we force/set?
     #
 
     $Parameters = "" | Select-Object TodayDate, ExpectedNodes, ExpectedNetworks, ExpectedVolumes, 
@@ -858,7 +859,6 @@ function Get-SddcDiagnosticInfo
             Show-Warning "Gathering SBL connectivity failed"
         }
     }
-
     
     try { $ClusterGroups = Get-ClusterGroup -Cluster $ClusterName }
     catch { Show-Error("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
@@ -876,108 +876,59 @@ function Get-SddcDiagnosticInfo
     catch { Show-Error("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
     $ClusterResourceParameters | Export-Clixml ($Path + "GetClusterResourceParameters.XML")
 
-    if ($Read) {
-        $CSV = Import-Clixml ($Path + "GetClusterSharedVolume.XML")
-    } else {
-        try { $CSV = Get-ClusterSharedVolume -Cluster $ClusterName }
-        catch { Show-Error("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
-        $CSV | Export-Clixml ($Path + "GetClusterSharedVolume.XML")
-    }
+    try { $CSV = Get-ClusterSharedVolume -Cluster $ClusterName }
+    catch { Show-Error("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
+    $CSV | Export-Clixml ($Path + "GetClusterSharedVolume.XML")
 
-    # Cluster shared volume health
+    #
+    # SMB share health/status
+    #
 
-    $CSVTotal = NCount($CSV)
-    $CSVHealthy = NCount($CSV | Where-Object State -like "Online")
-    "Cluster Shared Volumes Online : $CSVHealthy / $CSVTotal"
-    if ($CSVHealthy -lt $CSVTotal) { Show-Warning "Unhealthy cluster shared volumes detected" }
+    try { $SmbShares = Get-SmbShare -CimSession $AccessNode }
+    catch { Show-Error("Unable to get SMB Shares. `nError="+$_.Exception.Message) }
 
-    "`nHealthy Components count: [SMBShare -> CSV -> VirtualDisk -> StoragePool -> PhysicalDisk -> StorageEnclosure]"
+    # XXX only sharepath and health are added in, why are we selecting down to just these four as opposed to add-member?
+    $ShareStatus = $SmbShares | Where-Object ContinuouslyAvailable | Select-Object ScopeName, Name, SharePath, Health
+    $Count1 = 0
+    $Total1 = NCount($ShareStatus)
 
-    # SMB share health
+    if ($Total1 -gt 0)
+    {
+        $ShareStatus |% {
+            $Progress = $Count1 / $Total1 * 100
+            $Count1++
+            Write-Progress -Activity "Testing file share access" -PercentComplete $Progress
 
-    if ($Read) {
-        #$SmbShares = Import-Clixml ($Path + "GetSmbShare.XML")
-        $ShareStatus = Import-Clixml ($Path + "ShareStatus.XML")
-    } else {
-        try { $SmbShares = Get-SmbShare -CimSession $AccessNode }
-        catch { Show-Error("Unable to get SMB Shares. `nError="+$_.Exception.Message) }
-
-        $ShareStatus = $SmbShares | Where-Object ContinuouslyAvailable | Select-Object ScopeName, Name, SharePath, Health
-        $Count1 = 0
-        $Total1 = NCount($ShareStatus)
-
-        if ($Total1 -gt 0)
-        {
-            $ShareStatus |% {
-                $Progress = $Count1 / $Total1 * 100
-                $Count1++
-                Write-Progress -Activity "Testing file share access" -PercentComplete $Progress
-
-                $_.SharePath = "\\"+$_.ScopeName+"."+$Cluster.Domain+"\"+$_.Name
-                try { if (Test-Path -Path $_.SharePath  -ErrorAction SilentlyContinue) {
-                            $_.Health = "Accessible"
-                        } else {
-                            $_.Health = "Inaccessible" 
-                    } 
-                }
-                catch { $_.Health = "Accessible: "+$_.Exception.Message }
+            $_.SharePath = "\\"+$_.ScopeName+"."+$Cluster.Domain+"\"+$_.Name
+            try { if (Test-Path -Path $_.SharePath  -ErrorAction SilentlyContinue) {
+                        $_.Health = "Accessible"
+                    } else {
+                        $_.Health = "Inaccessible" 
+                } 
             }
-            Write-Progress -Activity "Testing file share access" -Completed
+            catch { $_.Health = "Accessible: "+$_.Exception.Message }
         }
-
-        #$SmbShares | Export-Clixml ($Path + "GetSmbShare.XML")
-        $ShareStatus | Export-Clixml ($Path + "ShareStatus.XML")
-
+        Write-Progress -Activity "Testing file share access" -Completed
     }
 
-    $ShTotal = NCount($ShareStatus)
-    $ShHealthy = NCount($ShareStatus | Where-Object Health -like "Accessible")
-    "SMB CA Shares Accessible      : $ShHealthy / $ShTotal"
-    if ($ShHealthy -lt $ShTotal) { Show-Warning "Inaccessible CA shares detected" }
+    $ShareStatus | Export-Clixml ($Path + "ShareStatus.XML")
 
-    # Open files 
+    try { $SmbOpenFiles = Get-SmbOpenFile -CimSession $AccessNode }
+    catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
+    $SmbOpenFiles | Export-Clixml ($Path + "GetSmbOpenFile.XML")
 
-    if ($Read) {
-        $SmbOpenFiles = Import-Clixml ($Path + "GetSmbOpenFile.XML")
-    } else {
-        try { $SmbOpenFiles = Get-SmbOpenFile -CimSession $AccessNode }
-        catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
-        $SmbOpenFiles | Export-Clixml ($Path + "GetSmbOpenFile.XML")
-    }
+    try { $SmbWitness = Get-SmbWitnessClient -CimSession $AccessNode }
+    catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
+    $SmbWitness | Export-Clixml ($Path + "GetSmbWitness.XML")
 
-    $FileTotal = NCount( $SmbOpenFiles | Group-Object ClientComputerName)
-    "Users with Open Files         : $FileTotal"
-    if ($FileTotal -eq 0) { Show-Warning "No users with open files" }
+    # Volume status
 
-    # SMB witness
-
-    if ($Read) {
-        $SmbWitness = Import-Clixml ($Path + "GetSmbWitness.XML")
-    } else {
-        try { $SmbWitness = Get-SmbWitnessClient -CimSession $AccessNode }
-        catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
-        $SmbWitness | Export-Clixml ($Path + "GetSmbWitness.XML")
-    }
-
-    $WitTotal = NCount($SmbWitness | Where-Object State -eq RequestedNotifications | Group-Object ClientName)
-    "Users with a Witness           : $WitTotal"
-    if ($WitTotal -eq 0) { Show-Warning "No users with a Witness" }
-
-    # Volume health
-
-    if ($Read) {
-        $Volumes = Import-Clixml ($Path + "GetVolume.XML")
-    } else {
-        try { $Volumes = Get-Volume -CimSession $AccessNode  }
-        catch { Show-Error("Unable to get Volumes. `nError="+$_.Exception.Message) }
-        $Volumes | Export-Clixml ($Path + "GetVolume.XML")
-    }
-
-    $VolsTotal = NCount($Volumes | Where-Object FileSystem -eq CSVFS )
-    $VolsHealthy = NCount($Volumes  | Where-Object FileSystem -eq CSVFS | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) })
-    "Cluster Shared Volumes Healthy: $VolsHealthy / $VolsTotal "
+    try { $Volumes = Get-Volume -CimSession $AccessNode  }
+    catch { Show-Error("Unable to get Volumes. `nError="+$_.Exception.Message) }
+    $Volumes | Export-Clixml ($Path + "GetVolume.XML")
 
     # Deduplicated volume health
+    # XXX the counts/healthy likely not needed once phase 4 shifted into summary report
 
     if ($DedupEnabled)
     {
@@ -995,90 +946,53 @@ function Get-SddcDiagnosticInfo
 
     # Virtual disk health
 
-    if ($Read) {
-        $VirtualDisks = Import-Clixml ($Path + "GetVirtualDisk.XML")
-    } else {
-        try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-              $VirtualDisks = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $SubSystem }
-        catch { Show-Error("Unable to get Virtual Disks. `nError="+$_.Exception.Message) }
-        $VirtualDisks | Export-Clixml ($Path + "GetVirtualDisk.XML")
-    }
-
-    $VDsTotal = NCount($VirtualDisks)
-    $VDsHealthy = NCount($VirtualDisks | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
-    "Virtual Disks Healthy         : $VDsHealthy / $VDsTotal"
-
-    if ($VDsHealthy -lt $VDsTotal) { Show-Warning "Unhealthy virtual disks detected" }
+    try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+            $VirtualDisks = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $SubSystem }
+    catch { Show-Error("Unable to get Virtual Disks. `nError="+$_.Exception.Message) }
+    $VirtualDisks | Export-Clixml ($Path + "GetVirtualDisk.XML")
 
     # Storage tier information
-    if ($Read) {
-        $StorageTiers = Import-Clixml ($Path + "GetStorageTier.XML")
-    } else {
-        try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-              $StorageTiers = Get-StorageTier -CimSession $AccessNode }
-        catch { Show-Error("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
-        $StorageTiers | Export-Clixml ($Path + "GetStorageTier.XML")
-    }
+
+    try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+            $StorageTiers = Get-StorageTier -CimSession $AccessNode }
+    catch { Show-Error("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
+    $StorageTiers | Export-Clixml ($Path + "GetStorageTier.XML")
+
     # Storage pool health
 
-    if ($Read) {
-        $StoragePools = Import-Clixml ($Path + "GetStoragePool.XML")
-    } else {
-        try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-              $StoragePools =Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $SubSystem -ErrorAction SilentlyContinue }
-        catch { Show-Error("Unable to get Storage Pools. `nError="+$_.Exception.Message) }
-        $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML")
-    }
-
-    $PoolsTotal = NCount($StoragePools)
-    $PoolsHealthy = NCount($StoragePools | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
-    "Storage Pools Healthy         : $PoolsHealthy / $PoolsTotal "
-
-    if ($PoolsTotal -lt $ExpectedPools) { Show-Warning "Fewer storage pools than the $ExpectedPools expected" }
-    if ($PoolsHealthy -lt $PoolsTotal) { Show-Warning "Unhealthy storage pools detected" }
+    try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+            $StoragePools =Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $SubSystem -ErrorAction SilentlyContinue }
+    catch { Show-Error("Unable to get Storage Pools. `nError="+$_.Exception.Message) }
+    $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML")
 
     # Physical disk health
 
-    if ($Read) {
-        $PhysicalDisks = Import-Clixml ($Path + "GetPhysicalDisk.XML")
-    } else {
-        try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-              $PhysicalDisks = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $SubSystem }
-        catch { Show-Error("Unable to get Physical Disks. `nError="+$_.Exception.Message) }
-        $PhysicalDisks | Export-Clixml ($Path + "GetPhysicalDisk.XML")
-    }
+    try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+          $PhysicalDisks = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $SubSystem }
+    catch { Show-Error("Unable to get Physical Disks. `nError="+$_.Exception.Message) }
+    $PhysicalDisks | Export-Clixml ($Path + "GetPhysicalDisk.XML")
 
-    $PDsTotal = NCount($PhysicalDisks)
-    $PDsHealthy = NCount($PhysicalDisks | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
-    "Physical Disks Healthy        : $PDsHealthy / $PDsTotal"
-
-    if ($PDsTotal -lt $ExpectedPhysicalDisks) { Show-Warning "Fewer physical disks than the $ExpectedPhysicalDisks expected" }
-    if ($PDsHealthy -lt $PDsTotal) { Show-Warning "Unhealthy physical disks detected" }
-    if ($Read) {
-        $PhysicalDiskSNV = Import-Clixml ($Path + "GetPhysicalDiskSNV.XML")
-    } else {
-        try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-              $PhysicalDiskSNV = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $SubSystem | Get-PhysicalDiskSNV }
-        catch { Show-Error("Unable to get Physical Disk Storage Node View. `nError="+$_.Exception.Message) }
-        $PhysicalDiskSNV | Export-Clixml ($Path + "GetPhysicalDiskSNV.XML")
-    }
+    try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+          $PhysicalDiskSNV = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $SubSystem | Get-PhysicalDiskSNV }
+    catch { Show-Error("Unable to get Physical Disk Storage Node View. `nError="+$_.Exception.Message) }
+    $PhysicalDiskSNV | Export-Clixml ($Path + "GetPhysicalDiskSNV.XML")
 
     # Reliability counters
+    # These may cause a latency burst on some devices due to device-specific requirements for lifting/generating
+    # the SMART data which underlies them. Decline to do this by default.
 
-    if ($Read) {
-        if (Test-Path ($Path + "GetReliabilityCounter.XML")) {
-            $ReliabilityCounters = Import-Clixml ($Path + "GetReliabilityCounter.XML")
-        } else {
-            Show-Warning "Reliability Counters not gathered for this capture"
-        }
-    } else {
-        if ($IncludeReliabilityCounters -eq $true) {
-            try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-                  $ReliabilityCounters = $PhysicalDisks | Get-StorageReliabilityCounter -CimSession $AccessNode }
-            catch { Show-Error("Unable to get Storage Reliability Counters. `nError="+$_.Exception.Message) }
-            $ReliabilityCounters | Export-Clixml ($Path + "GetReliabilityCounter.XML")
-        }
+    if ($IncludeReliabilityCounters -eq $true) {
+        try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+                $ReliabilityCounters = $PhysicalDisks | Get-StorageReliabilityCounter -CimSession $AccessNode }
+        catch { Show-Error("Unable to get Storage Reliability Counters. `nError="+$_.Exception.Message) }
+        $ReliabilityCounters | Export-Clixml ($Path + "GetReliabilityCounter.XML")
     }
+
+
+    
+
+
+
 
     # Storage enclosure health - only performed if the required KB is present
 
@@ -1127,12 +1041,14 @@ function Get-SddcDiagnosticInfo
         $ClusterNetworks | Where-Object State -ne "Up" | Format-Table -AutoSize 
     }
 
+    ### XXX dependency
     if ($ResTotal -ne $ResHealthy) { 
         $Failed = $true; 
         "Cluster Resources:"; 
         $ClusterResources | Where-Object State -notlike "Online" | Format-Table -AutoSize 
     }
 
+    ### XXX dependency
     if ($CSVTotal -ne $CSVHealthy) { 
         $Failed = $true; 
         "Cluster Shared Volumes:"; 
@@ -2595,6 +2511,7 @@ function Get-SummaryReport
     $ExpectedNodes = $Parameters.ExpectedNodes
     $ExpectedNetworks = $Parameters.ExpectedNetworks
     $ExpectedVolumes = $Parameters.ExpectedVolumes
+    $ExpectedDedupVolumes = $Parameters.ExpectedDedupVolumes
     $ExpectedPhysicalDisks = $Parameters.ExpectedPhysicalDisks
     $ExpectedPools = $Parameters.ExpectedPools
     $ExpectedEnclosures = $Parameters.ExpectedEnclosures
@@ -2620,14 +2537,14 @@ function Get-SummaryReport
         }
     } else {
         $ScaleOutName = $ScaleOutServers[0].Name+"."+$Cluster.Domain
-        "Scale-Out File Server Name : $ScaleOutName"
+        Write-Host "Scale-Out File Server Name : $ScaleOutName"
     }
 
     # Cluster node health
 
     $NodesTotal = NCount($ClusterNodes)
     $NodesHealthy = NCount($ClusterNodes | Where {$_.State -like "Paused" -or $_.State -like "Up"})
-    "Cluster Nodes up              : $NodesHealthy / $NodesTotal"
+    Write-Host "Cluster Nodes up              : $NodesHealthy / $NodesTotal"
 
     if ($NodesTotal -lt $ExpectedNodes) { Show-Warning "Fewer nodes than the $ExpectedNodes expected" }
     if ($NodesHealthy -lt $NodesTotal) { Show-Warning "Unhealthy nodes detected" }
@@ -2638,7 +2555,7 @@ function Get-SummaryReport
 
     $NetsTotal = NCount($ClusterNetworks)
     $NetsHealthy = NCount($ClusterNetworks | Where {$_.State -like "Up"})
-    "Cluster Networks up           : $NetsHealthy / $NetsTotal"
+    Write-Host "Cluster Networks up           : $NetsHealthy / $NetsTotal"
 
     if ($NetsTotal -lt $ExpectedNetworks) { Show-Warning "Fewer cluster networks than the $ExpectedNetworks expected" }
     if ($NetsHealthy -lt $NetsTotal) { Show-Warning "Unhealthy cluster networks detected" }
@@ -2650,17 +2567,60 @@ function Get-SummaryReport
 
     $ResTotal = NCount($ClusterResources)
     $ResHealthy = NCount($ClusterResources | Where-Object State -like "Online")
-    "Cluster Resources Online      : $ResHealthy / $ResTotal "
+    Write-Host "Cluster Resources Online      : $ResHealthy / $ResTotal "
     if ($ResHealthy -lt $ResTotal) { Show-Warning "Unhealthy cluster resources detected" }
 
     if ($S2DEnabled) {
         $HealthProviderCount = @(($ClusterResourceParameters |? { $_.ClusterObject -eq 'Health' -and $_.Name -eq 'Providers' }).Value).Count
         if ($HealthProviderCount) {
-            "Health Resource               : $HealthProviderCount health providers registered"
+            Write-Host "Health Resource               : $HealthProviderCount health providers registered"
         } else {
             Show-Warning "Health Resource providers not registered"
         }
     }
+
+    # Cluster shared volume health
+
+    $CSV = Import-Clixml ($Path + "GetClusterSharedVolume.XML")
+
+    $CSVTotal = NCount($CSV)
+    $CSVHealthy = NCount($CSV | Where-Object State -like "Online")
+    Write-Host "Cluster Shared Volumes Online : $CSVHealthy / $CSVTotal"
+    if ($CSVHealthy -lt $CSVTotal) { Show-Warning "Unhealthy cluster shared volumes detected" }
+
+    # Scale-out share health
+    $ShareStatus = Import-Clixml ($Path + "ShareStatus.XML")
+
+    $ShTotal = NCount($ShareStatus)
+    $ShHealthy = NCount($ShareStatus | Where-Object Health -like "Accessible")
+    "SMB CA Shares Accessible      : $ShHealthy / $ShTotal"
+    if ($ShHealthy -lt $ShTotal) { Show-Warning "Inaccessible CA shares detected" }
+
+    # Open files 
+
+    Write-Host "`nHealthy Components count: [SMBShare -> CSV -> VirtualDisk -> StoragePool -> PhysicalDisk -> StorageEnclosure]"
+
+    $SmbOpenFiles = Import-Clixml ($Path + "GetSmbOpenFile.XML")
+
+    $FileTotal = NCount( $SmbOpenFiles | Group-Object ClientComputerName)
+    Write-Host "Users with Open Files         : $FileTotal"
+    if ($FileTotal -eq 0) { Show-Warning "No users with open files" }
+
+    # SMB witness
+
+    $SmbWitness = Import-Clixml ($Path + "GetSmbWitness.XML")
+
+    $WitTotal = NCount($SmbWitness | Where-Object State -eq RequestedNotifications | Group-Object ClientName)
+    Write-Host "Users with a Witness           : $WitTotal"
+    if ($WitTotal -eq 0) { Show-Warning "No users with a Witness" }
+
+    # Volume status
+
+    $Volumes = Import-Clixml ($Path + "GetVolume.XML")
+
+    $VolsTotal = NCount($Volumes | Where-Object FileSystem -eq CSVFS )
+    $VolsHealthy = NCount($Volumes  | Where-Object FileSystem -eq CSVFS | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) })
+    Write-Host "Cluster Shared Volumes Healthy: $VolsHealthy / $VolsTotal "
 
     #
     # Deduplicated volume health - if the volume XML exists, it was present (may still be empty)
@@ -2681,6 +2641,47 @@ function Get-SummaryReport
     }
 
     if ($DedupTotal -lt $ExpectedDedupVolumes) { Show-Warning "Fewer Dedup volumes than the $ExpectedDedupVolumes expected" }
+
+    # Virtual disk health
+
+    $VirtualDisks = Import-Clixml ($Path + "GetVirtualDisk.XML")
+
+    $VDsTotal = NCount($VirtualDisks)
+    $VDsHealthy = NCount($VirtualDisks | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
+    "Virtual Disks Healthy         : $VDsHealthy / $VDsTotal"
+
+    if ($VDsHealthy -lt $VDsTotal) { Show-Warning "Unhealthy virtual disks detected" }
+
+    # Storage pool health
+
+    $StoragePools = Import-Clixml ($Path + "GetStoragePool.XML")
+
+    $PoolsTotal = NCount($StoragePools)
+    $PoolsHealthy = NCount($StoragePools | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
+    "Storage Pools Healthy         : $PoolsHealthy / $PoolsTotal "
+
+    if ($PoolsTotal -lt $ExpectedPools) { Show-Warning "Fewer storage pools than the $ExpectedPools expected" }
+    if ($PoolsHealthy -lt $PoolsTotal) { Show-Warning "Unhealthy storage pools detected" }
+
+    # Physical disk health
+
+    $PhysicalDisks = Import-Clixml ($Path + "GetPhysicalDisk.XML")
+    $PhysicalDiskSNV = Import-Clixml ($Path + "GetPhysicalDiskSNV.XML")
+
+    $PDsTotal = NCount($PhysicalDisks)
+    $PDsHealthy = NCount($PhysicalDisks | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
+    "Physical Disks Healthy        : $PDsHealthy / $PDsTotal"
+
+    if ($PDsTotal -lt $ExpectedPhysicalDisks) { Show-Warning "Fewer physical disks than the $ExpectedPhysicalDisks expected" }
+    if ($PDsHealthy -lt $PDsTotal) { Show-Warning "Unhealthy physical disks detected" }
+
+    # Reliability counters
+    # Not currently evaluated in summary report, TBD
+
+    if (-not (Test-Path ($Path + "GetReliabilityCounter.XML"))) {
+        Show-Warning "Reliability Counters not gathered for this capture"
+    }
+
 }
 
 <#
