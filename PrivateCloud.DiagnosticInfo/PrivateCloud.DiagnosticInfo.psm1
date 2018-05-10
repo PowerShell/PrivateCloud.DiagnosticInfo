@@ -71,6 +71,23 @@ $CommonFunc = {
     {
         "\\"+$node+"\"+$local[0]+"$\"+$local.Substring(3,$local.Length-3)
     }
+
+    #
+    # Count number of elements in an array, including checks for $null or single object
+    #
+    function NCount { 
+        Param ([object] $Item) 
+        if ($null -eq $Item) {
+            $Result = 0
+        } else {
+            if ($Item.GetType().BaseType.Name -eq "Array") {
+                $Result = ($Item).Count
+            } else { 
+                $Result = 1
+            }
+        }
+        return $Result
+    }
 }
 
 # evaluate into the main session
@@ -271,23 +288,6 @@ function Get-SddcDiagnosticInfo
 		return $FilteredNodelist	
 	}
 
-    #
-    # Count number of elements in an array, including checks for $null or single object
-    #
-    function NCount { 
-        Param ([object] $Item) 
-        if ($null -eq $Item) {
-            $Result = 0
-        } else {
-            if ($Item.GetType().BaseType.Name -eq "Array") {
-                $Result = ($Item).Count
-            } else { 
-                $Result = 1
-            }
-        }
-        return $Result
-    }
-
     function VolumeToPath {
         Param ([String] $Volume) 
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
@@ -485,8 +485,8 @@ function Get-SddcDiagnosticInfo
     $OS = Get-CimInstance -ClassName Win32_OperatingSystem
     $S2DEnabled = $false
 
-    if ([uint64]$OS.BuildNumber -lt 9600) { 
-        Show-Error("Wrong OS Version - Need at least Windows Server 2012 R2 or Windows 8.1. You are running - " + $OS.Name) 
+    if ([uint64]$OS.BuildNumber -lt 14393) { 
+        Show-Error("Wrong OS Version - Need at least Windows Server 2016. You are running - $($OS.Name) BuildNumber $($OS.BuildNumber)")
     }
  
     if (-not (Get-Command -Module FailoverClusters)) { 
@@ -580,6 +580,7 @@ function Get-SddcDiagnosticInfo
         
         StartMonitoring
     }
+
     if ($MonitoringMode) {
         StartMonitoring 
     }
@@ -598,10 +599,12 @@ function Get-SddcDiagnosticInfo
 
     $PathOK = Test-Path $Path -ErrorAction SilentlyContinue
     if ($Read -and -not $PathOK) { Show-Error ("Path not found: $Path") }
+
     if (-not $Read) {
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse | Out-Null
-        MKDIR -ErrorAction SilentlyContinue $Path | Out-Null
-    } 
+        md -ErrorAction SilentlyContinue $Path | Out-Null
+    }
+
     $PathObject = Get-Item $Path
     if ($null -eq $PathObject) { Show-Error ("Invalid Path: $Path") }
     $Path = $PathObject.FullName
@@ -618,8 +621,25 @@ function Get-SddcDiagnosticInfo
 
     if (-not $Path.EndsWith("\")) { $Path = $Path + "\" }
 
+    ###
+    # Now handle read case
+    #
+    # Generate Summary report based on content. Note this may be an update beyond the version
+    # at the time of the gather stored in 0_CloudHealthSummary.log.
+    ###
+
+    if ($Read) {
+        Show-SddcDiagnosticReport -Report Summary -ReportLevel Full $Path
+        return
+    }
+
+    ###
+    # From here on, this is ONLY the gather/write case (once extraction complete)
+    ###
+
     # Start Transcript
-    $transcriptFile = $Path + "0_CloudHealthSummary.log"
+    #$transcriptFile = $Path + "0_CloudHealthSummary.log"
+    $transcriptFile = $Path + "0_CloudHealthGatherTranscript.log"
     try{
         Stop-Transcript | Out-Null
     }
@@ -651,7 +671,7 @@ function Get-SddcDiagnosticInfo
     # Phase 1
     #
 
-    Show-Update "<<< Phase 1 - Storage Health Overview >>>`n" -ForegroundColor Cyan
+    Show-Update "<<< Phase 1 - Summary Data Captures >>>`n" -ForegroundColor Cyan
 
     #
     # Cluster Nodes
@@ -686,7 +706,7 @@ function Get-SddcDiagnosticInfo
     # Select an access node, which will be used to query the cluster
 
     $AccessNode = ($ClusterNodes)[0].Name + "." + $Cluster.Domain
-    write-host "Access node                : $AccessNode `n"
+    Write-Host "Access node                : $AccessNode `n"
 
     #
     # Verify deduplication prerequisites on access node.
@@ -988,183 +1008,36 @@ function Get-SddcDiagnosticInfo
         $ReliabilityCounters | Export-Clixml ($Path + "GetReliabilityCounter.XML")
     }
 
+    # Storage enclosure health
 
-    
-
-
-
-
-    # Storage enclosure health - only performed if the required KB is present
-
-    if (-not (Get-Command *StorageEnclosure*)) {
-        Show-Warning "Storage Enclosure commands not available. See http://support.microsoft.com/kb/2913766/en-us"
-    } else {
-        if ($Read) {
-            if (Test-Path ($Path + "GetStorageEnclosure.XML") -ErrorAction SilentlyContinue ) {
-               $StorageEnclosures = Import-Clixml ($Path + "GetStorageEnclosure.XML")
-            } else {
-               $StorageEnclosures = ""
-            }
-        } else {
-            try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-                  $StorageEnclosures = Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $SubSystem }
-            catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
-            $StorageEnclosures | Export-Clixml ($Path + "GetStorageEnclosure.XML")
-        }
-
-        $EncsTotal = NCount($StorageEnclosures)
-        $EncsHealthy = NCount($StorageEnclosures | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
-        "Storage Enclosures Healthy    : $EncsHealthy / $EncsTotal "
-
-        if ($EncsTotal -lt $ExpectedEnclosures) { Show-Warning "Fewer storage enclosures than the $ExpectedEnclosures expected" }
-        if ($EncsHealthy -lt $EncsTotal) { Show-Warning "Unhealthy storage enclosures detected" }
-    }   
-
-    #
-    # Phase 2
-    #
-    Show-Update "<<< Phase 2 - details on unhealthy components >>>`n" -ForegroundColor Cyan
-
-    $Failed = $False
-
-    ### XXX dependency
-    if ($NodesTotal -ne $NodesHealthy) { 
-        $Failed = $true; 
-        "Cluster Nodes:"; 
-        $ClusterNodes | Where-Object State -ne "Up" | Format-Table -AutoSize 
-    }
-
-    ### XXX dependency
-    if ($NetsTotal -ne $NetsHealthy) { 
-        $Failed = $true; 
-        "Cluster Networks:"; 
-        $ClusterNetworks | Where-Object State -ne "Up" | Format-Table -AutoSize 
-    }
-
-    ### XXX dependency
-    if ($ResTotal -ne $ResHealthy) { 
-        $Failed = $true; 
-        "Cluster Resources:"; 
-        $ClusterResources | Where-Object State -notlike "Online" | Format-Table -AutoSize 
-    }
-
-    ### XXX dependency
-    if ($CSVTotal -ne $CSVHealthy) { 
-        $Failed = $true; 
-        "Cluster Shared Volumes:"; 
-        $CSV | Where-Object State -ne "Online" | Format-Table -AutoSize 
-    }
-
-    if ($VolsTotal -ne $VolsHealthy) { 
-        $Failed = $true; 
-        "Volumes:"; 
-        $Volumes | Where-Object { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) }  | 
-        Format-Table Path, HealthStatus  -AutoSize
-    }
-
-    if ($DedupTotal -ne $DedupHealthy) { 
-        $Failed = $true; 
-        "Volumes:"; 
-        $DedupVolumes | Where-Object LastOptimizationResult -eq 0 | 
-        Format-Table Volume, Capacity, SavingsRate, LastOptimizationResultMessage -AutoSize
-    }
-
-    if ($VDsTotal -ne $VDsHealthy) { 
-        $Failed = $true; 
-        "Virtual Disks:"; 
-        $VirtualDisks | Where-Object { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
-        Format-Table FriendlyName, HealthStatus, OperationalStatus, ResiliencySettingName, IsManualAttach  -AutoSize 
-    }
-
-    if ($PoolsTotal -ne $PoolsHealthy) { 
-        $Failed = $true; 
-        "Storage Pools:"; 
-        $StoragePools | Where-Object { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
-        Format-Table FriendlyName, HealthStatus, OperationalStatus, IsReadOnly -AutoSize 
-    }
-
-    if ($PDsTotal -ne $PDsHealthy) { 
-        $Failed = $true; 
-        "Physical Disks:"; 
-        $PhysicalDisks | Where-Object { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
-        Format-Table FriendlyName, EnclosureNumber, SlotNumber, HealthStatus, OperationalStatus, Usage -AutoSize
-    }
-
-    if (Get-Command *StorageEnclosure*)
-    {
-        if ($EncsTotal -ne $EncsHealthy) { 
-            $Failed = $true; "Enclosures:";
-            $StorageEnclosures | Where-Object { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
-            Format-Table FriendlyName, HealthStatus, ElementTypesInError -AutoSize 
-        }
-    }
-
-    if ($ShTotal -ne $ShHealthy) { 
-        $Failed = $true; 
-        "CA Shares:";
-        $ShareStatus | Where-Object Health -notlike "Healthy" | Format-Table -AutoSize
-    }
-
-    if (-not $Failed) { 
-        "`nNo unhealthy components" 
-    }
+    try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+            $StorageEnclosures = Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $SubSystem }
+    catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
+    $StorageEnclosures | Export-Clixml ($Path + "GetStorageEnclosure.XML")
 
     #
     # Phase 3
     #
+
     Show-Update "<<< Phase 3 - Firmware and drivers >>>`n" -ForegroundColor Cyan
+    Show-Update "Devices, drivers and enclosure information" 
 
-    Show-Update "Devices and drivers by Model and Driver Version per cluster node" 
-
-    if (-not $Read) {
-
-        $j = @()
-        foreach ($node in $ClusterNodes.Name) {
-            try {
-                $j += Start-Job -Name $node {
-                        Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node |
-                            Export-Clixml ($using:Path + $using:node + "_GetDrivers.XML")
-                        }
-            } catch {
-                Show-Error("Unable to get Drivers on node $node. `nError="+$_.Exception.Message)
-            }
+    $j = @()
+    foreach ($node in $ClusterNodes.Name) {
+        try {
+            $j += Start-Job -Name $node {
+                    Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node |
+                        Export-Clixml ($using:Path + $using:node + "_GetDrivers.XML")
+                    }
+        } catch {
+            Show-Error("Unable to get Drivers on node $node. `nError="+$_.Exception.Message)
         }
-
-        $null = $j | Wait-Job
-        $j | Receive-Job
-        $j | Remove-Job
     }
 
-    foreach ($node in $ClusterNodes) {
-        "`nCluster Node: $node"
-        Import-Clixml ($Path + $node + "_GetDrivers.XML") |? {
-            ($_.DeviceCLass -eq 'SCSIADAPTER') -or ($_.DeviceCLass -eq 'NET') } |
-            Group-Object DeviceName,DriverVersion |
-            Sort Name |
-            ft -AutoSize Count,
-                @{ Expression = { $_.Group[0].DeviceName }; Label = "DeviceName" },
-                @{ Expression = { $_.Group[0].DriverVersion }; Label = "DriverVersion" },
-                @{ Expression = { $_.Group[0].DriverDate }; Label = "DriverDate" }
-    }
+    $null = $j | Wait-Job
+    $j | Receive-Job
+    $j | Remove-Job
 
-    "`nPhysical disks by Media Type, Model and Firmware Version" 
-    $PhysicalDisks | Group-Object MediaType,Model,FirmwareVersion |
-        ft -AutoSize Count,
-            @{ Expression = { $_.Group[0].Model }; Label="Model" },
-            @{ Expression = { $_.Group[0].FirmwareVersion }; Label="FirmwareVersion" },
-            @{ Expression = { $_.Group[0].MediaType }; Label="MediaType" }
-
- 
-    if ( -not (Get-Command *StorageEnclosure*) ) {
-        Show-Warning "Storage Enclosure commands not available. See http://support.microsoft.com/kb/2913766/en-us"
-    } else {
-        "Storage Enclosures by Model and Firmware Version"
-        $StorageEnclosures | Group-Object Model,FirmwareVersion |
-            ft -AutoSize Count,
-                @{ Expression = { $_.Group[0].Model }; Label="Model" },
-                @{ Expression = { $_.Group[0].FirmwareVersion }; Label="FirmwareVersion" }
-    }
-    
     #
     # Phase 4 Prep
     #
@@ -1685,11 +1558,6 @@ function Get-SddcDiagnosticInfo
         Show-Update "All Logs Received`n"
     }
 
-    if ($Read) { 
-        try { $ErrorSummary = Import-Clixml ($Path + "GetAllErrors.XML") }
-        catch { $ErrorSummary = @() }
-    }
-
     if ($S2DEnabled -ne $true) { 
         if ((([System.Environment]::OSVersion.Version).Major) -ge 10) {
             Show-Update "Gathering the storage diagnostic information"
@@ -1731,33 +1599,38 @@ function Get-SddcDiagnosticInfo
 
     [System.GC]::Collect()
 
-    if (-not $read) {
-        Show-Update "<<< Phase 7 - Compacting files for transport >>>`n" -ForegroundColor Cyan
+    Show-Update "<<< Phase 7 - Compacting files for transport >>>`n" -ForegroundColor Cyan
 
-        $ZipSuffix = '-{0}{1:00}{2:00}-{3:00}{4:00}' -f $TodayDate.Year,$TodayDate.Month,$TodayDate.Day,$TodayDate.Hour,$TodayDate.Minute
-        $ZipSuffix = "-" + $Cluster.Name + $ZipSuffix
-        $ZipPath = $ZipPrefix+$ZipSuffix+".ZIP"
+    $ZipSuffix = '-{0}{1:00}{2:00}-{3:00}{4:00}' -f $TodayDate.Year,$TodayDate.Month,$TodayDate.Day,$TodayDate.Hour,$TodayDate.Minute
+    $ZipSuffix = "-" + $Cluster.Name + $ZipSuffix
+    $ZipPath = $ZipPrefix+$ZipSuffix+".ZIP"
 
-        # Stop Transcript
-        Stop-Transcript
-        
-        try {
-            Show-Update "Creating Zip file ..."
+    # Stop Transcript
+    Stop-Transcript
 
-            Add-Type -Assembly System.IO.Compression.FileSystem
-            [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
-            Show-Update "Zip File Name : $ZipPath"
+    # Generate Summary report for rapid consumption at analysis time
+    Show-Update "Generating Summary Report"
+    $transcriptFile = $Path + "0_CloudHealthSummary.log"
+    Start-Transcript -Path $transcriptFile -Force
+    Show-SddcDiagnosticReport -Report Summary -ReportLevel Full $Path
+    Stop-Transcript
+            
+    try {
+        Show-Update "Creating Zip file ..."
 
-            Show-Update "Cleaning up temporary directory $Path"
-            Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
+        Add-Type -Assembly System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+        Show-Update "Zip File Name : $ZipPath"
 
-        } catch {
-            Show-Error("Error creating the ZIP file!`nContent remains available at $Path") 
-        }
+        Show-Update "Cleaning up temporary directory $Path"
+        Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
 
-        Show-Update "Cleaning up CimSessions"
-        Get-CimSession | Remove-CimSession
+    } catch {
+        Show-Error("Error creating the ZIP file!`nContent remains available at $Path") 
     }
+
+    Show-Update "Cleaning up CimSessions"
+    Get-CimSession | Remove-CimSession
 
     Show-Update "COMPLETE"
 }
@@ -2517,6 +2390,12 @@ function Get-SummaryReport
     $ExpectedEnclosures = $Parameters.ExpectedEnclosures
     $HoursOfEvents = $Parameters.HoursOfEvents
 
+    #####
+    ##### Phase 1 Summary
+    #####
+
+    Show-Update "<<< Phase 1 - Storage Health Overview >>>`n" -ForegroundColor Cyan
+
     Write-Host ("Date of capture : " + $TodayDate)
 
     $ClusterNodes = Import-Clixml ($Path + "GetClusterNode.XML")
@@ -2525,8 +2404,8 @@ function Get-SummaryReport
     $ClusterName = $Cluster.Name + "." + $Cluster.Domain
     $S2DEnabled = $Cluster.S2DEnabled
 
-    Write-Host "Cluster Name               : $ClusterName"
-    Write-Host "S2D Enabled                : $S2DEnabled"
+    Write-Host "Cluster Name                  : $ClusterName"
+    Write-Host "S2D Enabled                   : $S2DEnabled"
 
     $ClusterGroups = Import-Clixml ($Path + "GetClusterGroup.XML")
 
@@ -2571,7 +2450,8 @@ function Get-SummaryReport
     if ($ResHealthy -lt $ResTotal) { Show-Warning "Unhealthy cluster resources detected" }
 
     if ($S2DEnabled) {
-        $HealthProviderCount = @(($ClusterResourceParameters |? { $_.ClusterObject -eq 'Health' -and $_.Name -eq 'Providers' }).Value).Count
+        $HealthProviders = $ClusterResourceParameters |? { $_.ClusterObject -like 'Health' -and $_.Name -eq 'Providers' }
+        $HealthProviderCount = $HealthProviders.Value.Count
         if ($HealthProviderCount) {
             Write-Host "Health Resource               : $HealthProviderCount health providers registered"
         } else {
@@ -2588,6 +2468,10 @@ function Get-SummaryReport
     Write-Host "Cluster Shared Volumes Online : $CSVHealthy / $CSVTotal"
     if ($CSVHealthy -lt $CSVTotal) { Show-Warning "Unhealthy cluster shared volumes detected" }
 
+    # Open files 
+
+    Write-Host "`nHealthy Components count: [SMBShare -> CSV -> VirtualDisk -> StoragePool -> PhysicalDisk -> StorageEnclosure]"
+
     # Scale-out share health
     $ShareStatus = Import-Clixml ($Path + "ShareStatus.XML")
 
@@ -2595,10 +2479,8 @@ function Get-SummaryReport
     $ShHealthy = NCount($ShareStatus | Where-Object Health -like "Accessible")
     "SMB CA Shares Accessible      : $ShHealthy / $ShTotal"
     if ($ShHealthy -lt $ShTotal) { Show-Warning "Inaccessible CA shares detected" }
-
-    # Open files 
-
-    Write-Host "`nHealthy Components count: [SMBShare -> CSV -> VirtualDisk -> StoragePool -> PhysicalDisk -> StorageEnclosure]"
+    
+    # SMB Open Files
 
     $SmbOpenFiles = Import-Clixml ($Path + "GetSmbOpenFile.XML")
 
@@ -2611,8 +2493,8 @@ function Get-SummaryReport
     $SmbWitness = Import-Clixml ($Path + "GetSmbWitness.XML")
 
     $WitTotal = NCount($SmbWitness | Where-Object State -eq RequestedNotifications | Group-Object ClientName)
-    Write-Host "Users with a Witness           : $WitTotal"
-    if ($WitTotal -eq 0) { Show-Warning "No users with a Witness" }
+    Write-Host "Users with a Witness          : $WitTotal"
+    if ($FileTotal -ne 0 -and $WitTotal -eq 0) { Show-Warning "No users with a Witness" }
 
     # Volume status
 
@@ -2626,21 +2508,23 @@ function Get-SummaryReport
     # Deduplicated volume health - if the volume XML exists, it was present (may still be empty)
     #
 
-    $DedupVolumes = Import-Clixml ($Path + "GetDedupVolume.XML")
-    $DedupTotal = NCount($DedupVolumes)
-    $DedupHealthy = NCount($DedupVolumes |? LastOptimizationResult -eq 0)
+    if (Test-Path ($Path + "GetDedupVolume.XML")) {
+        $DedupVolumes = Import-Clixml ($Path + "GetDedupVolume.XML")
+        $DedupTotal = NCount($DedupVolumes)
+        $DedupHealthy = NCount($DedupVolumes |? LastOptimizationResult -eq 0)
 
-    if ($DedupTotal) {
-        Write-Host "Dedup Volumes Healthy         : $DedupHealthy / $DedupTotal "
+        if ($DedupTotal) {
+            Write-Host "Dedup Volumes Healthy         : $DedupHealthy / $DedupTotal "
 
-        if ($DedupHealthy -lt $DedupTotal) { Show-Warning "Unhealthy Dedup volumes detected" }
+            if ($DedupHealthy -lt $DedupTotal) { Show-Warning "Unhealthy Dedup volumes detected" }
 
-    } else {
+        } else {
 
-        $DedupHealthy = 0
+            $DedupHealthy = 0
+        }
+
+        if ($DedupTotal -lt $ExpectedDedupVolumes) { Show-Warning "Fewer Dedup volumes than the $ExpectedDedupVolumes expected" }
     }
-
-    if ($DedupTotal -lt $ExpectedDedupVolumes) { Show-Warning "Fewer Dedup volumes than the $ExpectedDedupVolumes expected" }
 
     # Virtual disk health
 
@@ -2648,7 +2532,7 @@ function Get-SummaryReport
 
     $VDsTotal = NCount($VirtualDisks)
     $VDsHealthy = NCount($VirtualDisks | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
-    "Virtual Disks Healthy         : $VDsHealthy / $VDsTotal"
+    Write-Host "Virtual Disks Healthy         : $VDsHealthy / $VDsTotal"
 
     if ($VDsHealthy -lt $VDsTotal) { Show-Warning "Unhealthy virtual disks detected" }
 
@@ -2658,7 +2542,7 @@ function Get-SummaryReport
 
     $PoolsTotal = NCount($StoragePools)
     $PoolsHealthy = NCount($StoragePools | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
-    "Storage Pools Healthy         : $PoolsHealthy / $PoolsTotal "
+    Write-Host "Storage Pools Healthy         : $PoolsHealthy / $PoolsTotal "
 
     if ($PoolsTotal -lt $ExpectedPools) { Show-Warning "Fewer storage pools than the $ExpectedPools expected" }
     if ($PoolsHealthy -lt $PoolsTotal) { Show-Warning "Unhealthy storage pools detected" }
@@ -2670,18 +2554,144 @@ function Get-SummaryReport
 
     $PDsTotal = NCount($PhysicalDisks)
     $PDsHealthy = NCount($PhysicalDisks | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
-    "Physical Disks Healthy        : $PDsHealthy / $PDsTotal"
+    Write-Host "Physical Disks Healthy        : $PDsHealthy / $PDsTotal"
 
     if ($PDsTotal -lt $ExpectedPhysicalDisks) { Show-Warning "Fewer physical disks than the $ExpectedPhysicalDisks expected" }
-    if ($PDsHealthy -lt $PDsTotal) { Show-Warning "Unhealthy physical disks detected" }
+    if ($PDsHealthy -lt $PDsTotal) { Show-Warning "$($PDsTotal - $PDsHealthy) unhealthy physical disks detected" }
+
+    # Storage enclosure health
+
+    $StorageEnclosures = Import-Clixml ($Path + "GetStorageEnclosure.XML")
+
+    $EncsTotal = NCount($StorageEnclosures)
+    $EncsHealthy = NCount($StorageEnclosures | Where-Object { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
+    Write-Host "Storage Enclosures Healthy    : $EncsHealthy / $EncsTotal "
+
+    if ($EncsTotal -lt $ExpectedEnclosures) { Show-Warning "Fewer storage enclosures than the $ExpectedEnclosures expected" }
+    if ($EncsHealthy -lt $EncsTotal) { Show-Warning "Unhealthy storage enclosures detected" }
 
     # Reliability counters
     # Not currently evaluated in summary report, TBD
 
     if (-not (Test-Path ($Path + "GetReliabilityCounter.XML"))) {
-        Show-Warning "Reliability Counters not gathered for this capture"
+        Write-Host "`nNOTE: storage device reliability counters not gathered for this capture.`nThis is default, avoiding a storage latency burst which`nmay occur at the device when returning these statistics.`nUse -IncludeReliabilityCounters to get this information, if required.`n"
     }
 
+    #####
+    ##### Phase 2 Unhealthy Detail
+    #####
+
+    Show-Update "<<< Phase 2 - Unhealthy Component Detail >>>`n" -ForegroundColor Cyan
+
+    $Failed = $False
+
+    if ($NodesTotal -ne $NodesHealthy) { 
+        $Failed = $true
+        Write-Host "Cluster Nodes:"
+        $ClusterNodes |? State -ne "Up" | Format-Table -AutoSize 
+    }
+
+    if ($NetsTotal -ne $NetsHealthy) { 
+        $Failed = $true
+        Write-Host "Cluster Networks:"
+        $ClusterNetworks |? State -ne "Up" | Format-Table -AutoSize 
+    }
+
+    if ($ResTotal -ne $ResHealthy) { 
+        $Failed = $true
+        Write-Host "Cluster Resources:"
+        $ClusterResources |? State -notlike "Online" | Format-Table -AutoSize 
+    }
+
+    if ($CSVTotal -ne $CSVHealthy) { 
+        $Failed = $true
+        Write-Host "Cluster Shared Volumes:"
+        $CSV |? State -ne "Online" | Format-Table -AutoSize 
+    }
+
+    if ($VolsTotal -ne $VolsHealthy) { 
+        $Failed = $true
+        Write-Host "Volumes:"
+        $Volumes |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) }  | 
+        Format-Table Path,HealthStatus  -AutoSize
+    }
+
+    if ($DedupTotal -ne $DedupHealthy) { 
+        $Failed = $true
+        Write-Host "Volumes:"
+        $DedupVolumes |? LastOptimizationResult -eq 0 | 
+        Format-Table Volume,Capacity,SavingsRate,LastOptimizationResultMessage -AutoSize
+    }
+
+    if ($VDsTotal -ne $VDsHealthy) { 
+        $Failed = $true
+        Write-Host "Virtual Disks:"
+        $VirtualDisks |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
+        Format-Table FriendlyName,HealthStatus,OperationalStatus,ResiliencySettingName,IsManualAttach  -AutoSize 
+    }
+
+    if ($PoolsTotal -ne $PoolsHealthy) { 
+        $Failed = $true
+        Write-Host "Storage Pools:"
+        $StoragePools |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
+        Format-Table FriendlyName,HealthStatus,OperationalStatus,IsReadOnly -AutoSize 
+    }
+
+    if ($PDsTotal -ne $PDsHealthy) { 
+        $Failed = $true
+        Write-Host "Physical Disks:"
+        $PhysicalDisks |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
+        Format-Table FriendlyName,EnclosureNumber,SlotNumber,HealthStatus,OperationalStatus,Usage -AutoSize
+    }
+
+    if ($EncsTotal -ne $EncsHealthy) { 
+        $Failed = $true;
+        Write-Host "Enclosures:"
+        $StorageEnclosures |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
+        Format-Table FriendlyName,HealthStatus,ElementTypesInError -AutoSize 
+    }
+
+    if ($ShTotal -ne $ShHealthy) { 
+        $Failed = $true
+        Write-Host "CA Shares:"
+        $ShareStatus |? Health -notlike "Healthy" | Format-Table -AutoSize
+    }
+
+    if (-not $Failed) { 
+        "`nNo unhealthy components" 
+    }
+
+    #####
+    ##### Phase 3 Devices/drivers information
+    #####
+
+    Show-Update "<<< Phase 3 - Firmware and drivers >>>`n" -ForegroundColor Cyan
+
+    foreach ($node in $ClusterNodes.Name) {
+        "`nCluster Node: $node"
+        Import-Clixml ($Path + $node + "_GetDrivers.XML") |? {
+            ($_.DeviceCLass -eq 'SCSIADAPTER') -or ($_.DeviceCLass -eq 'NET') } |
+            Group-Object DeviceName,DriverVersion |
+            Sort Name |
+            ft -AutoSize Count,
+                @{ Expression = { $_.Group[0].DeviceName }; Label = "DeviceName" },
+                @{ Expression = { $_.Group[0].DriverVersion }; Label = "DriverVersion" },
+                @{ Expression = { $_.Group[0].DriverDate }; Label = "DriverDate" }
+    }
+
+    Write-Host "`nPhysical disks by Media Type, Model and Firmware Version" 
+    $PhysicalDisks | Group-Object MediaType,Model,FirmwareVersion |
+        ft -AutoSize Count,
+            @{ Expression = { $_.Group[0].Model }; Label="Model" },
+            @{ Expression = { $_.Group[0].FirmwareVersion }; Label="FirmwareVersion" },
+            @{ Expression = { $_.Group[0].MediaType }; Label="MediaType" }
+
+ 
+    Write-Host "Storage Enclosures by Model and Firmware Version"
+    $StorageEnclosures | Group-Object Model,FirmwareVersion |
+        ft -AutoSize Count,
+            @{ Expression = { $_.Group[0].Model }; Label="Model" },
+            @{ Expression = { $_.Group[0].FirmwareVersion }; Label="FirmwareVersion" }
 }
 
 <#
