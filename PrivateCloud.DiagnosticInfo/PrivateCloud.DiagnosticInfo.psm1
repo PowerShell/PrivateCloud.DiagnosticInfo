@@ -73,6 +73,18 @@ $CommonFunc = {
     }
 
     #
+    #  Common function to construct path to per-node data directory
+    #
+
+    function Get-NodePath(
+        [string] $Path,
+        [string] $node
+        )
+    {
+        Join-Path $Path "Node_$node"
+    }
+
+    #
     # Count number of elements in an array, including checks for $null or single object
     #
     function NCount { 
@@ -706,6 +718,12 @@ function Get-SddcDiagnosticInfo
     Write-Host "Cluster name               : $ClusterName"
     Write-Host "Access node                : $AccessNode`n"
 
+    # Create node-specific directories for content
+
+    $ClusterNodes.Name |% {
+        md (Get-NodePath $Path $_) | Out-Null
+    }
+
     #
     # Verify deduplication prerequisites on access node.
     #
@@ -1299,11 +1317,7 @@ function Get-SddcDiagnosticInfo
     #
     Show-Update "<<< Phase 6 - Events and Logs >>>`n" -ForegroundColor Cyan
 
-    if ((-not $Read) -and (-not $IncludeEvents)) {
-       "Events were excluded by a parameter`n"
-    }
-
-    if ((-not $Read) -and $IncludeEvents) {
+    if ($IncludeEvents) {
 
         Show-Update "Starting Export of Cluster Logs..." 
 
@@ -1381,30 +1395,35 @@ function Get-SddcDiagnosticInfo
 
             $Logs |% {
         
-                $NodeFile = $NodePath+$Node+"_UnfilteredEvent_"+$_.LogName.Replace("/","-")+".EVTX"
+                $NodeFile = $NodePath+$_.LogName.Replace("/","-")+".EVTX"
 
                 # analytical/debug channels can not be captured live
                 # if any are encountered (not normal), disable them temporarily for export
                 $directChannel = $false
                 if ($_.LogType -in @('Analytical','Debug') -and $_.IsEnabled) {
                     $directChannel = $true
-                    WEvtUtil.exe sl /e:false $_.LogName
+                    wevtutil sl /e:false $_.LogName
                 }
 
                 # Export unfiltered log file using the WEvtUtil command-line tool
-            
                 if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management"  -Or ($MSecs -eq -1)) {
-                    WEvtUtil.exe epl $_.LogName $NodeFile /ow:true
+                    wevtutil epl $_.LogName $NodeFile /ow:true
                 } else {
-                    WEvtUtil.exe epl $_.LogName $NodeFile /q:$QTime /ow:true
+                    wevtutil epl $_.LogName $NodeFile /q:$QTime /ow:true
                 }
 
                 if ($directChannel -eq $true) {
-                    echo y | WEvtUtil.exe sl /e:true $_.LogName | out-null
+                    echo y | wevtutil sl /e:true $_.LogName | out-null
                 }
+
+                # Create locale metadata for off-system rendering
+                wevtutil al $NodeFile /l:$PSCulture
 
                 Write-Output (Get-AdminSharePathFromLocal $Node $NodeFile)
             }
+
+            # Also export locale metadata for off-system rendering (one-shot, we'll recursively copy)
+            Write-Output (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
         }
 
         $null = Wait-Job $j
@@ -1417,11 +1436,11 @@ function Get-SddcDiagnosticInfo
         $j.ChildJobs |% {
             $logs = Receive-Job $_
 
-            $copyjobs += start-job -Name "Copy $($_.Location)" {
+            $copyjobs += start-job -Name "Copy $($_.Location)" -InitializationScript $CommonFunc {
 
                 $using:logs |% {
-                    Copy-Item $_ $using:Path -Force -ErrorAction SilentlyContinue -Verbose
-                    Remove-Item $_ -Force -ErrorAction SilentlyContinue
+                    Copy-Item -Recurse $_  (Get-NodePath $using:Path $_.PsComputerName) -Force -ErrorAction SilentlyContinue -Verbose
+                    Remove-Item -Recurse $_ -Force -ErrorAction SilentlyContinue
                 }
             }
         }
@@ -1434,18 +1453,15 @@ function Get-SddcDiagnosticInfo
 
         $j = $ClusterNodes |% {
 
-            Start-Job -Name $_.Name -ArgumentList $_.Name,$Cluster.Domain {
+            Start-Job -Name $_.Name -ArgumentList $_.Name,$Cluster.Domain -InitializationScript $CommonFunc {
 
                 param($NodeName,$DomainName)
-
-                # import common functions
-                iex $using:CommonFunc
 
                 $Node = "$NodeName.$DomainName"
 
                 # Gather SYSTEMINFO.EXE output for a given node
 
-                $LocalFile = $using:Path+$Node+"_SystemInfo.TXT"
+                $LocalFile = (Join-Path (Get-NodePath $using:Path $NodeName) "SystemInfo.TXT")
                 SystemInfo.exe /S $Node >$LocalFile
 
                 # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
@@ -1480,7 +1496,7 @@ function Get-SddcDiagnosticInfo
 			    foreach ($cmd in $CmdsToLog)
 			    {
                     # truncate cmd string to the cmd itself
-				    $LocalFile = $using:Path + (($cmd.split(' '))[0] -replace "-","") + "-$($Node)"
+				    $LocalFile = (Join-Path (Get-NodePath $using:Path $NodeName) (($cmd.split(' '))[0] -replace "-",""))
 				    try {
 
                         $out = iex ($cmd -replace '_C_',$Node)
@@ -1495,6 +1511,7 @@ function Get-SddcDiagnosticInfo
 			    }
 
                 $NodePath = Invoke-Command -ComputerName $Node { $env:SystemRoot }
+                $LocalDir = Get-NodePath $using:Path $NodeName
 
                 if ($using:IncludeDumps -eq $true) {
                     # Enumerate minidump files for a given node
@@ -1507,8 +1524,7 @@ function Get-SddcDiagnosticInfo
                     # Copy minidump files from the node
 
                     $DmpFiles |% {
-                        $LocalFile = $using:Path + $Node + "_" + $_.Name 
-                        try { Copy-Item $_.FullName $LocalFile } 
+                        try { Copy-Item $_.FullName $LocalDir } 
                         catch { Show-Warning("Could not copy minidump file $_.FullName") }
                     }        
 
@@ -1520,9 +1536,8 @@ function Get-SddcDiagnosticInfo
                     # Copy LiveKernelReports files from the node
 
                     $DmpFiles |% {
-                        $LocalFile = $using:Path + $Node + "_" + $_.Name 
-                        try { Copy-Item $_.FullName $LocalFile } 
-                        catch { Show-Warning "Could not copy LiveKernelReports file $_.FullName" }
+                        try { Copy-Item $_.FullName $LocalDir } 
+                        catch { Show-Warning "Could not copy LiveKernelReports file $($_.FullName)" }
                     }        
                 }
 
@@ -1531,12 +1546,15 @@ function Get-SddcDiagnosticInfo
                     $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
                 catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $Node" }
 
+                
+                $LocalClusterReportDir = Join-Path $LocalDir "ClusterReports"
+                md $LocalClusterReportDir
+
                 # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
                 $RepFiles |% {
                     if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
-                        $LocalFile = $using:Path + $Node + "_" + $_.Name
-                        try { Copy-Item $_.FullName $LocalFile }
-                        catch { Show-Warning "Could not copy report file $_.FullName" }
+                        try { Copy-Item $_.FullName $LocalClusterReportDir }
+                        catch { Show-Warning "Could not copy report file $($_.FullName)" }
                     }
                 }
             }
@@ -1554,6 +1572,8 @@ function Get-SddcDiagnosticInfo
         $ClusterLogJob | Remove-Job
 
         Show-Update "All Logs Received`n"
+    } else {
+        "Events were excluded by a parameter`n"
     }
 
     if ($S2DEnabled -ne $true) { 
@@ -1589,14 +1609,6 @@ function Get-SddcDiagnosticInfo
     # Phase 7
     #
 
-    #
-    # Force GC so that any pending file references are
-    # torn down. If they live, they will block removal
-    # of content.
-    #
-
-    [System.GC]::Collect()
-
     Show-Update "<<< Phase 7 - Compacting files for transport >>>`n" -ForegroundColor Cyan
 
     $ZipSuffix = '-{0}{1:00}{2:00}-{3:00}{4:00}' -f $TodayDate.Year,$TodayDate.Month,$TodayDate.Day,$TodayDate.Hour,$TodayDate.Minute
@@ -1612,7 +1624,15 @@ function Get-SddcDiagnosticInfo
     Start-Transcript -Path $transcriptFile -Force
     Show-SddcDiagnosticReport -Report Summary -ReportLevel Full $Path
     Stop-Transcript
-            
+
+    #
+    # Force GC so that any pending file references are
+    # torn down. If they live, they will block removal
+    # of content.
+    #
+
+    [System.GC]::Collect()
+       
     try {
         Show-Update "Creating Zip file ..."
 
