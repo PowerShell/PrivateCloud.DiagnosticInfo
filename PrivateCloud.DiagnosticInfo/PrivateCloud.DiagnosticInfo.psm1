@@ -6,9 +6,9 @@
 
  Import-Module Storage
 
-<##################################################
-#  Common Helper functions                        #
-##################################################>
+<####################################################
+#  Common helper functions for main/child sessions  #
+####################################################>
 
 $CommonFunc = {
 
@@ -106,6 +106,38 @@ $CommonFunc = {
 # scriptblocks are flattened to strings on passing via $using
 # iex will be used there
 . $CommonFunc
+
+#
+
+<####################################################
+#  Common helper functions for main session only    #
+####################################################>
+
+function Check-ExtractZip(
+    [string] $Path
+    )
+{
+    if ($Path.ToUpper().EndsWith(".ZIP")) {
+
+        $ExtractToPath = $Path.Substring(0, $Path.Length - 4)
+
+        # Already done?
+        $f = gi $ExtractToPath -ErrorAction SilentlyContinue
+        if ($f) {
+            return $f.FullName
+        }
+
+        Show-Update "Extracting $Path -> $ExtractToPath"
+
+        [Reflection.Assembly]::LoadWithPartialName("System.IO.Compression.FileSystem") | Out-Null
+        try { [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $ExtractToPath) }
+        catch { Show-Error("Can't extract results as Zip file from '$Path' to '$ExtractToPath'") }
+
+        return $ExtractToPath
+    }
+
+    return $Path
+}
 
 <##################################################
 #  End Helper functions                           #
@@ -609,7 +641,9 @@ function Get-SddcDiagnosticInfo
         $Read = $false
     }
 
-    if (-not $Read) {
+    if ($Read) {
+        $Path = Check-ExtractZip $Path
+    } else {
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse | Out-Null
         md -ErrorAction SilentlyContinue $Path | Out-Null
     }
@@ -618,16 +652,7 @@ function Get-SddcDiagnosticInfo
     if ($null -eq $PathObject) { Show-Error ("Path not found: $Path") }
     $Path = $PathObject.FullName
 
-    if ($Read -and $Path.ToUpper().EndsWith(".ZIP")) {
-        [Reflection.Assembly]::LoadWithPartialName("System.IO.Compression.FileSystem") | Out-Null
-        $ExtractToPath = $Path.Substring(0, $Path.Length - 4)
-
-        try { [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $ExtractToPath) }
-        catch { Show-Error("Can't extract results as Zip file from '$Path' to '$ExtractToPath'") }
-
-        $Path = $ExtractToPath
-    }
-
+    # Note: this should be unnecessary as soon as we have the discipline of Join-Path flushed through
     if (-not $Path.EndsWith("\")) { $Path = $Path + "\" }
 
     ###
@@ -663,7 +688,7 @@ function Get-SddcDiagnosticInfo
     #
 
     $Parameters = "" | Select-Object TodayDate, ExpectedNodes, ExpectedNetworks, ExpectedVolumes, 
-    ExpectedPhysicalDisks, ExpectedPools, ExpectedEnclosures, ExpectedDedupVolumes, HoursOfEvents
+    ExpectedPhysicalDisks, ExpectedPools, ExpectedEnclosures, ExpectedDedupVolumes, HoursOfEvents, Version
     $TodayDate = Get-Date
     $Parameters.TodayDate = $TodayDate
     $Parameters.ExpectedNodes = $ExpectedNodes
@@ -674,7 +699,10 @@ function Get-SddcDiagnosticInfo
     $Parameters.ExpectedPools = $ExpectedPools
     $Parameters.ExpectedEnclosures = $ExpectedEnclosures
     $Parameters.HoursOfEvents = $HoursOfEvents
+    $Parameters.Version = (Get-Module PrivateCloud.DiagnosticInfo).Version.ToString()
     $Parameters | Export-Clixml ($Path + "GetParameters.XML")
+
+    Show-Update "PrivateCloud.DiagnosticInfo v $($Parameters.Version)"
 
     #
     # Phase 1
@@ -874,16 +902,16 @@ function Get-SddcDiagnosticInfo
             Show-Warning "Not able to query faulty disks and SSU for faulted pools"
         }
 
-        Show-Update "SSB Connectivity"
+        Show-Update "S2D Connectivity"
 
         try {
             $j = $ClusterNodes |? { $_.State.ToString() -eq 'Up' } |% {
                 $node = $_.Name
-                Start-Job -Name $node {
+                Start-Job -Name $node -InitializationScript $CommonFunc {
                     Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $using:node |
-                        Export-Clixml (Join-Path $using:Path ($using:node + "_ClusPort.xml"))
+                        Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusPort.xml")
                     Get-CimInstance -Namespace root\wmi -ClassName ClusBfltDeviceInformation -ComputerName $using:node |
-                        Export-Clixml (Join-Path $using:Path ($using:node + "_ClusBflt.xml"))
+                        Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusBflt.xml")
                 }
             }
 
@@ -895,30 +923,62 @@ function Get-SddcDiagnosticInfo
             Show-Warning "Gathering SBL connectivity failed"
         }
     }
-    
-    try { $ClusterGroups = Get-ClusterGroup -Cluster $ClusterName }
-    catch { Show-Error("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
-    $ClusterGroups | Export-Clixml ($Path + "GetClusterGroup.XML")
 
-    try { $ClusterNetworks = Get-ClusterNetwork -Cluster $ClusterName }
-    catch { Show-Error("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
-    $ClusterNetworks | Export-Clixml ($Path + "GetClusterNetwork.XML")
+    ####
+    # Start accumulating static jobs which self-contain their gather.
+    # These are pulled in close to the end. Consider how to regularize this down the line.
+    ####
+    $JobStatic = @()
 
-    try { $ClusterResources = Get-ClusterResource -Cluster $ClusterName }
-    catch { Show-Error("Unable to get Cluster Resources.  `nError="+$_.Exception.Message) }
-    $ClusterResources | Export-Clixml ($Path + "GetClusterResource.XML")
+    Show-Update "Start gather of cluster configuration ..."
 
-    try { $ClusterResourceParameters = Get-ClusterResource -Cluster $ClusterName | Get-ClusterParameter }
-    catch { Show-Error("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
-    $ClusterResourceParameters | Export-Clixml ($Path + "GetClusterResourceParameters.XML")
+    $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterGroup {
+        try { $o = Get-ClusterGroup -Cluster $using:ClusterName }
+        catch { Show-Error("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
+        $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
+    }
 
-    try { $CSV = Get-ClusterSharedVolume -Cluster $ClusterName }
-    catch { Show-Error("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
-    $CSV | Export-Clixml ($Path + "GetClusterSharedVolume.XML")
+    $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterNetwork {
+        try { $o = Get-ClusterNetwork -Cluster $using:ClusterName }
+        catch { Show-Error("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
+        $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
+    }
+
+    $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResource {
+        try { $o = Get-ClusterResource -Cluster $using:ClusterName }
+        catch { Show-Error("Unable to get Cluster Resources.  `nError="+$_.Exception.Message) }
+        $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
+    }
+
+    $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResourceParameter {
+        try { $o = Get-ClusterResource -Cluster $using:ClusterName | Get-ClusterParameter }
+        catch { Show-Error("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
+        $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
+    }
+
+    $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterSharedVolume {
+        try { $o = Get-ClusterSharedVolume -Cluster $using:ClusterName }
+        catch { Show-Error("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
+        $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
+    }
+
+    Show-Update "Start gather of driver information ..." 
+
+    $ClusterNodes.Name |% {
+        
+        $node = $_
+        $JobStatic += Start-Job -InitializationScript $CommonFunc -Name "Driver Information: $node" {
+            try { $o = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node }       
+            catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
+            $o | Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "GetDrivers.XML")
+        }
+    }
 
     #
     # SMB share health/status
     #
+
+    Show-Update "SMB Shares"
 
     try { $SmbShares = Get-SmbShare -CimSession $AccessNode }
     catch { Show-Error("Unable to get SMB Shares. `nError="+$_.Exception.Message) }
@@ -957,17 +1017,28 @@ function Get-SddcDiagnosticInfo
     catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
     $SmbWitness | Export-Clixml ($Path + "GetSmbWitness.XML")
 
+    Show-Update "Volumes & Virtual Disks"
+
     # Volume status
 
     try { $Volumes = Get-Volume -CimSession $AccessNode  }
     catch { Show-Error("Unable to get Volumes. `nError="+$_.Exception.Message) }
     $Volumes | Export-Clixml ($Path + "GetVolume.XML")
 
+    # Virtual disk health
+
+    try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+            $VirtualDisks = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $SubSystem }
+    catch { Show-Error("Unable to get Virtual Disks. `nError="+$_.Exception.Message) }
+    $VirtualDisks | Export-Clixml ($Path + "GetVirtualDisk.XML")
+
     # Deduplicated volume health
     # XXX the counts/healthy likely not needed once phase 4 shifted into summary report
 
     if ($DedupEnabled)
     {
+        Show-Update "Dedup Volume Status"
+
         try { $DedupVolumes = Invoke-Command -ComputerName $AccessNode { Get-DedupStatus }}
         catch { Show-Error("Unable to get Dedup Volumes. `nError="+$_.Exception.Message) }
         $DedupVolumes | Export-Clixml ($Path + "GetDedupVolume.XML")
@@ -980,12 +1051,7 @@ function Get-SddcDiagnosticInfo
         $DedupHealthy = 0
     }
 
-    # Virtual disk health
-
-    try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-            $VirtualDisks = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $SubSystem }
-    catch { Show-Error("Unable to get Virtual Disks. `nError="+$_.Exception.Message) }
-    $VirtualDisks | Export-Clixml ($Path + "GetVirtualDisk.XML")
+    Show-Update "Storage Pool & Tiers"
 
     # Storage tier information
 
@@ -1000,6 +1066,8 @@ function Get-SddcDiagnosticInfo
             $StoragePools =Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $SubSystem -ErrorAction SilentlyContinue }
     catch { Show-Error("Unable to get Storage Pools. `nError="+$_.Exception.Message) }
     $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML")
+
+    Show-Update "Clustered PhysicalDisks and SNV"
 
     # Physical disk health
 
@@ -1018,6 +1086,9 @@ function Get-SddcDiagnosticInfo
     # the SMART data which underlies them. Decline to do this by default.
 
     if ($IncludeReliabilityCounters -eq $true) {
+
+        Show-Update "Storage Reliability Counters"
+
         try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
                 $ReliabilityCounters = $PhysicalDisks | Get-StorageReliabilityCounter -CimSession $AccessNode }
         catch { Show-Error("Unable to get Storage Reliability Counters. `nError="+$_.Exception.Message) }
@@ -1026,38 +1097,17 @@ function Get-SddcDiagnosticInfo
 
     # Storage enclosure health
 
+    Show-Update "Storage Enclosures"
+
     try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
             $StorageEnclosures = Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $SubSystem }
     catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
     $StorageEnclosures | Export-Clixml ($Path + "GetStorageEnclosure.XML")
 
     #
-    # Phase 3
+    # Phase 2 Prep
     #
-
-    Show-Update "<<< Phase 3 - Firmware and drivers >>>`n" -ForegroundColor Cyan
-    Show-Update "Devices, drivers and enclosure information" 
-
-    $j = @()
-    foreach ($node in $ClusterNodes.Name) {
-        try {
-            $j += Start-Job -Name $node {
-                    Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node |
-                        Export-Clixml ($using:Path + $using:node + "_GetDrivers.XML")
-                    }
-        } catch {
-            Show-Error("Unable to get Drivers on node $node. `nError="+$_.Exception.Message)
-        }
-    }
-
-    $null = $j | Wait-Job
-    $j | Receive-Job
-    $j | Remove-Job
-
-    #
-    # Phase 4 Prep
-    #
-    Show-Update "<<< Phase 4 - Pool, Physical Disk and Volume Details >>>" -ForegroundColor Cyan
+    Show-Update "<<< Phase 2 - Pool, Physical Disk and Volume Details >>>" -ForegroundColor Cyan
 
 	if ($IncludeAssociations) {
 	
@@ -1088,7 +1138,7 @@ function Get-SddcDiagnosticInfo
 	}
 
     #
-    # Phase 4
+    # Phase 2
     #
 
 	if ($IncludeHealthReport) {
@@ -1185,9 +1235,9 @@ function Get-SddcDiagnosticInfo
 
 
     #
-    # Phase 5
+    # Phase 3
     #
-    Show-Update "<<< Phase 5 - Storage Performance >>>`n" -ForegroundColor Cyan
+    Show-Update "<<< Phase 3 - Storage Performance >>>`n" -ForegroundColor Cyan
 
     if ((-not $Read) -and (-not $IncludePerformance)) {
        "Performance was excluded by a parameter`n"
@@ -1313,28 +1363,141 @@ function Get-SddcDiagnosticInfo
     }
 
     #
-    # Phase 6
+    # Phase 4
     #
-    Show-Update "<<< Phase 6 - Events and Logs >>>`n" -ForegroundColor Cyan
+    Show-Update "<<< Phase 4 - Events and Logs >>>`n" -ForegroundColor Cyan
 
     if ($IncludeEvents) {
 
-        Show-Update "Starting Export of Cluster Logs..." 
+        # Start self-contained gather jobs (no output processing, just display)
 
-        # Cluster log collection will take some time. 
-        # Using Start-Job to run them in the background, while we collect events and other diagnostic information
+        Show-Update "Start gather of system info, cluster/health logs, reports and dump files ..." 
 
-        $ClusterLogJob = Start-Job -ArgumentList $ClusterName,$Path { 
+        # !Note static jobs started accumulating before this phase!
+        $JobStatic += Start-Job -Name ClusterLogs -ArgumentList $ClusterName,$Path { 
             param($c,$p)
-            Get-ClusterLog -Cluster $c -Destination $p -UseLocalTime
+            $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $p -UseLocalTime
             if ($using:S2DEnabled -eq $true) {
-                Get-ClusterLog -Cluster $c -Destination $p -Health -UseLocalTime
+                $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $p -Health -UseLocalTime
             }
         }
 
-        Show-Update "Exporting Event Logs..." 
+        $JobStatic += $($ClusterNodes).Name |% {
 
-        $j = Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob {
+            Start-Job -Name "System Info: $_" -ArgumentList $_,$Cluster.Domain -InitializationScript $CommonFunc {
+
+                param($NodeName,$DomainName)
+
+                $Node = "$NodeName.$DomainName"
+                $LocalNodeDir = Get-NodePath $using:Path $NodeName
+
+                # Text-only conventional commands
+                #
+                # Gather SYSTEMINFO.EXE output for a given node
+                SystemInfo.exe /S $Node > (Join-Path (Get-NodePath $using:Path $NodeName) "SystemInfo.TXT")
+
+                # Cmdlets to drop in TXT and XML forms
+                #
+                # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
+                # will be trimmed to "cmd" for logging
+                # _C_ token will be replaced with node for cimsession/computername callouts
+			    $CmdsToLog = "Get-NetAdapter -CimSession _C_",
+                                "Get-NetAdapterAdvancedProperty -CimSession _C_",
+                                "Get-NetIpAddress -CimSession _C_",
+                                "Get-NetRoute -CimSession _C_",
+                                "Get-NetQosPolicy -CimSession _C_",
+                                "Get-NetIPv4Protocol -CimSession _C_",
+                                "Get-NetIPv6Protocol -CimSession _C_",
+                                "Get-NetOffloadGlobalSetting -CimSession _C_",
+                                "Get-NetPrefixPolicy -CimSession _C_",
+                                "Get-NetTCPConnection -CimSession _C_",
+                                "Get-NetTcpSetting -CimSession _C_",
+                                "Get-NetAdapterBinding -CimSession _C_",
+                                "Get-NetAdapterChecksumOffload -CimSession _C_",
+                                "Get-NetAdapterLso -CimSession _C_",
+                                "Get-NetAdapterRss -CimSession _C_",
+                                "Get-NetAdapterRdma -CimSession _C_",
+                                "Get-NetAdapterIPsecOffload -CimSession _C_",
+                                "Get-NetAdapterPacketDirect -CimSession _C_", 
+                                "Get-NetAdapterRsc -CimSession _C_",
+                                "Get-NetLbfoTeam -CimSession _C_",
+                                "Get-NetLbfoTeamNic -CimSession _C_",
+                                "Get-NetLbfoTeamMember -CimSession _C_",
+                                "Get-SmbServerNetworkInterface -CimSession _C_",
+                                "Get-HotFix -ComputerName _C_",
+                                "Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_"
+
+			    foreach ($cmd in $CmdsToLog)
+			    {
+                    # truncate cmd string to the cmd itself
+				    $LocalFile = (Join-Path $LocalNodeDir (($cmd.split(' '))[0] -replace "-",""))
+				    try {
+
+                        $out = iex ($cmd -replace '_C_',$Node)
+
+                        # capture as txt and xml for quick analysis according to taste
+                        $out | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
+                        $out | Export-Clixml -Path "$LocalFile.xml"
+
+                    } catch {
+                        Show-Warning "'$cmd $node' failed for node $Node"
+                    }
+			    }
+
+                $NodeSystemRootPath = Invoke-Command -ComputerName $Node { $env:SystemRoot }
+
+                if ($using:IncludeDumps -eq $true) {
+                    
+                    ##
+                    # Minidumps
+                    ##
+
+                    try {
+                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Minidump\*.dmp"))
+                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
+                    catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $Node" }
+
+                    $DmpFiles |% {
+                        try { Copy-Item $_.FullName $LocalNodeDir } 
+                        catch { Show-Warning("Could not copy minidump file $_.FullName") }
+                    }        
+
+                    ##
+                    # Live Kernel Reports
+                    ##
+
+                    try { 
+                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "LiveKernelReports\*.dmp"))
+                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
+                    catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $Node" }
+
+                    $DmpFiles |% {
+                        try { Copy-Item $_.FullName $LocalNodeDir } 
+                        catch { Show-Warning "Could not copy LiveKernelReports file $($_.FullName)" }
+                    }        
+                }
+
+                try {
+                    $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Cluster\Reports\*.*"))
+                    $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
+                catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $Node" }
+                
+                $LocalReportDir = Join-Path $LocalNodeDir "ClusterReports"
+                md $LocalReportDir | Out-Null
+
+                # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
+                $RepFiles |% {
+                    if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
+                        try { Copy-Item $_.FullName $LocalReportDir }
+                        catch { Show-Warning "Could not copy report file $($_.FullName)" }
+                    }
+                }
+            }
+        }
+
+        Show-Update "Starting export of events ..." 
+
+        $JobCopyOut = Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob {
 
             Param([int] $Hours)
 
@@ -1426,17 +1589,17 @@ function Get-SddcDiagnosticInfo
             Write-Output (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
         }
 
-        $null = Wait-Job $j
-        Show-JobRuntime $j.childjobs
+        $null = Wait-Job $JobCopyOut
+        Show-JobRuntime $JobCopyOut.childjobs
 
-        Show-Update "Copying Event Logs...."
+        Show-Update "Copying Event Logs ..."
 
         # keep parallelizing on receive at the individual node/child job level
-        $copyjobs = @()
-        $j.ChildJobs |% {
+        $JobCopy = @()
+        $JobCopyOut.ChildJobs |% {
             $logs = Receive-Job $_
 
-            $copyjobs += start-job -Name "Copy $($_.Location)" -InitializationScript $CommonFunc {
+            $JobCopy += start-job -Name "Copy $($_.Location)" -InitializationScript $CommonFunc {
 
                 $using:logs |% {
                     Copy-Item -Recurse $_  (Get-NodePath $using:Path $_.PsComputerName) -Force -ErrorAction SilentlyContinue -Verbose
@@ -1445,137 +1608,28 @@ function Get-SddcDiagnosticInfo
             }
         }
 
-        $null = Wait-Job $copyjobs
-        Remove-Job $j
-        Remove-Job $copyjobs
-
-        Show-Update "Gathering System Info, Reports and Minidump files ..." 
-
-        $j = $ClusterNodes |% {
-
-            Start-Job -Name $_.Name -ArgumentList $_.Name,$Cluster.Domain -InitializationScript $CommonFunc {
-
-                param($NodeName,$DomainName)
-
-                $Node = "$NodeName.$DomainName"
-
-                # Gather SYSTEMINFO.EXE output for a given node
-
-                $LocalFile = (Join-Path (Get-NodePath $using:Path $NodeName) "SystemInfo.TXT")
-                SystemInfo.exe /S $Node >$LocalFile
-
-                # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
-                # will be trimmed to "cmd" for logging
-                # _C_ token will be replaced with node for cimsession/computername callouts
-			    $CmdsToLog = "Get-NetAdapter -CimSession _C_",
-                                "Get-NetAdapterAdvancedProperty -CimSession _C_",
-                                "Get-NetIpAddress -CimSession _C_",
-                                "Get-NetRoute -CimSession _C_",
-                                "Get-NetQosPolicy -CimSession _C_",
-                                "Get-NetIPv4Protocol -CimSession _C_",
-                                "Get-NetIPv6Protocol -CimSession _C_",
-                                "Get-NetOffloadGlobalSetting -CimSession _C_",
-                                "Get-NetPrefixPolicy -CimSession _C_",
-                                "Get-NetTCPConnection -CimSession _C_",
-                                "Get-NetTcpSetting -CimSession _C_",
-                                "Get-NetAdapterBinding -CimSession _C_",
-                                "Get-NetAdapterChecksumOffload -CimSession _C_",
-                                "Get-NetAdapterLso -CimSession _C_",
-                                "Get-NetAdapterRss -CimSession _C_",
-                                "Get-NetAdapterRdma -CimSession _C_",
-                                "Get-NetAdapterIPsecOffload -CimSession _C_",
-                                "Get-NetAdapterPacketDirect -CimSession _C_", 
-                                "Get-NetAdapterRsc -CimSession _C_",
-                                "Get-NetLbfoTeam -CimSession _C_",
-                                "Get-NetLbfoTeamNic -CimSession _C_",
-                                "Get-NetLbfoTeamMember -CimSession _C_",
-                                "Get-SmbServerNetworkInterface -CimSession _C_",
-                                "Get-HotFix -ComputerName _C_",
-                                "Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_"
-
-			    foreach ($cmd in $CmdsToLog)
-			    {
-                    # truncate cmd string to the cmd itself
-				    $LocalFile = (Join-Path (Get-NodePath $using:Path $NodeName) (($cmd.split(' '))[0] -replace "-",""))
-				    try {
-
-                        $out = iex ($cmd -replace '_C_',$Node)
-
-                        # capture as txt and xml for quick analysis according to taste
-                        $out | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
-                        $out | Export-Clixml -Path "$LocalFile.xml"
-
-                    } catch {
-                        Show-Warning "'$cmd $node' failed for node $Node"
-                    }
-			    }
-
-                $NodePath = Invoke-Command -ComputerName $Node { $env:SystemRoot }
-                $LocalDir = Get-NodePath $using:Path $NodeName
-
-                if ($using:IncludeDumps -eq $true) {
-                    # Enumerate minidump files for a given node
-
-                    try {
-                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "Minidump\*.dmp"))
-                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
-                    catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $Node" }
-
-                    # Copy minidump files from the node
-
-                    $DmpFiles |% {
-                        try { Copy-Item $_.FullName $LocalDir } 
-                        catch { Show-Warning("Could not copy minidump file $_.FullName") }
-                    }        
-
-                    try { 
-                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LiveKernelReports\*.dmp"))
-                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
-                    catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $Node" }
-
-                    # Copy LiveKernelReports files from the node
-
-                    $DmpFiles |% {
-                        try { Copy-Item $_.FullName $LocalDir } 
-                        catch { Show-Warning "Could not copy LiveKernelReports file $($_.FullName)" }
-                    }        
-                }
-
-                try {
-                    $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "Cluster\Reports\*.*"))
-                    $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-                catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $Node" }
-
-                
-                $LocalClusterReportDir = Join-Path $LocalDir "ClusterReports"
-                md $LocalClusterReportDir
-
-                # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
-                $RepFiles |% {
-                    if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
-                        try { Copy-Item $_.FullName $LocalClusterReportDir }
-                        catch { Show-Warning "Could not copy report file $($_.FullName)" }
-                    }
-                }
-            }
-        }
-
-        $null = Wait-Job $j
-        Show-JobRuntime $j
-        Receive-Job $j
-        Remove-Job $j
-
-        Write-Progress -Activity "Gathering System Info and Minidump files" -Completed
-
-        Show-Update "Receiving Cluster Logs..."
-        $ClusterLogJob | Wait-Job | Receive-Job | ft -AutoSize
-        $ClusterLogJob | Remove-Job
+        $null = Wait-Job $JobCopy
+        Remove-Job $JobCopyOut
+        Remove-Job $JobCopy
 
         Show-Update "All Logs Received`n"
+
     } else {
+
         "Events were excluded by a parameter`n"
     }
 
+    ####
+    # Now receive the static jobs
+    ####
+
+    Show-Update "Completing background gathers ..."
+
+    $null = Wait-Job $JobStatic
+    Show-JobRuntime $JobStatic
+    Receive-Job $JobStatic
+    Remove-Job $JobStatic
+    
     if ($S2DEnabled -ne $true) { 
         if ((([System.Environment]::OSVersion.Version).Major) -ge 10) {
             Show-Update "Gathering the storage diagnostic information"
@@ -1605,18 +1659,21 @@ function Get-SddcDiagnosticInfo
         }
     }    
 
+    Show-Update "GATHERS COMPLETE ($(((Get-Date) - $TodayDate).TotalSeconds))s"
+
+    # Stop Transcript
+    Stop-Transcript
+
+
     #
-    # Phase 7
+    # Phase 5
     #
 
-    Show-Update "<<< Phase 7 - Compacting files for transport >>>`n" -ForegroundColor Cyan
+    Show-Update "<<< Phase 5 - Compacting files for transport >>>`n" -ForegroundColor Cyan
 
     $ZipSuffix = '-{0}{1:00}{2:00}-{3:00}{4:00}' -f $TodayDate.Year,$TodayDate.Month,$TodayDate.Day,$TodayDate.Hour,$TodayDate.Minute
     $ZipSuffix = "-" + $Cluster.Name + $ZipSuffix
     $ZipPath = $ZipPrefix+$ZipSuffix+".ZIP"
-
-    # Stop Transcript
-    Stop-Transcript
 
     # Generate Summary report for rapid consumption at analysis time
     Show-Update "Generating Summary Report"
@@ -2042,11 +2099,11 @@ function Get-StorageLatencyReport
 
     $j = @()
 
-    dir $Path\*_UnfilteredEvent_Microsoft-Windows-Storage-Storport-Operational.EVTX | sort -Property BaseName |% {
+    dir $Path\Node_*\Microsoft-Windows-Storage-Storport-Operational.EVTX | sort -Property FullName |% {
 
         $file = $_.FullName
         $node = "<unknown>"
-        if ($_.BaseName -match "^(.*)_UnfilteredEvent_Microsoft-Windows-Storage-Storport-Operational$") {
+        if ($file -match "Node_([^\\]+)\\") {
             $node = $matches[1]
         }
 
@@ -2299,6 +2356,8 @@ function Get-StorageFirmwareReport
     # group by manu/model and for each, group by fw
     # report out minority fw devices by serial number
     Write-Output "Per Unit Firmware Report`n"
+
+    $good = @()
     $PhysicalDisks | group -Property Manufacturer,Model | sort Name |% {
 
         $fwg = $_.Group | group -Property FirmwareVersion | sort -Property Count
@@ -2325,9 +2384,11 @@ function Get-StorageFirmwareReport
         } else {
 
             # good case
-            Write-Output "$($_.Group[0].Manufacturer) $($_.Group[0].Model): all devices are on firmware version $($_.Group[0].FirmwareVersion)`n"
+            $good += "$($_.Group[0].Manufacturer) $($_.Group[0].Model): all devices are on firmware version $($_.Group[0].FirmwareVersion)"
         }
     }
+
+    Write-Output $good
 }
 
 function Get-LsiEventReport
@@ -2348,13 +2409,18 @@ function Get-LsiEventReport
     # process the system event logs
     # produce the time-series for full report, error code summary-only for lower levels
 
-    dir $path\*_UnfilteredEvent_System.EVTX | sort -Property BaseName |% {
+    dir $Path\Node_*\System.EVTX | sort -Property FullName |% {
 
-        if ($_.BaseName -match "^(.*)_UnfilteredEvent_.*") {
+        $node = "<unknown>"
+        if ($_.FullName -match "Node_([^\\]+)\\") {
             $node = $matches[1]
         }
-         
-        $ev = Get-WinEvent -Path $_ |? { $_.ProviderName -match "lsi" -and $_.Id -eq 11 } |% {
+
+        Write-Output ("-"*40) "Node: $node"
+
+        # can we get an authoratative list of lsi providers? otherwise, this
+        # deep filter may serve well enough to make it performant
+        $ev = Get-WinEvent -Path $_ -FilterXPath '*[System[(EventID=11)]]' -ErrorAction SilentlyContinue |? ProviderName -match "lsi" |% {
 
             new-object psobject -Property @{
                 'Time' = $_.TimeCreated;
@@ -2362,8 +2428,6 @@ function Get-LsiEventReport
                 'LSI Error'= (($_.Properties[1].Value[19..16] |% { '{0:X2}' -f $_ }) -join '');
             }
         }
-
-        Write-Output ("-"*40) "Node: $node"
 
         if (-not $ev) {
             Write-Output "No LSI events present"
@@ -2407,6 +2471,9 @@ function Get-SummaryReport
     $ExpectedPools = $Parameters.ExpectedPools
     $ExpectedEnclosures = $Parameters.ExpectedEnclosures
     $HoursOfEvents = $Parameters.HoursOfEvents
+
+    Show-Update "Gathered with       : PrivateCloud.DiagnosticInfo v $($Parameters.Version)"
+    Show-Update "Report created with : PrivateCloud.DiagnosticInfo v $((Get-Module PrivateCloud.DiagnosticInfo).Version.ToString())"
 
     #####
     ##### Phase 1 Summary
@@ -2689,7 +2756,7 @@ function Get-SummaryReport
     }
 
     if (-not $Failed) { 
-        "`nNo unhealthy components" 
+        "No unhealthy components`n" 
     }
 
     #####
@@ -2700,7 +2767,7 @@ function Get-SummaryReport
 
     foreach ($node in $ClusterNodes.Name) {
         "`nCluster Node: $node"
-        Import-Clixml ((Join-Path $Path $node) + "_GetDrivers.XML") |? {
+        Import-Clixml (Join-Path (Get-NodePath $Path $node) "GetDrivers.XML") |? {
             ($_.DeviceCLass -eq 'SCSIADAPTER') -or ($_.DeviceCLass -eq 'NET') } |
             Group-Object DeviceName,DriverVersion |
             Sort Name |
@@ -2773,6 +2840,9 @@ function Show-SddcDiagnosticReport
         Write-Error "Path is not accessible. Please check and try again: $Path"
         return
     }
+
+    # Extract ZIP if neccesary
+    $Path = Check-ExtractZip $Path
 
     # Produce all reports?
     if ($Report.Count -eq 1 -and $Report[0] -eq [ReportType]::All) {
