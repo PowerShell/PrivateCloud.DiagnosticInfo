@@ -55,7 +55,12 @@ $CommonFunc = {
         )
     {
         $jobs | sort Name,Location |% {
-            Show-Update "$($_.Name) [$($_.Location)]: Total $('{0:N1}' -f ($_.PSEndTime - $_.PSBeginTime).TotalSeconds)s : Start $($_.PSBeginTime.ToString('s')) - Stop $($_.PSEndTime.ToString('s'))"
+
+            $jobname = $_.Name
+
+            $_.ChildJobs |% {
+                Show-Update "$($jobname) [$($_.Name) $($_.Location)]: Total $('{0:N1}' -f ($_.PSEndTime - $_.PSBeginTime).TotalSeconds)s : Start $($_.PSBeginTime.ToString('s')) - Stop $($_.PSEndTime.ToString('s'))"
+            }
         }
     }
 
@@ -206,7 +211,7 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="Write", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [bool] $IncludeEvents = $true,
-    
+
         [parameter(ParameterSetName="Write", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [bool] $IncludePerformance = $true,
@@ -214,6 +219,10 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="Write", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [bool] $IncludeReliabilityCounters = $false,
+        
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $IncludeGetNetView = $false,
 
         [parameter(Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
@@ -803,7 +812,7 @@ function Get-SddcDiagnosticInfo
         $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
     }
 
-    Show-Update "Start gather of driver information ..." 
+    Show-Update "Start gather of driver information ..."
 
     $ClusterNodes.Name |% {
         
@@ -813,6 +822,11 @@ function Get-SddcDiagnosticInfo
             catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
             $o | Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "GetDrivers.XML")
         }
+    }
+
+    if ($IncludeGetNetView) {
+
+        Show-Update "Start gather of Get-NetView ..."
     }
 
     # Events, cmd, reports, et.al.
@@ -946,7 +960,7 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Starting export of events ..." 
 
-        $JobCopyOut += Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob {
+        $JobCopyOut += Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob -JobName Events {
 
             Param([int] $Hours)
 
@@ -1340,7 +1354,7 @@ function Get-SddcDiagnosticInfo
         Show-Update "Completing jobs with remote copyout ..."
 
         $null = Wait-Job $JobCopyOut
-        Show-JobRuntime $JobCopyOut.childjobs
+        Show-JobRuntime $JobCopyOut
 
         Show-Update "Starting remote copyout ..."
 
