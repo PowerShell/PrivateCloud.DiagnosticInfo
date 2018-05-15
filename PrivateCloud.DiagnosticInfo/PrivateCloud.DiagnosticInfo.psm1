@@ -50,18 +50,95 @@ $CommonFunc = {
         Write-Host -ForegroundColor $ForegroundColor "$(get-date -format 's') : $Message"
     }
 
+    #
+    # Show current runtime state of jobs (done, not done)
+    #
     function Show-JobRuntime(
-        [object[]] $jobs
+        [object[]] $jobs,
+        [switch] $IncludeDone = $true,
+        [switch] $IncludeRunning = $true
         )
     {
+        # accumulate status lines as we go
+        $job_running = @()
+        $job_done = @()
+
         $jobs | sort Name,Location |% {
 
             $jobname = $_.Name
 
-            $_.ChildJobs |% {
-                Show-Update "$($jobname) [$($_.Name) $($_.Location)]: Total $('{0:N1}' -f ($_.PSEndTime - $_.PSBeginTime).TotalSeconds)s : Start $($_.PSBeginTime.ToString('s')) - Stop $($_.PSEndTime.ToString('s'))"
+            if ($IncludeDone) {
+                $_.ChildJobs |? State -ne Running |% {
+                    $job_done += "$($jobname) [$($_.Name) $($_.Location) -> $($_.State)]: Total $('{0:N1}' -f ($_.PSEndTime - $_.PSBeginTime).TotalSeconds)s : Start $($_.PSBeginTime.ToString('s')) - Stop $($_.PSEndTime.ToString('s'))"
+                }
+            }
+
+            if ($IncludeRunning) {
+                $t = get-date
+                $_.ChildJobs |? State -eq Running |% {
+                    $job_running += "$($jobname) [$($_.Name) $($_.Location)]: Running $('{0:N1}' -f ($t - $_.PSBeginTime).TotalSeconds)s : Start $($_.PSBeginTime.ToString('s')))"
+                }
             }
         }
+
+        if ($job_running.Count) {
+            write-host ("-"*20)
+            $job_running |% { Show-Update $_ }
+        }
+
+        if ($job_done.Count) {
+            write-host ("-"*20)
+            $job_done |% { Show-Update $_ }
+        }
+    }
+
+    #
+    # Show runtime state of jobs until all are complete, with final summary, updated at given tick interval
+    #
+    function Show-JobWaitTime(
+        [object[]] $jobs,
+        [int] $tick = 5
+        )
+    {
+
+        $tout_c = $tick
+        $ttick = get-date
+
+        $jdone = @()
+        $jwait = $jobs
+
+        do {
+
+            $jdone_c = $jwait | wait-job -any -timeout $tout_c
+            $td = (get-date) - $ttick
+
+            if ($jdone_c) {
+
+                Show-JobRuntime $jdone_c
+
+                # decrease timeout, minimum of 1 second
+                $tout_c = [int] ($tick - $td.TotalSeconds)
+                if ($tout_c -lt 1) { $tout_c = 1 }
+
+                # shift completed jobs to the done list
+                $jdone += $jdone_c
+                $jwait = $jwait |? { $_ -notin $jdone_c }
+
+            } else {
+
+                # set up for next timeout pass
+                $ttick = get-date
+                $tout_c = $tick
+
+                # show running state
+                # exclude jobs which may be racing to done, we'll get them in the next tick
+                Show-JobRuntime $jwait -IncludeDone:$false
+            }
+
+        } while ($jwait.Count)
+
+        write-host "Job Summary" -ForegroundColor Green
+        Show-JobRuntime $j
     }
 
     #
@@ -681,8 +758,7 @@ function Get-SddcDiagnosticInfo
     ###
 
     # Start Transcript
-    #$transcriptFile = $Path + "0_CloudHealthSummary.log"
-    $transcriptFile = $Path + "0_CloudHealthGatherTranscript.log"
+    $transcriptFile = Join-Path $Path "0_CloudHealthGatherTranscript.log"
     try{
         Stop-Transcript | Out-Null
     }
@@ -827,6 +903,58 @@ function Get-SddcDiagnosticInfo
     if ($IncludeGetNetView) {
 
         Show-Update "Start gather of Get-NetView ..."
+
+        $ClusterNodes.Name |% {
+
+            $JobCopyOut += Invoke-Command -ComputerName $_ -AsJob -JobName GetNetView {
+
+                # import common functions
+                iex $using:CommonFunc
+
+                $NodePath = [System.IO.Path]::GetTempPath()
+
+                # create a directory to capture GNV
+
+                $gnvDir = Join-Path $NodePath 'GetNetView'
+                Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
+                md $gnvDir -Force -ErrorAction SilentlyContinue
+
+                # run inside a child session so we can sink output to the transcript
+                # we must pass the GNV dir since $using is statically evaluated in the
+                # outermost scope and $gnvDir is inside the Invoke call.
+
+                $j = Start-Job -ArgumentList $gnvDir {
+
+                    param($gnvDir)
+
+                    # start gather transcript to the GNV directory
+
+                    $transcriptFile = Join-Path $gnvDir "0_GetNetViewGatherTranscript.log"
+                    Start-Transcript -Path $transcriptFile -Force
+
+                    if (Get-Command Get-NetView -ErrorAction SilentlyContinue) {
+                        Get-NetView -OutputDirectory $gnvDir
+                    } else {
+                        Write-Host "Get-NetView command not available"
+                    }
+
+                    Stop-Transcript
+                }
+
+                # do not receive job - sunk to transcript for offline analysis
+                # gnv produces a very large quantity of host output
+                $null = $j | Wait-Job
+                $j | Remove-Job
+
+                # wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
+                dir $gnvDir -Directory |% {
+                    Remove-Item -Recurse -Force $_.FullNam
+                }
+
+                # gather all remaining content (will be the zip + transcript) in GNV directory
+                Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $gnvDir)
+            }
+        }
     }
 
     # Events, cmd, reports, et.al.
@@ -1352,10 +1480,7 @@ function Get-SddcDiagnosticInfo
 
     if ($JobCopyOut.Count) {
         Show-Update "Completing jobs with remote copyout ..."
-
-        $null = Wait-Job $JobCopyOut
-        Show-JobRuntime $JobCopyOut
-
+        Show-JobWaitTime $JobCopyOut 120
         Show-Update "Starting remote copyout ..."
 
         # keep parallelizing on receive at the individual node/child job level
@@ -1372,7 +1497,7 @@ function Get-SddcDiagnosticInfo
             }
         }
 
-        $null = Wait-Job $JobCopy
+        Show-JobWaitTime $JobCopy 30
         Remove-Job $JobCopyOut
         Remove-Job $JobCopy
 
@@ -1384,9 +1509,7 @@ function Get-SddcDiagnosticInfo
     ####
 
     Show-Update "Completing background gathers ..."
-
-    $null = Wait-Job $JobStatic
-    Show-JobRuntime $JobStatic
+    Show-JobWaitTime $JobStatic 120
     Receive-Job $JobStatic
     Remove-Job $JobStatic
 
