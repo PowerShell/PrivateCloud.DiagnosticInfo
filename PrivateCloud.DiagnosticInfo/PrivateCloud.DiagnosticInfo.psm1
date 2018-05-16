@@ -50,11 +50,9 @@ $CommonFunc = {
         Write-Host -ForegroundColor $ForegroundColor "$(get-date -format 's') : $Message"
     }
 
-    #
-    # Show current runtime state of jobs (done, not done)
-    #
     function Show-JobRuntime(
         [object[]] $jobs,
+        [hashtable] $namehash,
         [switch] $IncludeDone = $true,
         [switch] $IncludeRunning = $true
         )
@@ -65,47 +63,74 @@ $CommonFunc = {
 
         $jobs | sort Name,Location |% {
 
-            $jobname = $_.Name
+            $this = $_
+
+            # crack parents to children
+            # map children to names through the input namehash
+            switch ($_.GetType().Name) {
+
+                'PSRemotingJob' {
+                    $jobname = $this.Name
+                    $j = $this.ChildJobs | sort Location
+                }
+
+                'PSRemotingChildJob' {
+                    if ($namehash.ContainsKey($this.Id)) {
+                        $jobname = $namehash[$this.Id]
+                    } else {
+                        $jobname = "<n/a>"
+                    }
+                    $j = $this
+                }
+
+                default { throw "unexpected job type $_" }
+            }
 
             if ($IncludeDone) {
-                $_.ChildJobs |? State -ne Running |% {
-                    $job_done += "$($jobname) [$($_.Name) $($_.Location) -> $($_.State)]: Total $('{0:N1}' -f ($_.PSEndTime - $_.PSBeginTime).TotalSeconds)s : Start $($_.PSBeginTime.ToString('s')) - Stop $($_.PSEndTime.ToString('s'))"
+                $j |? State -ne Running |% {
+                    $job_done += "$($_.State): $($jobname) [$($_.Name) $($_.Location)]: $(($_.PSEndTime - $_.PSBeginTime).ToString("m'm's\.f's'")) : Start $($_.PSBeginTime.ToString('s')) - Stop $($_.PSEndTime.ToString('s'))"
                 }
             }
 
             if ($IncludeRunning) {
                 $t = get-date
-                $_.ChildJobs |? State -eq Running |% {
-                    $job_running += "$($jobname) [$($_.Name) $($_.Location)]: Running $('{0:N1}' -f ($t - $_.PSBeginTime).TotalSeconds)s : Start $($_.PSBeginTime.ToString('s')))"
+                $j |? State -eq Running |% {
+                    $job_running += "Running: $($jobname) [$($_.Name) $($_.Location)]: $(($t - $_.PSBeginTime).ToString("m'm's\.f's'")) : Start $($_.PSBeginTime.ToString('s'))"
                 }
             }
         }
 
         if ($job_running.Count) {
-            write-host ("-"*20)
             $job_running |% { Show-Update $_ }
         }
 
         if ($job_done.Count) {
-            write-host ("-"*20)
             $job_done |% { Show-Update $_ }
         }
     }
 
-    #
-    # Show runtime state of jobs until all are complete, with final summary, updated at given tick interval
-    #
-    function Show-JobWaitTime(
+    function Show-WaitChildJob(
         [object[]] $jobs,
         [int] $tick = 5
         )
     {
+        # remember parent job names of all children for output
+        # ids are session global, monotonically increasing integers
+        $jhash = @{}
+        $jobs |% {
+            $j = $_
+            $j.ChildJobs |% {
+                $jhash[$_.Id] = $j.Name
+            }
+        }
 
         $tout_c = $tick
         $ttick = get-date
 
+        # set up trackers. Note that jwait will slice to all child jobs on all input jobs.
         $jdone = @()
-        $jwait = $jobs
+        $jwait = $jobs.ChildJobs
+        $jtimeout = $false
 
         do {
 
@@ -114,31 +139,39 @@ $CommonFunc = {
 
             if ($jdone_c) {
 
-                Show-JobRuntime $jdone_c
-
-                # decrease timeout, minimum of 1 second
+                # write-host -ForegroundColor Red "done"
+                Show-JobRuntime $jdone_c $jhash
                 $tout_c = [int] ($tick - $td.TotalSeconds)
                 if ($tout_c -lt 1) { $tout_c = 1 }
+                # write-host -ForegroundColor Yellow "waiting additional $tout_c s (tout $tout and so-far $($td.TotalSeconds))"
 
-                # shift completed jobs to the done list
                 $jdone += $jdone_c
                 $jwait = $jwait |? { $_ -notin $jdone_c }
 
             } else {
 
-                # set up for next timeout pass
+                $jtimeout = $true
+
+                # write-host -ForegroundColor Yellow "timeout tick"
+                write-host ("-"*20)
                 $ttick = get-date
                 $tout_c = $tick
 
-                # show running state
                 # exclude jobs which may be racing to done, we'll get them in the next tick
-                Show-JobRuntime $jwait -IncludeDone:$false
+                Show-JobRuntime $jwait $jhash -IncludeDone:$false
             }
 
-        } while ($jwait.Count)
+        } while ($jwait)
 
-        write-host "Job Summary" -ForegroundColor Green
-        Show-JobRuntime $j
+        # consume parent waits, which should be complete (all children complete)
+        $null = Wait-Job $jobs
+
+        # only do a total summary if we hit a timeout and did a running summary
+
+        if ($jtimeout) {
+            write-host "Job Summary" -ForegroundColor Green
+            Show-JobRuntime $jobs
+        }
     }
 
     #
@@ -948,7 +981,7 @@ function Get-SddcDiagnosticInfo
 
                 # wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
                 dir $gnvDir -Directory |% {
-                    Remove-Item -Recurse -Force $_.FullNam
+                    Remove-Item -Recurse -Force $_.FullName
                 }
 
                 # gather all remaining content (will be the zip + transcript) in GNV directory
@@ -1479,8 +1512,8 @@ function Get-SddcDiagnosticInfo
     ####
 
     if ($JobCopyOut.Count) {
-        Show-Update "Completing jobs with remote copyout ..."
-        Show-JobWaitTime $JobCopyOut 120
+        Show-Update "Completing jobs with remote copyout ..." -ForegroundColor Green
+        Show-WaitChildJob $JobCopyOut 120
         Show-Update "Starting remote copyout ..."
 
         # keep parallelizing on receive at the individual node/child job level
@@ -1497,19 +1530,19 @@ function Get-SddcDiagnosticInfo
             }
         }
 
-        Show-JobWaitTime $JobCopy 30
+        Show-WaitChildJob $JobCopy 30
         Remove-Job $JobCopyOut
         Remove-Job $JobCopy
 
-        Show-Update "All remote copyout complete"
+        Show-Update "All remote copyout complete" -ForegroundColor Green
     }
 
     ####
     # Now receive the static jobs
     ####
 
-    Show-Update "Completing background gathers ..."
-    Show-JobWaitTime $JobStatic 120
+    Show-Update "Completing background gathers ..." -ForegroundColor Green
+    Show-WaitChildJob $JobStatic 30
     Receive-Job $JobStatic
     Remove-Job $JobStatic
 
