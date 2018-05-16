@@ -51,11 +51,126 @@ $CommonFunc = {
     }
 
     function Show-JobRuntime(
-        [object[]] $jobs
+        [object[]] $jobs,
+        [hashtable] $namehash,
+        [switch] $IncludeDone = $true,
+        [switch] $IncludeRunning = $true
         )
     {
+        # accumulate status lines as we go
+        $job_running = @()
+        $job_done = @()
+
         $jobs | sort Name,Location |% {
-            Show-Update "$($_.Name) [$($_.Location)]: Total $('{0:N1}' -f ($_.PSEndTime - $_.PSBeginTime).TotalSeconds)s : Start $($_.PSBeginTime.ToString('s')) - Stop $($_.PSEndTime.ToString('s'))"
+
+            $this = $_
+
+            # crack parents to children
+            # map children to names through the input namehash
+            switch ($_.GetType().Name) {
+
+                'PSRemotingJob' {
+                    $jobname = $this.Name
+                    $j = $this.ChildJobs | sort Location
+                }
+
+                'PSRemotingChildJob' {
+                    if ($namehash.ContainsKey($this.Id)) {
+                        $jobname = $namehash[$this.Id]
+                    } else {
+                        $jobname = "<n/a>"
+                    }
+                    $j = $this
+                }
+
+                default { throw "unexpected job type $_" }
+            }
+
+            if ($IncludeDone) {
+                $j |? State -ne Running |% {
+                    $job_done += "$($_.State): $($jobname) [$($_.Name) $($_.Location)]: $(($_.PSEndTime - $_.PSBeginTime).ToString("m'm's\.f's'")) : Start $($_.PSBeginTime.ToString('s')) - Stop $($_.PSEndTime.ToString('s'))"
+                }
+            }
+
+            if ($IncludeRunning) {
+                $t = get-date
+                $j |? State -eq Running |% {
+                    $job_running += "Running: $($jobname) [$($_.Name) $($_.Location)]: $(($t - $_.PSBeginTime).ToString("m'm's\.f's'")) : Start $($_.PSBeginTime.ToString('s'))"
+                }
+            }
+        }
+
+        if ($job_running.Count) {
+            $job_running |% { Show-Update $_ }
+        }
+
+        if ($job_done.Count) {
+            $job_done |% { Show-Update $_ }
+        }
+    }
+
+    function Show-WaitChildJob(
+        [object[]] $jobs,
+        [int] $tick = 5
+        )
+    {
+        # remember parent job names of all children for output
+        # ids are session global, monotonically increasing integers
+        $jhash = @{}
+        $jobs |% {
+            $j = $_
+            $j.ChildJobs |% {
+                $jhash[$_.Id] = $j.Name
+            }
+        }
+
+        $tout_c = $tick
+        $ttick = get-date
+
+        # set up trackers. Note that jwait will slice to all child jobs on all input jobs.
+        $jdone = @()
+        $jwait = $jobs.ChildJobs
+        $jtimeout = $false
+
+        do {
+
+            $jdone_c = $jwait | wait-job -any -timeout $tout_c
+            $td = (get-date) - $ttick
+
+            if ($jdone_c) {
+
+                # write-host -ForegroundColor Red "done"
+                Show-JobRuntime $jdone_c $jhash
+                $tout_c = [int] ($tick - $td.TotalSeconds)
+                if ($tout_c -lt 1) { $tout_c = 1 }
+                # write-host -ForegroundColor Yellow "waiting additional $tout_c s (tout $tout and so-far $($td.TotalSeconds))"
+
+                $jdone += $jdone_c
+                $jwait = $jwait |? { $_ -notin $jdone_c }
+
+            } else {
+
+                $jtimeout = $true
+
+                # write-host -ForegroundColor Yellow "timeout tick"
+                write-host ("-"*20)
+                $ttick = get-date
+                $tout_c = $tick
+
+                # exclude jobs which may be racing to done, we'll get them in the next tick
+                Show-JobRuntime $jwait $jhash -IncludeDone:$false
+            }
+
+        } while ($jwait)
+
+        # consume parent waits, which should be complete (all children complete)
+        $null = Wait-Job $jobs
+
+        # only do a total summary if we hit a timeout and did a running summary
+
+        if ($jtimeout) {
+            write-host "Job Summary" -ForegroundColor Green
+            Show-JobRuntime $jobs
         }
     }
 
@@ -206,7 +321,7 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="Write", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [bool] $IncludeEvents = $true,
-    
+
         [parameter(ParameterSetName="Write", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [bool] $IncludePerformance = $true,
@@ -214,6 +329,10 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="Write", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [bool] $IncludeReliabilityCounters = $false,
+        
+        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $IncludeGetNetView = $false,
 
         [parameter(Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
@@ -672,8 +791,7 @@ function Get-SddcDiagnosticInfo
     ###
 
     # Start Transcript
-    #$transcriptFile = $Path + "0_CloudHealthSummary.log"
-    $transcriptFile = $Path + "0_CloudHealthGatherTranscript.log"
+    $transcriptFile = Join-Path $Path "0_CloudHealthGatherTranscript.log"
     try{
         Stop-Transcript | Out-Null
     }
@@ -803,7 +921,7 @@ function Get-SddcDiagnosticInfo
         $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
     }
 
-    Show-Update "Start gather of driver information ..." 
+    Show-Update "Start gather of driver information ..."
 
     $ClusterNodes.Name |% {
         
@@ -812,6 +930,63 @@ function Get-SddcDiagnosticInfo
             try { $o = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node }       
             catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
             $o | Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "GetDrivers.XML")
+        }
+    }
+
+    if ($IncludeGetNetView) {
+
+        Show-Update "Start gather of Get-NetView ..."
+
+        $ClusterNodes.Name |% {
+
+            $JobCopyOut += Invoke-Command -ComputerName $_ -AsJob -JobName GetNetView {
+
+                # import common functions
+                iex $using:CommonFunc
+
+                $NodePath = [System.IO.Path]::GetTempPath()
+
+                # create a directory to capture GNV
+
+                $gnvDir = Join-Path $NodePath 'GetNetView'
+                Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
+                md $gnvDir -Force -ErrorAction SilentlyContinue
+
+                # run inside a child session so we can sink output to the transcript
+                # we must pass the GNV dir since $using is statically evaluated in the
+                # outermost scope and $gnvDir is inside the Invoke call.
+
+                $j = Start-Job -ArgumentList $gnvDir {
+
+                    param($gnvDir)
+
+                    # start gather transcript to the GNV directory
+
+                    $transcriptFile = Join-Path $gnvDir "0_GetNetViewGatherTranscript.log"
+                    Start-Transcript -Path $transcriptFile -Force
+
+                    if (Get-Command Get-NetView -ErrorAction SilentlyContinue) {
+                        Get-NetView -OutputDirectory $gnvDir
+                    } else {
+                        Write-Host "Get-NetView command not available"
+                    }
+
+                    Stop-Transcript
+                }
+
+                # do not receive job - sunk to transcript for offline analysis
+                # gnv produces a very large quantity of host output
+                $null = $j | Wait-Job
+                $j | Remove-Job
+
+                # wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
+                dir $gnvDir -Directory |% {
+                    Remove-Item -Recurse -Force $_.FullName
+                }
+
+                # gather all remaining content (will be the zip + transcript) in GNV directory
+                Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $gnvDir)
+            }
         }
     }
 
@@ -946,7 +1121,7 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Starting export of events ..." 
 
-        $JobCopyOut += Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob {
+        $JobCopyOut += Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob -JobName Events {
 
             Param([int] $Hours)
 
@@ -1337,11 +1512,8 @@ function Get-SddcDiagnosticInfo
     ####
 
     if ($JobCopyOut.Count) {
-        Show-Update "Completing jobs with remote copyout ..."
-
-        $null = Wait-Job $JobCopyOut
-        Show-JobRuntime $JobCopyOut.childjobs
-
+        Show-Update "Completing jobs with remote copyout ..." -ForegroundColor Green
+        Show-WaitChildJob $JobCopyOut 120
         Show-Update "Starting remote copyout ..."
 
         # keep parallelizing on receive at the individual node/child job level
@@ -1358,21 +1530,19 @@ function Get-SddcDiagnosticInfo
             }
         }
 
-        $null = Wait-Job $JobCopy
+        Show-WaitChildJob $JobCopy 30
         Remove-Job $JobCopyOut
         Remove-Job $JobCopy
 
-        Show-Update "All remote copyout complete"
+        Show-Update "All remote copyout complete" -ForegroundColor Green
     }
 
     ####
     # Now receive the static jobs
     ####
 
-    Show-Update "Completing background gathers ..."
-
-    $null = Wait-Job $JobStatic
-    Show-JobRuntime $JobStatic
+    Show-Update "Completing background gathers ..." -ForegroundColor Green
+    Show-WaitChildJob $JobStatic 30
     Receive-Job $JobStatic
     Remove-Job $JobStatic
 
