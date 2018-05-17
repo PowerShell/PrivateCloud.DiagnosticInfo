@@ -320,10 +320,6 @@ function Get-SddcDiagnosticInfo
 
         [parameter(ParameterSetName="Write", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [bool] $IncludeEvents = $true,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
         [bool] $IncludePerformance = $true,
 
         [parameter(ParameterSetName="Write", Mandatory=$false)]
@@ -926,11 +922,34 @@ function Get-SddcDiagnosticInfo
     $ClusterNodes.Name |% {
         
         $node = $_
+
         $JobStatic += Start-Job -InitializationScript $CommonFunc -Name "Driver Information: $node" {
             try { $o = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node }       
             catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
             $o | Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "GetDrivers.XML")
         }
+    }
+
+    # consider using this as the generic copyout job set
+    # these are gathers which are not remotable, which we run remote and copy back results for
+    # keep control of which gathers are fast and therefore for which serialization is not a major issue
+    
+    Show-Update "Start gather of verifier ..."
+        
+    $JobCopyOut += Invoke-Command -ComputerName $($ClusterNodes).Name -AsJob -JobName Verifier {
+
+        # import common functions
+        iex $using:CommonFunc
+
+        # Verifier
+
+        $LocalFile = Join-Path $env:temp "verifier-query.txt"
+        verifier /query > $LocalFile
+        Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+
+        $LocalFile = Join-Path $env:temp "verifier-querysettings.txt"
+        verifier /querysettings > $LocalFile
+        Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
     }
 
     if ($IncludeGetNetView) {
@@ -992,229 +1011,223 @@ function Get-SddcDiagnosticInfo
 
     # Events, cmd, reports, et.al.
 
-    if ($IncludeEvents) {
+    Show-Update "Start gather of system info, cluster/health logs, reports and dump files ..." 
 
-        Show-Update "Start gather of system info, cluster/health logs, reports and dump files ..." 
+    $JobStatic += Start-Job -Name ClusterLogs { 
+        $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime
+    }
 
-        $JobStatic += Start-Job -Name ClusterLogs { 
-            $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime
+    if ($S2DEnabled) {
+        $JobStatic += Start-Job -Name ClusterHealthLogs { 
+            $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -Health -UseLocalTime
         }
+    }
 
-        if ($S2DEnabled) {
-            $JobStatic += Start-Job -Name ClusterHealthLogs { 
-                $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -Health -UseLocalTime
-            }
-        }
+    $JobStatic += $($ClusterNodes).Name |% {
 
-        $JobStatic += $($ClusterNodes).Name |% {
+        Start-Job -Name "System Info: $_" -ArgumentList $_,$Cluster.Domain -InitializationScript $CommonFunc {
 
-            Start-Job -Name "System Info: $_" -ArgumentList $_,$Cluster.Domain -InitializationScript $CommonFunc {
+            param($NodeName,$DomainName)
 
-                param($NodeName,$DomainName)
+            $Node = "$NodeName.$DomainName"
+            $LocalNodeDir = Get-NodePath $using:Path $NodeName
 
-                $Node = "$NodeName.$DomainName"
-                $LocalNodeDir = Get-NodePath $using:Path $NodeName
+            # Text-only conventional commands
+            #
+            # Gather SYSTEMINFO.EXE output for a given node
+            SystemInfo.exe /S $Node > (Join-Path (Get-NodePath $using:Path $NodeName) "SystemInfo.TXT")
 
-                # Text-only conventional commands
-                #
-                # Gather SYSTEMINFO.EXE output for a given node
-                SystemInfo.exe /S $Node > (Join-Path (Get-NodePath $using:Path $NodeName) "SystemInfo.TXT")
+            # Cmdlets to drop in TXT and XML forms
+            #
+            # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
+            # will be trimmed to "cmd" for logging
+            # _C_ token will be replaced with node for cimsession/computername callouts
+			$CmdsToLog = "Get-NetAdapter -CimSession _C_",
+                            "Get-NetAdapterAdvancedProperty -CimSession _C_",
+                            "Get-NetIpAddress -CimSession _C_",
+                            "Get-NetRoute -CimSession _C_",
+                            "Get-NetQosPolicy -CimSession _C_",
+                            "Get-NetIPv4Protocol -CimSession _C_",
+                            "Get-NetIPv6Protocol -CimSession _C_",
+                            "Get-NetOffloadGlobalSetting -CimSession _C_",
+                            "Get-NetPrefixPolicy -CimSession _C_",
+                            "Get-NetTCPConnection -CimSession _C_",
+                            "Get-NetTcpSetting -CimSession _C_",
+                            "Get-NetAdapterBinding -CimSession _C_",
+                            "Get-NetAdapterChecksumOffload -CimSession _C_",
+                            "Get-NetAdapterLso -CimSession _C_",
+                            "Get-NetAdapterRss -CimSession _C_",
+                            "Get-NetAdapterRdma -CimSession _C_",
+                            "Get-NetAdapterIPsecOffload -CimSession _C_",
+                            "Get-NetAdapterPacketDirect -CimSession _C_", 
+                            "Get-NetAdapterRsc -CimSession _C_",
+                            "Get-NetLbfoTeam -CimSession _C_",
+                            "Get-NetLbfoTeamNic -CimSession _C_",
+                            "Get-NetLbfoTeamMember -CimSession _C_",
+                            "Get-SmbServerNetworkInterface -CimSession _C_",
+                            "Get-HotFix -ComputerName _C_",
+                            "Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_"
 
-                # Cmdlets to drop in TXT and XML forms
-                #
-                # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
-                # will be trimmed to "cmd" for logging
-                # _C_ token will be replaced with node for cimsession/computername callouts
-			    $CmdsToLog = "Get-NetAdapter -CimSession _C_",
-                                "Get-NetAdapterAdvancedProperty -CimSession _C_",
-                                "Get-NetIpAddress -CimSession _C_",
-                                "Get-NetRoute -CimSession _C_",
-                                "Get-NetQosPolicy -CimSession _C_",
-                                "Get-NetIPv4Protocol -CimSession _C_",
-                                "Get-NetIPv6Protocol -CimSession _C_",
-                                "Get-NetOffloadGlobalSetting -CimSession _C_",
-                                "Get-NetPrefixPolicy -CimSession _C_",
-                                "Get-NetTCPConnection -CimSession _C_",
-                                "Get-NetTcpSetting -CimSession _C_",
-                                "Get-NetAdapterBinding -CimSession _C_",
-                                "Get-NetAdapterChecksumOffload -CimSession _C_",
-                                "Get-NetAdapterLso -CimSession _C_",
-                                "Get-NetAdapterRss -CimSession _C_",
-                                "Get-NetAdapterRdma -CimSession _C_",
-                                "Get-NetAdapterIPsecOffload -CimSession _C_",
-                                "Get-NetAdapterPacketDirect -CimSession _C_", 
-                                "Get-NetAdapterRsc -CimSession _C_",
-                                "Get-NetLbfoTeam -CimSession _C_",
-                                "Get-NetLbfoTeamNic -CimSession _C_",
-                                "Get-NetLbfoTeamMember -CimSession _C_",
-                                "Get-SmbServerNetworkInterface -CimSession _C_",
-                                "Get-HotFix -ComputerName _C_",
-                                "Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_"
+			foreach ($cmd in $CmdsToLog)
+			{
+                # truncate cmd string to the cmd itself
+				$LocalFile = (Join-Path $LocalNodeDir (($cmd.split(' '))[0] -replace "-",""))
+				try {
 
-			    foreach ($cmd in $CmdsToLog)
-			    {
-                    # truncate cmd string to the cmd itself
-				    $LocalFile = (Join-Path $LocalNodeDir (($cmd.split(' '))[0] -replace "-",""))
-				    try {
+                    $out = iex ($cmd -replace '_C_',$Node)
 
-                        $out = iex ($cmd -replace '_C_',$Node)
+                    # capture as txt and xml for quick analysis according to taste
+                    $out | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
+                    $out | Export-Clixml -Path "$LocalFile.xml"
 
-                        # capture as txt and xml for quick analysis according to taste
-                        $out | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
-                        $out | Export-Clixml -Path "$LocalFile.xml"
-
-                    } catch {
-                        Show-Warning "'$cmd $node' failed for node $Node"
-                    }
-			    }
-
-                $NodeSystemRootPath = Invoke-Command -ComputerName $Node { $env:SystemRoot }
-
-                if ($using:IncludeDumps -eq $true) {
-                    
-                    ##
-                    # Minidumps
-                    ##
-
-                    try {
-                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Minidump\*.dmp"))
-                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
-                    catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $Node" }
-
-                    $DmpFiles |% {
-                        try { Copy-Item $_.FullName $LocalNodeDir } 
-                        catch { Show-Warning("Could not copy minidump file $_.FullName") }
-                    }        
-
-                    ##
-                    # Live Kernel Reports
-                    ##
-
-                    try { 
-                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "LiveKernelReports\*.dmp"))
-                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
-                    catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $Node" }
-
-                    $DmpFiles |% {
-                        try { Copy-Item $_.FullName $LocalNodeDir } 
-                        catch { Show-Warning "Could not copy LiveKernelReports file $($_.FullName)" }
-                    }        
+                } catch {
+                    Show-Warning "'$cmd $node' failed for node $Node"
                 }
+			}
+
+            $NodeSystemRootPath = Invoke-Command -ComputerName $Node { $env:SystemRoot }
+
+            if ($using:IncludeDumps -eq $true) {
+                    
+                ##
+                # Minidumps
+                ##
 
                 try {
-                    $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Cluster\Reports\*.*"))
-                    $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-                catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $Node" }
+                    $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Minidump\*.dmp"))
+                    $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
+                catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $Node" }
+
+                $DmpFiles |% {
+                    try { Copy-Item $_.FullName $LocalNodeDir } 
+                    catch { Show-Warning("Could not copy minidump file $_.FullName") }
+                }        
+
+                ##
+                # Live Kernel Reports
+                ##
+
+                try { 
+                    $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "LiveKernelReports\*.dmp"))
+                    $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
+                catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $Node" }
+
+                $DmpFiles |% {
+                    try { Copy-Item $_.FullName $LocalNodeDir } 
+                    catch { Show-Warning "Could not copy LiveKernelReports file $($_.FullName)" }
+                }        
+            }
+
+            try {
+                $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Cluster\Reports\*.*"))
+                $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
+            catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $Node" }
                 
-                $LocalReportDir = Join-Path $LocalNodeDir "ClusterReports"
-                md $LocalReportDir | Out-Null
+            $LocalReportDir = Join-Path $LocalNodeDir "ClusterReports"
+            md $LocalReportDir | Out-Null
 
-                # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
-                $RepFiles |% {
-                    if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
-                        try { Copy-Item $_.FullName $LocalReportDir }
-                        catch { Show-Warning "Could not copy report file $($_.FullName)" }
-                    }
+            # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
+            $RepFiles |% {
+                if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
+                    try { Copy-Item $_.FullName $LocalReportDir }
+                    catch { Show-Warning "Could not copy report file $($_.FullName)" }
                 }
             }
         }
+    }
 
-        Show-Update "Starting export of events ..." 
+    Show-Update "Starting export of events ..." 
 
-        $JobCopyOut += Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob -JobName Events {
+    $JobCopyOut += Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob -JobName Events {
 
-            Param([int] $Hours)
+        Param([int] $Hours)
 
-            # import common functions
-            iex $using:CommonFunc
+        # import common functions
+        iex $using:CommonFunc
 
-            # Calculate number of milliseconds and prepare the WEvtUtil parameter to filter based on date/time
-            if ($Hours -ne -1) {
-                $MSecs = $Hours * 60 * 60 * 1000
-            } else {
-                $MSecs = -1
-            }               
+        # Calculate number of milliseconds and prepare the WEvtUtil parameter to filter based on date/time
+        if ($Hours -ne -1) {
+            $MSecs = $Hours * 60 * 60 * 1000
+        } else {
+            $MSecs = -1
+        }               
 
-            $QTime = "*[System[TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
+        $QTime = "*[System[TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
 
-            $Node = $env:COMPUTERNAME
-            $NodePath = [System.IO.Path]::GetTempPath()
+        $Node = $env:COMPUTERNAME
+        $NodePath = [System.IO.Path]::GetTempPath()
 
-            # Log prefixes to gather. Note that this is a simple pattern match; for instance, there are a number of
-            # different providers that match *Microsoft-Windows-Storage*: Storage, StorageManagement, StorageSpaces, etc.
-            $LogPatterns = 'Microsoft-Windows-Storage',
-                           'Microsoft-Windows-SMB',
-                           'Microsoft-Windows-FailoverClustering',
-                           'Microsoft-Windows-VHDMP',
-                           'Microsoft-Windows-Hyper-V',
-                           'Microsoft-Windows-ResumeKeyFilter',
-                           'Microsoft-Windows-REFS',
-                           'Microsoft-Windows-WMI-Activity',
-                           'Microsoft-Windows-NTFS',
-                           'Microsoft-Windows-NDIS',
-                           'Microsoft-Windows-Network',
-                           'Microsoft-Windows-TCPIP',
-                           'Microsoft-Windows-ClusterAwareUpdating',
-                           'Microsoft-Windows-HostGuardian',
-                           'Microsoft-Windows-Kernel',
-						   'Microsoft-Windows-StorageSpaces',
-                           'Microsoft-Windows-DataIntegrityScan',
-						   'Microsoft-Windows-SMB' |% { "$_*" }
+        # Log prefixes to gather. Note that this is a simple pattern match; for instance, there are a number of
+        # different providers that match *Microsoft-Windows-Storage*: Storage, StorageManagement, StorageSpaces, etc.
+        $LogPatterns = 'Microsoft-Windows-Storage',
+                        'Microsoft-Windows-SMB',
+                        'Microsoft-Windows-FailoverClustering',
+                        'Microsoft-Windows-VHDMP',
+                        'Microsoft-Windows-Hyper-V',
+                        'Microsoft-Windows-ResumeKeyFilter',
+                        'Microsoft-Windows-REFS',
+                        'Microsoft-Windows-WMI-Activity',
+                        'Microsoft-Windows-NTFS',
+                        'Microsoft-Windows-NDIS',
+                        'Microsoft-Windows-Network',
+                        'Microsoft-Windows-TCPIP',
+                        'Microsoft-Windows-ClusterAwareUpdating',
+                        'Microsoft-Windows-HostGuardian',
+                        'Microsoft-Windows-Kernel',
+						'Microsoft-Windows-StorageSpaces',
+                        'Microsoft-Windows-DataIntegrityScan',
+						'Microsoft-Windows-SMB' |% { "$_*" }
 
-            # Exclude verbose/lower value channels
-            # The FailoverClustering Diagnostics are reflected in the cluster logs, already gathered (and large)
-            # StorageSpaces Performance is very expensive to export and not usually needed
-            $LogPatternsToExclude = 'Microsoft-Windows-FailoverClustering/Diagnostic',
-                                    'Microsoft-Windows-FailoverClustering-Client/Diagnostic',
-                                    'Microsoft-Windows-StorageSpaces-Driver/Performance' |% { "$_*" }
+        # Exclude verbose/lower value channels
+        # The FailoverClustering Diagnostics are reflected in the cluster logs, already gathered (and large)
+        # StorageSpaces Performance is very expensive to export and not usually needed
+        $LogPatternsToExclude = 'Microsoft-Windows-FailoverClustering/Diagnostic',
+                                'Microsoft-Windows-FailoverClustering-Client/Diagnostic',
+                                'Microsoft-Windows-StorageSpaces-Driver/Performance' |% { "$_*" }
 
-            # Core logs to gather, by explicit names.
-            $LogPatterns += 'System','Application'
+        # Core logs to gather, by explicit names.
+        $LogPatterns += 'System','Application'
 
-            $Logs = Get-WinEvent -ListLog $LogPatterns -Force -ErrorAction Ignore -WarningAction Ignore
+        $Logs = Get-WinEvent -ListLog $LogPatterns -Force -ErrorAction Ignore -WarningAction Ignore
 
-            # now apply exclusions
-            $Logs = $Logs |? {
-                $Log = $_.LogName
-                $m = ($LogPatternsToExclude |% { $Log -like $_ } | measure -sum).sum
-                -not $m
-            }
+        # now apply exclusions
+        $Logs = $Logs |? {
+            $Log = $_.LogName
+            $m = ($LogPatternsToExclude |% { $Log -like $_ } | measure -sum).sum
+            -not $m
+        }
 
-            $Logs |% {
+        $Logs |% {
         
-                $NodeFile = $NodePath+$_.LogName.Replace("/","-")+".EVTX"
+            $NodeFile = $NodePath+$_.LogName.Replace("/","-")+".EVTX"
 
-                # analytical/debug channels can not be captured live
-                # if any are encountered (not normal), disable them temporarily for export
-                $directChannel = $false
-                if ($_.LogType -in @('Analytical','Debug') -and $_.IsEnabled) {
-                    $directChannel = $true
-                    wevtutil sl /e:false $_.LogName
-                }
-
-                # Export unfiltered log file using the WEvtUtil command-line tool
-                if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management"  -Or ($MSecs -eq -1)) {
-                    wevtutil epl $_.LogName $NodeFile /ow:true
-                } else {
-                    wevtutil epl $_.LogName $NodeFile /q:$QTime /ow:true
-                }
-
-                if ($directChannel -eq $true) {
-                    echo y | wevtutil sl /e:true $_.LogName | out-null
-                }
-
-                # Create locale metadata for off-system rendering
-                wevtutil al $NodeFile /l:$PSCulture
-
-                Write-Output (Get-AdminSharePathFromLocal $Node $NodeFile)
+            # analytical/debug channels can not be captured live
+            # if any are encountered (not normal), disable them temporarily for export
+            $directChannel = $false
+            if ($_.LogType -in @('Analytical','Debug') -and $_.IsEnabled) {
+                $directChannel = $true
+                wevtutil sl /e:false $_.LogName
             }
 
-            # Also export locale metadata for off-system rendering (one-shot, we'll recursively copy)
-            Write-Output (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
-        }
-    } else {
+            # Export unfiltered log file using the WEvtUtil command-line tool
+            if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management"  -Or ($MSecs -eq -1)) {
+                wevtutil epl $_.LogName $NodeFile /ow:true
+            } else {
+                wevtutil epl $_.LogName $NodeFile /q:$QTime /ow:true
+            }
 
-        "Events were excluded by a parameter`n"
+            if ($directChannel -eq $true) {
+                echo y | wevtutil sl /e:true $_.LogName | out-null
+            }
+
+            # Create locale metadata for off-system rendering
+            wevtutil al $NodeFile /l:$PSCulture
+
+            Write-Output (Get-AdminSharePathFromLocal $Node $NodeFile)
+        }
+
+        # Also export locale metadata for off-system rendering (one-shot, we'll recursively copy)
+        Write-Output (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
     }
 
 	if ($IncludeAssociations) {
@@ -2728,6 +2741,26 @@ function Get-SummaryReport
     $CSVHealthy = NCount($CSV |? State -like "Online")
     Write-Host "Cluster Shared Volumes Online : $CSVHealthy / $CSVTotal"
     if ($CSVHealthy -lt $CSVTotal) { Show-Warning "Unhealthy cluster shared volumes detected" }
+
+    # Verifier
+
+    $VerifiedNodes = @()
+    foreach ($node in $ClusterNodes.Name) {
+        $f = Join-Path (Get-NodePath $Path $node) "verifier-query.txt"
+        $o = @(gc $f)
+        
+        # single line 
+        if (-not ($o.Count -eq 1 -and $o[0] -eq 'No drivers are currently verified.')) {
+            $VerifiedNodes += $node
+        }
+    }
+    
+    if ($VerifiedNodes.Count -ne 0) {
+        Show-Warning "The following $($VerifiedNodes.Count) node(s) have system verification (verifier.exe) active. These may carry significant performance cost - ensure this is expected, for instance during Microsoft-directed triage."
+        $VerifiedNodes |% { Write-Host "`t$_" }
+    } else {
+        Write-Host "No nodes currently under the system verifier."
+    }
 
     # Open files 
 
