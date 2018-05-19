@@ -4,7 +4,13 @@
  #                                                 #
  ##################################################>
 
- Import-Module Storage
+Import-Module Storage
+Import-Module SmbShare
+Import-Module SmbWitness
+Import-Module FailoverClusters
+Import-Module CimCmdlets
+Import-Module StorageSubSystem
+Add-Type -assembly "system.io.compression.filesystem"
 
 <##################################################
 #  Common Helper functions                        #
