@@ -839,25 +839,47 @@ function Get-SddcDiagnosticInfo
     try { 
 		if ($ClusterName -eq ".")
 		{
-			$Cluster = Get-Cluster -Name $ClusterNodes[0].Name
-			$ClusterName = $Cluster.Name
+			foreach ($cn in $ClusterNodes)
+			{
+				$Cluster = Get-Cluster -Name $cn[0].Name -ErrorAction SilentlyContinue
+				
+				# if we cannot connect to cluster service will still have an access node this way
+				$AccessNode = $cn[0].Name
+				
+				if ($Cluster -eq $null)
+				{
+					continue;
+				}				
+				$ClusterName = $Cluster.Name
+				break;
+			}
 		}
 		else
 		{
 			$Cluster = Get-Cluster -Name $ClusterName
+			$AccessNode = $ClusterNodes[0].Name
 		}
 	}
     catch { Show-Error("Cluster could not be contacted. `nError="+$_.Exception.Message) }
-    if ($null -eq $Cluster) { Show-Error("Server is not in a cluster") }
-    $Cluster | Export-Clixml ($Path + "GetCluster.XML")
+	
+	if ($Cluster -ne $null)
+	{
+		$Cluster | Export-Clixml ($Path + "GetCluster.XML")
+		$ClusterName = $Cluster.Name + "." + $Cluster.Domain
+		$S2DEnabled = $Cluster.S2DEnabled
+		$ClusterDomain = $Cluster.Domain 
 
-    $ClusterName = $Cluster.Name + "." + $Cluster.Domain
-    $S2DEnabled = $Cluster.S2DEnabled
-
-    # Select an access node, which will be used to query the cluster
-
-    $AccessNode = ($ClusterNodes)[0].Name + "." + $Cluster.Domain
-    Write-Host "Cluster name               : $ClusterName"
+	    Write-Host "Cluster name               : $ClusterName"
+	}
+	else
+	{
+		# We can only get here if -Nodelist was used, but cluster service isn't running
+		Write-Error "Cluster service was not running on any node, some information will be unavailable"
+		$ClusterName = $null;
+		$ClusterDomain = "";
+		
+		Write-Host "Cluster name               : Unavailable, Cluster is not online on any node"
+	}
     Write-Host "Access node                : $AccessNode`n"
 
     # Create node-specific directories for content
@@ -888,33 +910,46 @@ function Get-SddcDiagnosticInfo
     Show-Update "Start gather of cluster configuration ..."
 
     $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterGroup {
-        try { $o = Get-ClusterGroup -Cluster $using:AccessNode }
-        catch { Show-Error("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
-        $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
+        try { 
+			$o = Get-ClusterGroup -Cluster $using:AccessNode 
+			$o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
+		}
+        catch { Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
     }
 
     $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterNetwork {
-        try { $o = Get-ClusterNetwork -Cluster $using:AccessNode }
-        catch { Show-Error("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
-        $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
+        try { 
+			$o = Get-ClusterNetwork -Cluster $using:AccessNode
+			$o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
+		}
+        catch { Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
     }
 
     $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResource {
-        try { $o = Get-ClusterResource -Cluster $using:AccessNode }
-        catch { Show-Error("Unable to get Cluster Resources.  `nError="+$_.Exception.Message) }
-        $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
+        try {  
+			$o = Get-ClusterResource -Cluster $using:AccessNode
+			$o | Export-Clixml ($using:Path + "GetClusterResource.XML")
+		}
+        catch { Show-Warning("Unable to get Cluster Resources.  `nError="+$_.Exception.Message) }
+        
     }
 
     $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResourceParameter {
-        try { $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter }
-        catch { Show-Error("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
-        $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
+        try {  
+			$o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
+			$o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
+		}
+        catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
+        
     }
 
     $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterSharedVolume {
-        try { $o = Get-ClusterSharedVolume -Cluster $using:AccessNode }
-        catch { Show-Error("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
-        $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
+        try {  
+			$o = Get-ClusterSharedVolume -Cluster $using:AccessNode
+			$o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
+		}
+        catch { Show-Warning("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
+        
     }
 
     Show-Update "Start gather of driver information ..."
@@ -1010,7 +1045,6 @@ function Get-SddcDiagnosticInfo
     }
 
     # Events, cmd, reports, et.al.
-
     Show-Update "Start gather of system info, cluster/health logs, reports and dump files ..." 
 
     $JobStatic += Start-Job -Name ClusterLogs { 
@@ -1025,7 +1059,7 @@ function Get-SddcDiagnosticInfo
 
     $JobStatic += $($ClusterNodes).Name |% {
 
-        Start-Job -Name "System Info: $_" -ArgumentList $_,$Cluster.Domain -InitializationScript $CommonFunc {
+        Start-Job -Name "System Info: $_" -ArgumentList $_,$ClusterDomain -InitializationScript $CommonFunc {
 
             param($NodeName,$DomainName)
 
@@ -1230,7 +1264,7 @@ function Get-SddcDiagnosticInfo
         Write-Output (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
     }
 
-	if ($IncludeAssociations) {
+	if ($IncludeAssociations -and $ClusterName -ne $null) {
 
 		# This is used at Phase 2 and is run asynchronously since
 		# it can take some time to gather for large numbers of devices.
@@ -1411,7 +1445,14 @@ function Get-SddcDiagnosticInfo
             $Count1++
             Write-Progress -Activity "Testing file share access" -PercentComplete $Progress
 
-            $_.SharePath = "\\"+$_.ScopeName+"."+$Cluster.Domain+"\"+$_.Name
+			if ($ClusterDomain -ne "")
+			{
+				$_.SharePath = "\\" + $_.ScopeName + "." + $ClusterDomain + "\" + $_.Name
+			}
+			else
+			{
+				$_.SharePath = "\\" + $_.ScopeName + "\" + $_.Name
+			}
             try { if (Test-Path -Path $_.SharePath  -ErrorAction SilentlyContinue) {
                         $_.Health = "Accessible"
                     } else {
@@ -1443,11 +1484,13 @@ function Get-SddcDiagnosticInfo
 
     # Virtual disk health
 
-    try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-            $VirtualDisks = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $SubSystem }
-    catch { Show-Error("Unable to get Virtual Disks. `nError="+$_.Exception.Message) }
-    $VirtualDisks | Export-Clixml ($Path + "GetVirtualDisk.XML")
-
+    try { 
+		$SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+        $VirtualDisks = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $SubSystem 
+		$VirtualDisks | Export-Clixml ($Path + "GetVirtualDisk.XML")
+	}
+    catch { Show-Warning("Unable to get Virtual Disks. `nError="+$_.Exception.Message) }
+    
     # Deduplicated volume health
     # XXX the counts/healthy likely not needed once phase 2 shifted into summary report
 
@@ -1471,11 +1514,13 @@ function Get-SddcDiagnosticInfo
 
     # Storage tier information
 
-    try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-            $StorageTiers = Get-StorageTier -CimSession $AccessNode }
-    catch { Show-Error("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
-    $StorageTiers | Export-Clixml ($Path + "GetStorageTier.XML")
-
+    try { 
+		$SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+        $StorageTiers = Get-StorageTier -CimSession $AccessNode 
+		$StorageTiers | Export-Clixml ($Path + "GetStorageTier.XML")
+	}
+    catch { Show-Warning("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
+    
     # Storage pool health
 
     try { $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
@@ -2671,15 +2716,24 @@ function Get-SummaryReport
     Show-Update "<<< Phase 1 - Storage Health Overview >>>`n" -ForegroundColor Cyan
 
     Write-Host ("Date of capture : " + $TodayDate)
+	$ClusterNodes = Import-Clixml (Join-Path $Path "GetClusterNode.XML")
 
-    $ClusterNodes = Import-Clixml (Join-Path $Path "GetClusterNode.XML")
-    $Cluster = Import-Clixml (Join-Path $Path "GetCluster.XML")
+	try
+	{
+		$Cluster = Import-Clixml (Join-Path $Path "GetCluster.XML")
+	
+		$ClusterName = $Cluster.Name + "." + $Cluster.Domain
+		$S2DEnabled = $Cluster.S2DEnabled
+		$ClusterDomain = $Cluster.Domain;
 
-    $ClusterName = $Cluster.Name + "." + $Cluster.Domain
-    $S2DEnabled = $Cluster.S2DEnabled
-
-    Write-Host "Cluster Name                  : $ClusterName"
-    Write-Host "S2D Enabled                   : $S2DEnabled"
+		Write-Host "Cluster Name                  : $ClusterName"
+		Write-Host "S2D Enabled                   : $S2DEnabled"
+	}
+	catch 
+	{
+		Write-Host "Cluster Name                  : Cluster was unavailable"
+		Write-Host "S2D Enabled                   : Cluster was unavailable"
+	}
 
     $ClusterGroups = Import-Clixml (Join-Path $Path "GetClusterGroup.XML")
 
@@ -2689,7 +2743,7 @@ function Get-SummaryReport
             Show-Warning "No Scale-Out File Server cluster roles found"
         }
     } else {
-        $ScaleOutName = $ScaleOutServers[0].Name+"."+$Cluster.Domain
+        $ScaleOutName = $ScaleOutServers[0].Name + "." + $ClusterDomain
         Write-Host "Scale-Out File Server Name : $ScaleOutName"
     }
 
