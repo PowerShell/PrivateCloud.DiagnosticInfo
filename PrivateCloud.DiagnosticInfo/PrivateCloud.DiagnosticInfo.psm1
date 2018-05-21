@@ -867,12 +867,14 @@ function Get-SddcDiagnosticInfo
 		$Cluster | Export-Clixml ($Path + "GetCluster.XML")
 		$ClusterName = $Cluster.Name + "." + $Cluster.Domain
 		$S2DEnabled = $Cluster.S2DEnabled
+		$ClusterDomain = $Cluster.Domain 
 	}
 	else
 	{
 		# We can only get here if -Nodelist was used, but cluster service isn't running
 		Write-Error "Cluster service was not running on any node, some information will be unavailable"
 		$ClusterName = "UNAVAILABLE";
+		$ClusterDomain = "";
 	}
 
     # Select an access node, which will be used to query the cluster
@@ -1042,13 +1044,6 @@ function Get-SddcDiagnosticInfo
     }
 
     # Events, cmd, reports, et.al.
-
-            Start-Job -Name "System Info: $_" -ArgumentList $_ -InitializationScript $CommonFunc {
-
-                param($NodeName)
-
-                $Node = "$NodeName"
-                $LocalNodeDir = Get-NodePath $using:Path $NodeName
     Show-Update "Start gather of system info, cluster/health logs, reports and dump files ..." 
 
     $JobStatic += Start-Job -Name ClusterLogs { 
@@ -1063,7 +1058,7 @@ function Get-SddcDiagnosticInfo
 
     $JobStatic += $($ClusterNodes).Name |% {
 
-        Start-Job -Name "System Info: $_" -ArgumentList $_,$Cluster.Domain -InitializationScript $CommonFunc {
+        Start-Job -Name "System Info: $_" -ArgumentList $_,$ClusterDomain -InitializationScript $CommonFunc {
 
             param($NodeName,$DomainName)
 
@@ -1449,7 +1444,14 @@ function Get-SddcDiagnosticInfo
             $Count1++
             Write-Progress -Activity "Testing file share access" -PercentComplete $Progress
 
-            $_.SharePath = "\\"+$_.ScopeName+"."+$Cluster.Domain+"\"+$_.Name
+			if ($ClusterDomain -ne "")
+			{
+				$_.SharePath = "\\" + $_.ScopeName + "." + $ClusterDomain + "\" + $_.Name
+			}
+			else
+			{
+				$_.SharePath = "\\" + $_.ScopeName + "\" + $_.Name
+			}
             try { if (Test-Path -Path $_.SharePath  -ErrorAction SilentlyContinue) {
                         $_.Health = "Accessible"
                     } else {
@@ -2716,8 +2718,8 @@ function Get-SummaryReport
 
     $ClusterNodes = Import-Clixml (Join-Path $Path "GetClusterNode.XML")
     $Cluster = Import-Clixml (Join-Path $Path "GetCluster.XML")
-
-    $ClusterName = $Cluster.Name + "." + $Cluster.Domain
+	
+    $ClusterName = $Cluster.Name + "." + $ClusterDomain
     $S2DEnabled = $Cluster.S2DEnabled
 
     Write-Host "Cluster Name                  : $ClusterName"
@@ -2731,7 +2733,7 @@ function Get-SummaryReport
             Show-Warning "No Scale-Out File Server cluster roles found"
         }
     } else {
-        $ScaleOutName = $ScaleOutServers[0].Name+"."+$Cluster.Domain
+        $ScaleOutName = $ScaleOutServers[0].Name+"."+$ClusterDomain
         Write-Host "Scale-Out File Server Name : $ScaleOutName"
     }
 
