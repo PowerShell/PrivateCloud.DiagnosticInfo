@@ -2717,14 +2717,23 @@ function Get-SummaryReport
 
     Write-Host ("Date of capture : " + $TodayDate)
 
-    $ClusterNodes = Import-Clixml (Join-Path $Path "GetClusterNode.XML")
-    $Cluster = Import-Clixml (Join-Path $Path "GetCluster.XML")
+    $ClusterNodes = Import-Clixml (Join-Path $Path "GetClusterNode.XML") -ErrorAction SilentlyContinue
+    $Cluster = Import-Clixml (Join-Path $Path "GetCluster.XML") -ErrorAction SilentlyContinue
 	
-    $ClusterName = $Cluster.Name + "." + $Cluster.Domain
-    $S2DEnabled = $Cluster.S2DEnabled
+	if ($Cluster -ne $null)
+	{
+		$ClusterName = $Cluster.Name + "." + $Cluster.Domain
+		$S2DEnabled = $Cluster.S2DEnabled
+		$ClusterDomain = $Cluster.Domain;
 
-    Write-Host "Cluster Name                  : $ClusterName"
-    Write-Host "S2D Enabled                   : $S2DEnabled"
+		Write-Host "Cluster Name                  : $ClusterName"
+		Write-Host "S2D Enabled                   : $S2DEnabled"
+	}
+	else
+	{
+		Write-Host "Cluster Name                  : Cluster was unavailable"
+		Write-Host "S2D Enabled                   : Cluster was unavailable"
+	}
 
     $ClusterGroups = Import-Clixml (Join-Path $Path "GetClusterGroup.XML")
 
@@ -2734,7 +2743,7 @@ function Get-SummaryReport
             Show-Warning "No Scale-Out File Server cluster roles found"
         }
     } else {
-        $ScaleOutName = $ScaleOutServers[0].Name+"."+$Cluster.Domain
+        $ScaleOutName = $ScaleOutServers[0].Name + "." + $ClusterDomain
         Write-Host "Scale-Out File Server Name : $ScaleOutName"
     }
 
