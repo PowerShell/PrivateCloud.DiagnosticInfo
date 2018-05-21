@@ -868,17 +868,18 @@ function Get-SddcDiagnosticInfo
 		$ClusterName = $Cluster.Name + "." + $Cluster.Domain
 		$S2DEnabled = $Cluster.S2DEnabled
 		$ClusterDomain = $Cluster.Domain 
+
+	    Write-Host "Cluster name               : $ClusterName"
 	}
 	else
 	{
 		# We can only get here if -Nodelist was used, but cluster service isn't running
 		Write-Error "Cluster service was not running on any node, some information will be unavailable"
-		$ClusterName = "UNAVAILABLE";
+		$ClusterName = $null;
 		$ClusterDomain = "";
+		
+		Write-Host "Cluster name               : Unavailable, Cluster is not online on any node"
 	}
-
-    # Select an access node, which will be used to query the cluster
-    Write-Host "Cluster name               : $ClusterName"
     Write-Host "Access node                : $AccessNode`n"
 
     # Create node-specific directories for content
@@ -1263,7 +1264,7 @@ function Get-SddcDiagnosticInfo
         Write-Output (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
     }
 
-	if ($IncludeAssociations -and $ClusterName -ne "UNAVAILABLE") {
+	if ($IncludeAssociations -and $ClusterName -ne $null) {
 
 		# This is used at Phase 2 and is run asynchronously since
 		# it can take some time to gather for large numbers of devices.
@@ -2719,7 +2720,7 @@ function Get-SummaryReport
     $ClusterNodes = Import-Clixml (Join-Path $Path "GetClusterNode.XML")
     $Cluster = Import-Clixml (Join-Path $Path "GetCluster.XML")
 	
-    $ClusterName = $Cluster.Name + "." + $ClusterDomain
+    $ClusterName = $Cluster.Name + "." + $Cluster.Domain
     $S2DEnabled = $Cluster.S2DEnabled
 
     Write-Host "Cluster Name                  : $ClusterName"
@@ -2733,7 +2734,7 @@ function Get-SummaryReport
             Show-Warning "No Scale-Out File Server cluster roles found"
         }
     } else {
-        $ScaleOutName = $ScaleOutServers[0].Name+"."+$ClusterDomain
+        $ScaleOutName = $ScaleOutServers[0].Name+"."+$Cluster.Domain
         Write-Host "Scale-Out File Server Name : $ScaleOutName"
     }
 
