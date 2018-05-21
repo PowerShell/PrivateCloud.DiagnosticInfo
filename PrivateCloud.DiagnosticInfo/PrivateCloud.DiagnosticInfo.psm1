@@ -2716,12 +2716,12 @@ function Get-SummaryReport
     Show-Update "<<< Phase 1 - Storage Health Overview >>>`n" -ForegroundColor Cyan
 
     Write-Host ("Date of capture : " + $TodayDate)
+	$ClusterNodes = Import-Clixml (Join-Path $Path "GetClusterNode.XML")
 
-    $ClusterNodes = Import-Clixml (Join-Path $Path "GetClusterNode.XML") -ErrorAction SilentlyContinue
-    $Cluster = Import-Clixml (Join-Path $Path "GetCluster.XML") -ErrorAction SilentlyContinue
-	
-	if ($Cluster -ne $null)
+	try
 	{
+		$Cluster = Import-Clixml (Join-Path $Path "GetCluster.XML")
+	
 		$ClusterName = $Cluster.Name + "." + $Cluster.Domain
 		$S2DEnabled = $Cluster.S2DEnabled
 		$ClusterDomain = $Cluster.Domain;
@@ -2729,7 +2729,7 @@ function Get-SummaryReport
 		Write-Host "Cluster Name                  : $ClusterName"
 		Write-Host "S2D Enabled                   : $S2DEnabled"
 	}
-	else
+	catch 
 	{
 		Write-Host "Cluster Name                  : Cluster was unavailable"
 		Write-Host "S2D Enabled                   : Cluster was unavailable"
