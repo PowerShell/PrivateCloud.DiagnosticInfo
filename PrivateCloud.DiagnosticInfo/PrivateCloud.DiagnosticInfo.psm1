@@ -4,7 +4,15 @@
  #                                                 #
  ##################################################>
 
- Import-Module Storage
+Import-Module CimCmdlets
+Import-Module FailoverClusters
+Import-Module NetAdapter
+Import-Module NetQos
+Import-Module SmbShare
+Import-Module SmbWitness
+Import-Module Storage
+
+Add-Type -Assembly System.IO.Compression.FileSystem
 
 <####################################################
 #  Common helper functions for main/child sessions  #
@@ -244,7 +252,6 @@ function Check-ExtractZip(
 
         Show-Update "Extracting $Path -> $ExtractToPath"
 
-        Add-Type -Assembly System.IO.Compression.FileSystem
         try { [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $ExtractToPath) }
         catch { Show-Error("Can't extract results as Zip file from '$Path' to '$ExtractToPath'") }
 
@@ -1925,7 +1932,6 @@ function Get-SddcDiagnosticInfo
     $ZipPath = $ZipPrefix+$ZipSuffix+".ZIP"
     
     try {
-        Add-Type -Assembly System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
         Show-Update "Zip File Name : $ZipPath"
 
@@ -2810,7 +2816,7 @@ function Get-SummaryReport
     }
     
     if ($VerifiedNodes.Count -ne 0) {
-        Show-Warning "The following $($VerifiedNodes.Count) node(s) have system verification (verifier.exe) active. These may carry significant performance cost - ensure this is expected, for instance during Microsoft-directed triage."
+        Show-Warning "The following $($VerifiedNodes.Count) node(s) have system verification (verifier.exe) active. This may carry significant performance cost.`nEnsure this is expected, for instance during Microsoft-directed triage."
         $VerifiedNodes |% { Write-Host "`t$_" }
     } else {
         Write-Host "No nodes currently under the system verifier."
