@@ -1552,9 +1552,10 @@ function Get-SddcDiagnosticInfo
     Show-Update "Storage Jobs"
 
     try {
-        $o = Get-StorageJob -CimSession $AccessNode -StorageSubsystem $SubSystem
+        # cannot subsystem scope Get-StorageJob at this time
+        $o = icm $AccessNode { Get-StorageJob }
         $o | Export-Clixml ($Path + "GetStorageJob.XML") }
-    catch { Show-Warning("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
+    catch { Show-Warning("Unable to get Storage Jobs. `nError="+$_.Exception.Message) }
 
     Show-Update "Clustered PhysicalDisks and SNV"
 
@@ -2825,6 +2826,17 @@ function Get-SummaryReport
     Write-Host "Cluster Shared Volumes Online : $CSVHealthy / $CSVTotal"
     if ($CSVHealthy -lt $CSVTotal) { Show-Warning "Unhealthy cluster shared volumes detected" }
 
+    # Storage subsystem health
+    $Subsystem = Import-Clixml (Join-Path $Path "GetStorageSubsystem.XML")
+
+    if ($Subsystem -eq $null) {
+        Show-Warning "No clustered storage subsystem present"
+    } elseif ($Subsystem.HealthStatus -notlike "Healthy") {
+        Show-Warning "Clustered storage subsystem '$($Subsystem.FriendlyName)' is in health state $($Subsystem.HealthStatus)"
+    } else {
+        Write-Host "Clustered storage subsystem '$($Subsystem.FriendlyName)' is healthy"
+    }
+
     # Verifier
 
     $VerifiedNodes = @()
@@ -2844,8 +2856,16 @@ function Get-SummaryReport
     } else {
         Write-Host "No nodes currently under the system verifier."
     }
+    
+    # Storage jobs
+    $StorageJobs = Import-Clixml (Join-Path $Path "GetStorageJob.XML")
 
-    # Open files 
+    if ($StorageJobs -eq $null) {
+        Write-Host "No storage jobs were present at the time of the gather"
+    } else {
+        Show-Warning "The following storage jobs were present; this includes ones executing along with those recently completed"
+        $StorageJobs | ft -AutoSize
+    }
 
     Write-Host "`nHealthy Components count: [SMBShare -> CSV -> VirtualDisk -> StoragePool -> PhysicalDisk -> StorageEnclosure]"
 
