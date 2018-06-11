@@ -2017,7 +2017,84 @@ function Install-SddcDiagnosticModule
         }
     }
 
-    $Nodes
+    # remove the local node if present (self-update)
+    $Nodes = $Nodes |? { $_ -ne $env:COMPUTERNAME }
+
+    $thisModule = Get-Module $Module -ErrorAction Stop
+
+    $clusterModules = icm $Nodes.Name {
+        $null = Import-Module -Force $using:Module -ErrorAction SilentlyContinue
+        Get-Module $using:Module
+    }
+
+    # build list of nodes which need installation/refresh
+    $installNodes = @()
+    $updateNodes = @()
+
+    # start with nodes which lack the module
+    $Nodes.Name |? { $_ -notin $clusterModules.PsComputerName } |% { $installNodes += $_ }
+    # now add nodes which are downlevel
+    $clusterModules |? { $thisModule.Version -gt $_.Version } |% { $updateNodes += $_.PsComputerName }
+
+    # warn nodes which are uplevel
+    $clusterModules |? { $thisModule.Version -lt $_.Version } |% {
+        Write-Warning "Node $($_.PsComputerName) has an newer version of the $Module module ($($_.Version) > $($thisModule.Version)). Consider installing the updated module on the local system ($env:COMPUTERNAME) and updating the cluster."
+    }
+
+    if ($installNodes.Count) { Write-Host "New Install to Nodes: $($installNodes -join ', ')" }
+    if ($updateNodes.Count) { Write-Host "Update for Nodes    : $($updateNodes -join ', ')" }
+
+    # begin gathering remote install locations
+    # clean outdated installations if present
+
+    $installPaths = @()
+
+    if ($installNodes.Count -gt 0) {
+        $installPaths += icm $installNodes {
+
+            # import common functions
+            . ([scriptblock]::Create($using:CommonFunc))
+
+            # place in the Install-Module default location
+            # note we must specify all the way to final destination since we know it does not exist
+            Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME (Join-Path "$env:ProgramFiles\WindowsPowerShell\Modules\$using:Module" $using:thisModule.Version))
+        }
+    }
+
+    if ($updateNodes.Count -gt 0) {
+        $installPaths += icm $updateNodes {
+
+            # import common functions
+            . ([scriptblock]::Create($using:CommonFunc))
+
+            # wipe outdated install location - Install-Module does not place here, prefer its location
+            if (Test-Path $env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules\$using:Module) {
+
+                rm -Recurse $env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules\$using:Module -ErrorAction Stop
+
+                # place in the Install-Module default location
+                Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME (Join-Path "$env:ProgramFiles\WindowsPowerShell\Modules\$using:Module" $using:thisModule.Version))
+
+            } else { 
+        
+                $null = Import-Module $using:Module -Force
+                $m = Get-Module $using:module -ErrorAction Stop
+
+                # unload current and return its location for update
+                $md = (gi (gi $m.ModuleBase -ErrorAction SilentlyContinue).PsParentPath).FullName
+                Remove-Module $using:module -ErrorAction SilentlyContinue
+
+                # note we return the parent path - the copy will place the versioned module directory within it
+                Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $md)
+            }
+        }
+    }
+
+    # and propagate to the given locations
+    $installPaths |% {
+        Write-Host "$($thisModule.ModuleBase) ==> $_"
+        cp -Recurse $thisModule.ModuleBase $_ -Force -ErrorAction Stop
+    }
 }
 
 function Confirm-SddcDiagnosticModule
@@ -2044,22 +2121,22 @@ function Confirm-SddcDiagnosticModule
 
     $thisModule = Get-Module $Module -ErrorAction Stop
 
-    $result = icm $Nodes.Name {
+    $clusterModules = icm $Nodes.Name {
         $null = Import-Module -Force $using:Module -ErrorAction SilentlyContinue
         Get-Module $using:Module
     }
 
-    $Nodes.Name |? { $_ -notin $result.PsComputerName } |% {
+    $Nodes.Name |? { $_ -notin $clusterModules.PsComputerName } |% {
         Write-Error "Node $_ does not have the $Module module. Please 'Install-SddcDiagnosticModule -Node $_' to address."
     }
-    $result |? { $thisModule.Version -gt $_.Version } |% {
+    $clusterModules |? { $thisModule.Version -gt $_.Version } |% {
         Write-Error "Node $($_.PsComputerName) has an older version of the $Module module ($($_.Version) < $($thisModule.Version)). Please 'Install-SddcDiagnosticModule -Node $_' to address."
     }
-    $result |? { $thisModule.Version -lt $_.Version } |% {
-        Write-Warning "Node $($_.PsComputerName) has an newer version of the $Module module ($($_.Version) > $($thisModule.Version)). Consider installing the updated module on the local system ($env:COMPUTERNAME)."
+    $clusterModules |? { $thisModule.Version -lt $_.Version } |% {
+        Write-Warning "Node $($_.PsComputerName) has an newer version of the $Module module ($($_.Version) > $($thisModule.Version)). Consider installing the updated module on the local system ($env:COMPUTERNAME) and updating the cluster."
     }
 
-    $result
+    $clusterModules
 }
 
 function Get-SddcDiagnosticArchiveJob
