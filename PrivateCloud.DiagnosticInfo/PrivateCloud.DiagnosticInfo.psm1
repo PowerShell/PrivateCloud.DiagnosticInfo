@@ -2022,7 +2022,7 @@ function Install-SddcDiagnosticModule
     }
 
     # remove the local node if present (self-update)
-    $Nodes = $Nodes |? { $_ -ne $env:COMPUTERNAME } | sort
+    $Nodes = $Nodes |? { $_ -ne $env:COMPUTERNAME }
 
     $thisModule = Get-Module $Module -ErrorAction Stop
 
@@ -2045,8 +2045,8 @@ function Install-SddcDiagnosticModule
         Write-Warning "Node $($_.PsComputerName) has an newer version of the $Module module ($($_.Version) > $($thisModule.Version)). Consider installing the updated module on the local system ($env:COMPUTERNAME) and updating the cluster."
     }
 
-    if ($installNodes.Count) { Write-Host "New Install to Nodes: $($installNodes -join ',')" }
-    if ($updateNodes.Count) { Write-Host "Update for Nodes    : $($updateNodes -join ',')" }
+    if ($installNodes.Count) { Write-Host "New Install to Nodes: $(($installNodes | sort) -join ',')" }
+    if ($updateNodes.Count) { Write-Host "Update for Nodes    : $(($updateNodes | sort) -join ',')" }
 
     # begin gathering remote install locations
     # clean outdated installations if present
@@ -2144,12 +2144,74 @@ function Confirm-SddcDiagnosticModule
 
 function Limit-SddcDiagnosticArchive
 {
+    param(
+        [parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string] $ArchivePath
+    )
 
     $Days = $null
     $Size = $null
     Get-SddcDiagnosticArchiveJobParameters -Days ([ref] $Days) -Size ([ref] $Size)
 
     Show-Update "Applying limits to SDDC Archive: $Days Days & $('{0:0.00} MiB' -f ($Size/1MB))"
+
+    #
+    # Comment/get current state
+    #
+
+    # note: default sort is ascending, so by our lexically sortable naming convention
+    # the oldest ZIPs will come first
+    $f = @(dir $ArchivePath\*.ZIP) | sort
+    $m = $f | measure -Sum Length
+
+    Show-Update "Begin: $($m.Count) ZIPs which are $('{0:0.00} MiB' -f ($m.Sum/1MB))"
+
+    #
+    # Day limit
+    #
+
+    if ($f.Count -gt $Days) {
+        $ndelete = $f.Count - $Days
+        Show-Update "Deleting $ndelete days of archive"
+
+        $f[0..($ndelete - 1)] |% {
+            Show-Update "`tDay limit: Deleting $($_.FullName)"
+        } | del -Force
+
+        # re-measure the remaining
+        $f = $f[$ndelete..$($f.Count - 1)]
+        $m = $f | measure -Sum Length
+    }
+
+    #
+    # Size limit
+    #
+
+    if ($m.Sum -gt $Size) {
+
+        Show-Update "Deleting $('{0:0.00} MiB' -f ($($m.Sum-$Size)/1MB)) MiB of archive"
+
+        foreach ($file in $f) {
+
+            Show-Update "`tSize limit: Deleting $($file.FullName)"
+            $m.Sum -= $file.Length
+            del $file
+
+            if ($m.Sum -le $Size) {
+                break
+            }
+        }
+    }
+
+    #
+    # Comment final state
+    #
+
+    $f = @(dir $ArchivePath\*.ZIP) | sort
+    $m = $f | measure -Sum Length
+
+    Show-Update "End: $($m.Count) ZIPs which are $('{0:0.00} MiB' -f ($m.Sum/1MB))"
 }
 
 function Update-SddcDiagnosticArchive
@@ -2344,9 +2406,9 @@ function Unregister-SddcDiagnosticArchiveJob
     $c = Get-Cluster -Name $Cluster -ErrorAction Stop
 
     # silently delete parameters, if set away from defaults
-    Set-ClusterParameter -Cluster $c.Name -Name SddcDiagnosticArchiveDays -Delete -ErrorAction SilentlyContinue
-    Set-ClusterParameter -Cluster $c.Name -Name SddcDiagnosticArchivePath -Delete -ErrorAction SilentlyContinue
-    Set-ClusterParameter -Cluster $c.Name -Name SddcDiagnosticArchiveSize -Delete -ErrorAction SilentlyContinue
+    $c | Set-ClusterParameter -Name SddcDiagnosticArchiveDays -Delete -ErrorAction SilentlyContinue
+    $c | Set-ClusterParameter -Name SddcDiagnosticArchivePath -Delete -ErrorAction SilentlyContinue
+    $c | Set-ClusterParameter -Name SddcDiagnosticArchiveSize -Delete -ErrorAction SilentlyContinue
 
     # unregister if present, else error
     if (Get-ClusteredScheduledTask -Cluster $c.Name |? TaskName -eq SddcDiagnosticArchive) {
@@ -2387,9 +2449,8 @@ function Register-SddcDiagnosticArchiveJob
         } else {
 
             try {
-                Limit-SddcDiagnosticArchive
                 Update-SddcDiagnosticArchive $Path
-                Limit-SddcDiagnosticArchive
+                Limit-SddcDiagnosticArchive $Path
             } catch {
                 Show-Error "SDDC Diagnostic Archive job failed.`nError=" $_
             }
