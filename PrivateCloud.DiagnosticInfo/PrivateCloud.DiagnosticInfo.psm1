@@ -10,9 +10,6 @@ $Module = 'PrivateCloud.DiagnosticInfo'
 
 # location of the event archive
 $SddcDiagnosticArchivePath = Join-Path $env:SystemRoot "\Cluster\Reports\SddcEventArchive"
-# event archive configuration - note, may not be present (this is OK)
-$SddcDiagnosticArchiveConfigPath = Join-Path $SddcDiagnosticArchivePath "config.xml"
-
 
 <############################################################
 #  Common helper functions/modules for main/child sessions  #
@@ -2005,7 +2002,12 @@ function Install-SddcDiagnosticModule
 
         [parameter(ParameterSetName="Node", Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
-        [string[]] $Node
+        [string[]] $Node,
+
+        [parameter(ParameterSetName="Cluster", Mandatory=$false)]
+        [parameter(ParameterSetName="Node", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [switch] $Force
     )
 
     switch ($psCmdlet.ParameterSetName) {
@@ -2033,8 +2035,9 @@ function Install-SddcDiagnosticModule
 
     # start with nodes which lack the module
     $Nodes.Name |? { $_ -notin $clusterModules.PsComputerName } |% { $installNodes += $_ }
-    # now add nodes which are downlevel
-    $clusterModules |? { $thisModule.Version -gt $_.Version } |% { $updateNodes += $_.PsComputerName }
+    # now add nodes which are downlevel (or, forced, the same apparent version)
+    $clusterModules |? { $thisModule.Version -gt $_.Version -or ($Force -and $thisModule.Version -eq $_.Version) } |% { $updateNodes += $_.PsComputerName }
+    # now add forced nodes which are (apparently) the same version
 
     # warn nodes which are uplevel
     $clusterModules |? { $thisModule.Version -lt $_.Version } |% {
@@ -2092,7 +2095,6 @@ function Install-SddcDiagnosticModule
 
     # and propagate to the given locations
     $installPaths |% {
-        Write-Host "$($thisModule.ModuleBase) ==> $_"
         cp -Recurse $thisModule.ModuleBase $_ -Force -ErrorAction Stop
     }
 }
@@ -2139,16 +2141,93 @@ function Confirm-SddcDiagnosticModule
     $clusterModules
 }
 
-function Get-SddcDiagnosticArchiveJob
+function Limit-SddcDiagnosticArchive
 {
+    try {
+        $Days = $c | Get-ClusterParemeter -Name SddcDiagnosticArchiveDays
+        $Size = $c | Get-ClusterParemeter -Name SddcDiagnosticArchiveSize
+    } catch {
+        # should be the same as @ register
+        $Days = 60
+        $Size = 500MB
+    }
+
+    Show-Update "Applying limits to SDDC Archive: $Days Days & $('{0:0.00} MiB' -f ($Size/1MB))"
+}
+
+function Update-SddcDiagnosticArchive
+{
+    Show-Update "Your Update Here (tm)"
+}
+
+function Show-SddcDiagnosticArchiveJob
+{
+
+    param(
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Cluster = '.'
+    )
+
+    $c = Get-Cluster -Name $Cluster -ErrorAction Stop
+
+    try {
+        $Days = ($c | Get-ClusterParameter -Name SddcDiagnosticArchiveDays -ErrorAction Stop).Value
+        $Size = ($c | Get-ClusterParameter -Name SddcDiagnosticArchiveSize -ErrorAction Stop).Value
+        $Task = Get-ClusteredScheduledTask -Cluster $c.Name -TaskName SddcEventArchive -ErrorAction Stop
+
+        # may be overaggresive, there should only be one trigger if we define it
+        $At = [datetime] ($Task.TaskDefinition.Triggers[0].StartBoundary)
+        
+    } catch {
+        Show-Error("SDDC Diagnostic Archive job parameters not found. Use Register-SddcDiagnosticArchiveJob to create the job if needed. `nError=") $_
+    }
+
+    Write-Host "Target archive size per node : $('{0:0.00} MiB' -f ($Size/1MB))"
+    Write-Host "Target days of archive       : $Days"
+    Write-Host "Capture at                   : $($At.ToString("h:mm tt"))"
 }
 
 function Set-SddcDiagnosticArchiveJob
 {
+    param(
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Cluster = '.',
+        
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $Days,
+
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [uint64] $Size
+    )
+
+    $c = Get-Cluster -Name $Cluster -ErrorAction Stop
+
+    if ($PSBoundParameters.ContainsKey('Days')) {
+        $c | Set-ClusterParameter -Name SddcDiagnosticArchiveDays -Create -Value $Days -ErrorAction Stop
+    }
+    if ($PSBoundParameters.ContainsKey('Size')) {
+        $c | Set-ClusterParameter -Name SddcDiagnosticArchiveSize -Create -Value $Size -ErrorAction Stop
+    }
 }
 
 function Unregister-SddcDiagnosticArchiveJob
 {
+    param(
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Cluster = '.'
+    )
+
+    Unregister-ClusteredScheduledTask -Cluster $Cluster -TaskName SddcEventArchive
+
+    $c = Get-Cluster -Name $Cluster -ErrorAction Stop
+
+    $c | Set-ClusterParameter -Name SddcDiagnosticArchiveDays -Delete -ErrorAction Stop
+    $c | Set-ClusterParameter -Name SddcDiagnosticArchiveSize -Delete -ErrorAction Stop
 }
 
 function Register-SddcDiagnosticArchiveJob
@@ -2156,19 +2235,29 @@ function Register-SddcDiagnosticArchiveJob
     param(
         [parameter(Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [string] $Cluster = '.'
+        [string] $Cluster = '.',
         
-        # interval (-hours or -days), max#, max size
-        # default to 1/day, 60, 500MiB
-        # time interval
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [datetime] $At = '3AM',
+        
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $Days = 60,
+        
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [uint64] $Size = 500MB
     )
+
+    $c = Get-Cluster -Name $Cluster -ErrorAction Stop
 
     # the scheduled task script itself
     $scr = {
         $Module = 'PrivateCloud.DiagnosticInfo'
         Import-Module $Module
 
-        $Path = Join-Path $env:SystemRoot "\Cluster\Reports\HealthTestEventArchive"
+        $Path = Join-Path $env:SystemRoot "\Cluster\Reports\SddcDiagnosticArchive"
         $LogFile = Join-Path $Path "EventArchive.log"
         mkdir -Force $Path -ErrorAction SilentlyContinue
         Start-Transcript -Path $LogFile -Append
@@ -2177,23 +2266,23 @@ function Register-SddcDiagnosticArchiveJob
             Write-Output "Module $Module not installed - exiting, cannot capture"
         }
 
+        Limit-SddcDiagnosticArchive
         Update-SddcDiagnosticArchive
+        Limit-SddcDiagnosticArchive
 
         Stop-Transcript
     }
 
+    # use the encoded form to mitigate quoting complications that full scriptblock transfer exposes
     $encscr = [System.Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes("& { $scr }"))
     $arg = "-NoProfile -NoLogo -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $encscr"
 
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg
-    $trigger = New-ScheduledTaskTrigger -Daily -At "5:55PM"
+    $trigger = New-ScheduledTaskTrigger -Daily -At $At
 
-    Unregister-ClusteredScheduledTask SddcEventArchive -ErrorAction SilentlyContinue
-    Register-ClusteredScheduledTask -Action $action -Trigger $trigger -TaskName SddcEventArchive -TaskType ClusterWide -Description "Get-SddcDiagnosticInfo Periodic Event Archive Task"
-}
-
-function Update-SddcDiagnosticArchive
-{
+    Unregister-ClusteredScheduledTask -Cluster $c.Name -TaskName SddcEventArchive -ErrorAction SilentlyContinue
+    Register-ClusteredScheduledTask -Cluster $c.Name -Action $action -Trigger $trigger -TaskName SddcEventArchive -TaskType ClusterWide -Description "Get-SddcDiagnosticInfo Periodic Event Archive Task"
+    Set-SddcDiagnosticArchiveJob -Cluster $c.Name -Days $Days -Size $Size
 }
 
 #######
@@ -3432,6 +3521,15 @@ New-Alias -Value Get-SddcDiagnosticInfo -Name Get-PCStorageDiagnosticInfo # Name
 New-Alias -Value Get-SddcDiagnosticInfo -Name getpcsdi # Shorthand for Get-PCStorageDiagnosticInfo
 New-Alias -Value Get-SddcDiagnosticInfo -Name gsddcdi # New alias
 
-New-Alias -Value Show-SddcDiagnosticReport -name Get-PCStorageReport
+New-Alias -Value Show-SddcDiagnosticReport -Name Get-PCStorageReport
 
-Export-ModuleMember -Alias * -Function Get-SddcDiagnosticInfo,Show-SddcDiagnosticReport,Install-SddcDiagnosticModule,Confirm-SddcDiagnosticModule
+Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
+    'Show-SddcDiagnosticReport',
+    'Install-SddcDiagnosticModule',
+    'Confirm-SddcDiagnosticModule',
+    'Register-SddcDiagnosticArchiveJob',
+    'Unregister-SddcDiagnosticArchiveJob',
+    'Update-SddcDiagnosticArchive',
+    'Limit-SddcDiagnosticArchive',
+    'Set-SddcDiagnosticArchiveJob',
+    'Show-SddcDiagnosticArchiveJob'

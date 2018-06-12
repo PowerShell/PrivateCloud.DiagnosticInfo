@@ -67,7 +67,13 @@ Description = 'Evaluates and Reports Windows Software Defined Data Center (SDDC)
 FunctionsToExport = 'Get-SddcDiagnosticInfo',
                     'Show-SddcDiagnosticReport',
                     'Install-SddcDiagnosticModule',
-                    'Confirm-SddcDiagnosticModule'
+                    'Confirm-SddcDiagnosticModule',
+                    'Register-SddcDiagnosticArchiveJob',
+                    'Unregister-SddcDiagnosticArchiveJob',
+                    'Update-SddcDiagnosticArchive',
+                    'Limit-SddcDiagnosticArchive',
+                    'Set-SddcDiagnosticArchiveJob',
+                    'Show-SddcDiagnosticArchiveJob'
                     
 # Cmdlets to export from this module
 # CmdletsToExport = @()
