@@ -6,11 +6,6 @@
 
 $Module = 'PrivateCloud.DiagnosticInfo'
 
-#various globals
-
-# location of the event archive
-$SddcDiagnosticArchivePath = Join-Path $env:SystemRoot "\Cluster\Reports\SddcEventArchive"
-
 <############################################################
 #  Common helper functions/modules for main/child sessions  #
 ############################################################>
@@ -233,7 +228,7 @@ $CommonFunc = {
         return $Result
     }
 
-    function Get-CapturedEvents (
+    function Get-SddcCapturedEvents (
         [string] $Path,
         [int] $Hours
     )
@@ -290,9 +285,9 @@ $CommonFunc = {
 
             # Export log file using, filtered to given history limit if specified
             if ($QTime) {
-                wevtutil epl $_.LogName $EventFile /ow:true
-            } else {
                 wevtutil epl $_.LogName $EventFile /q:$QTime /ow:true
+            } else {
+                wevtutil epl $_.LogName $EventFile /ow:true
             }
 
             if ($directChannel -eq $true) {
@@ -305,6 +300,14 @@ $CommonFunc = {
             # Emit filename for capture
             Write-Output $EventFile
         }
+    }
+
+    # wrapper for common date format for file naming
+    function Format-SddcDateTime(
+        [datetime] $d
+        )
+    {
+        $d.ToString('yyyyMMdd-HHmm')
     }
 }
 
@@ -1272,7 +1275,7 @@ function Get-SddcDiagnosticInfo
         $Node = $env:COMPUTERNAME
         $NodePath = [System.IO.Path]::GetTempPath()
 
-        Get-CapturedEvents $NodePath $Hours |% {
+        Get-SddcCapturedEvents $NodePath $Hours |% {
 
             Write-Output (Get-AdminSharePathFromLocal $Node $_)
         }
@@ -1961,9 +1964,8 @@ function Get-SddcDiagnosticInfo
 
     [System.GC]::Collect()
 
-    $ZipSuffix = '-{0}{1:00}{2:00}-{3:00}{4:00}' -f $TodayDate.Year,$TodayDate.Month,$TodayDate.Day,$TodayDate.Hour,$TodayDate.Minute
-    $ZipSuffix = "-" + $Cluster.Name + $ZipSuffix
-    $ZipPath = $ZipPrefix+$ZipSuffix+".ZIP"
+    $ZipSuffix = '-' + $Cluster.Name + '-' + (Format-SddcDateTime $TodayDate) + '.ZIP'
+    $ZipPath = $ZipPrefix + $ZipSuffix
     
     try {
         [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
@@ -1994,11 +1996,11 @@ function Get-SddcDiagnosticInfo
 
 function Install-SddcDiagnosticModule
 {
-    [CmdletBinding()]
+    [CmdletBinding( DefaultParameterSetName = "Cluster" )]
     param(
-        [parameter(ParameterSetName="Cluster", Mandatory=$true)]
+        [parameter(ParameterSetName="Cluster", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [string] $Cluster,
+        [string] $Cluster = '.',
 
         [parameter(ParameterSetName="Node", Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -2020,7 +2022,7 @@ function Install-SddcDiagnosticModule
     }
 
     # remove the local node if present (self-update)
-    $Nodes = $Nodes |? { $_ -ne $env:COMPUTERNAME }
+    $Nodes = $Nodes |? { $_ -ne $env:COMPUTERNAME } | sort
 
     $thisModule = Get-Module $Module -ErrorAction Stop
 
@@ -2037,15 +2039,14 @@ function Install-SddcDiagnosticModule
     $Nodes.Name |? { $_ -notin $clusterModules.PsComputerName } |% { $installNodes += $_ }
     # now add nodes which are downlevel (or, forced, the same apparent version)
     $clusterModules |? { $thisModule.Version -gt $_.Version -or ($Force -and $thisModule.Version -eq $_.Version) } |% { $updateNodes += $_.PsComputerName }
-    # now add forced nodes which are (apparently) the same version
 
     # warn nodes which are uplevel
     $clusterModules |? { $thisModule.Version -lt $_.Version } |% {
         Write-Warning "Node $($_.PsComputerName) has an newer version of the $Module module ($($_.Version) > $($thisModule.Version)). Consider installing the updated module on the local system ($env:COMPUTERNAME) and updating the cluster."
     }
 
-    if ($installNodes.Count) { Write-Host "New Install to Nodes: $($installNodes -join ', ')" }
-    if ($updateNodes.Count) { Write-Host "Update for Nodes    : $($updateNodes -join ', ')" }
+    if ($installNodes.Count) { Write-Host "New Install to Nodes: $($installNodes -join ',')" }
+    if ($updateNodes.Count) { Write-Host "Update for Nodes    : $($updateNodes -join ',')" }
 
     # begin gathering remote install locations
     # clean outdated installations if present
@@ -2143,52 +2144,133 @@ function Confirm-SddcDiagnosticModule
 
 function Limit-SddcDiagnosticArchive
 {
-    try {
-        $Days = $c | Get-ClusterParemeter -Name SddcDiagnosticArchiveDays
-        $Size = $c | Get-ClusterParemeter -Name SddcDiagnosticArchiveSize
-    } catch {
-        # should be the same as @ register
-        $Days = 60
-        $Size = 500MB
-    }
+
+    $Days = $null
+    $Size = $null
+    Get-SddcDiagnosticArchiveJobParameters -Days ([ref] $Days) -Size ([ref] $Size)
 
     Show-Update "Applying limits to SDDC Archive: $Days Days & $('{0:0.00} MiB' -f ($Size/1MB))"
 }
 
 function Update-SddcDiagnosticArchive
 {
-    Show-Update "Your Update Here (tm)"
+    param(
+        [parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string] $ArchivePath
+    )
+
+    # get timestamp at the top, reflecting job launch time
+    $TimeStamp = Get-Date
+
+    # Scrub in just in case
+    $CapturePath = (Join-Path $ArchivePath "Capture")
+    rm -r $CapturePath -Force -ErrorAction SilentlyContinue
+    $null = mkdir $CapturePath -Force -ErrorAction Stop
+
+    #
+    # Capture
+    #
+
+    # 25 hour capture of events
+    Get-SddcCapturedEvents $CapturePath 25 |% {
+        Show-Update "Captured: $_"
+    }
+
+    # 25 hour capture of cluster/health logs
+    try {
+
+        if ($c = Get-Cluster) {
+
+            $f = Get-ClusterLog -Node $env:COMPUTERNAME -Destination $CapturePath -UseLocalTime -TimeSpan (25 * 60)
+            Show-Update "Captured: $($f.FullName)"
+            if ($c.S2DEnabled) {
+                $f = Get-ClusterLog -Node $env:COMPUTERNAME -Destination $CapturePath -Health -UseLocalTime -TimeSpan (25 * 60)
+                Show-Update "Captured: $($f.FullName)"
+            }
+        }
+    } catch {
+
+        Show-Update "Cluster/Health Logs not captured"
+    }
+
+    #
+    # Compress
+    #
+
+    $ZipFile = 'SddcDiagnosticArchive-' + $env:COMPUTERNAME + '-' + (Format-SddcDateTime ($TimeStamp)) + '.ZIP'
+    $ZipPath = (join-path $ArchivePath $ZipFile)
+    
+    try {
+        [System.IO.Compression.ZipFile]::CreateFromDirectory($CapturePath, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+        Show-Update "Zip File Name : $ZipPath"
+    } catch {
+        Show-Error "Error creating the ZIP file!" $_
+    }
+
+    # Scrub out
+    rm -r $CapturePath -Force -ErrorAction SilentlyContinue
 }
 
-function Show-SddcDiagnosticArchiveJob
+function Get-SddcDiagnosticArchiveJobParameters
 {
-
     param(
         [parameter(Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [string] $Cluster = '.'
+        [string] $Cluster = '.',
+
+        [parameter(Mandatory=$false)]
+        [ref] $Days,
+
+        [parameter(Mandatory=$false)]
+        [ref] $Path,
+
+        [parameter(Mandatory=$false)]
+        [ref] $Size,
+
+        [parameter(Mandatory=$false)]
+        [ref] $At
     )
 
     $c = Get-Cluster -Name $Cluster -ErrorAction Stop
 
-    try {
-        $Days = ($c | Get-ClusterParameter -Name SddcDiagnosticArchiveDays -ErrorAction Stop).Value
-        $Size = ($c | Get-ClusterParameter -Name SddcDiagnosticArchiveSize -ErrorAction Stop).Value
-        $Task = Get-ClusteredScheduledTask -Cluster $c.Name -TaskName SddcEventArchive -ErrorAction Stop
-
-        # may be overaggresive, there should only be one trigger if we define it
-        $At = [datetime] ($Task.TaskDefinition.Triggers[0].StartBoundary)
-        
-    } catch {
-        Show-Error("SDDC Diagnostic Archive job parameters not found. Use Register-SddcDiagnosticArchiveJob to create the job if needed. `nError=") $_
+    if ($PSBoundParameters.ContainsKey('Days')) {
+        try {
+            $Days.Value = ($c | Get-ClusterParameter -Name SddcDiagnosticArchiveDays -ErrorAction Stop).Value
+        } catch {
+            $Days.Value = 60
+        }
     }
 
-    Write-Host "Target archive size per node : $('{0:0.00} MiB' -f ($Size/1MB))"
-    Write-Host "Target days of archive       : $Days"
-    Write-Host "Capture at                   : $($At.ToString("h:mm tt"))"
+    if ($PSBoundParameters.ContainsKey('Path')) {
+        try {
+            $Path.Value = ($c | Get-ClusterParameter -Name SddcDiagnosticArchivePath -ErrorAction Stop).Value
+        } catch {
+            $Path.Value = Join-Path $env:SystemRoot "SddcDiagnosticArchive"
+        }
+    }
+
+    if ($PSBoundParameters.ContainsKey('Size')) {
+        try {
+            $Size.Value = ($c | Get-ClusterParameter -Name SddcDiagnosticArchiveSize -ErrorAction Stop).Value
+        } catch {
+            $Size.Value = 500MB
+        }
+    }
+
+    if ($PSBoundParameters.ContainsKey('At')) {
+        try {
+            $Task = Get-ClusteredScheduledTask -Cluster $c.Name -TaskName SddcDiagnosticArchive -ErrorAction Stop
+
+            # may be overaggresive, there should only be one trigger if we define it
+            $At.Value = [datetime] ($Task.TaskDefinition.Triggers[0].StartBoundary)
+        } catch {
+            $At.Value = [datetime] '3AM'
+        }
+    }
 }
 
-function Set-SddcDiagnosticArchiveJob
+function Set-SddcDiagnosticArchiveJobParameters
 {
     param(
         [parameter(Mandatory=$false)]
@@ -2201,6 +2283,10 @@ function Set-SddcDiagnosticArchiveJob
 
         [parameter(Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
+        [string] $Path,
+        
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
         [uint64] $Size
     )
 
@@ -2209,9 +2295,42 @@ function Set-SddcDiagnosticArchiveJob
     if ($PSBoundParameters.ContainsKey('Days')) {
         $c | Set-ClusterParameter -Name SddcDiagnosticArchiveDays -Create -Value $Days -ErrorAction Stop
     }
+    if ($PSBoundParameters.ContainsKey('Path')) {
+        $c | Set-ClusterParameter -Name SddcDiagnosticArchivePath -Create -Value $Path -ErrorAction Stop
+    }
     if ($PSBoundParameters.ContainsKey('Size')) {
         $c | Set-ClusterParameter -Name SddcDiagnosticArchiveSize -Create -Value $Size -ErrorAction Stop
     }
+
+    # note, the scheduled start time is only modified at register time
+}
+
+function Show-SddcDiagnosticArchiveJob
+{
+    param(
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Cluster = '.'
+    )
+
+    $c = Get-Cluster -Name $Cluster -ErrorAction Stop
+
+    # continue if present, else error
+    if (-not (Get-ClusteredScheduledTask -Cluster $c.Name |? TaskName -eq SddcDiagnosticArchive)) {
+        Show-Error "SddcDiagnosticArchive job not currently registered"
+    }
+
+    $Days = $null
+    $Path = $null
+    $Size = $null
+    $At = $null
+
+    Get-SddcDiagnosticArchiveJobParameters -Cluster $c.Name -Days ([ref] $Days) -Path ([ref] $Path) -Size ([ref] $Size) -At ([ref] $At)
+
+    Write-Host "Target archive size per node : $('{0:0.00} MiB' -f ($Size/1MB))"
+    Write-Host "Target days of archive       : $Days"
+    Write-Host "Capture to path              : $Path"
+    Write-Host "Capture at                   : $($At.ToString("h:mm tt"))"
 }
 
 function Unregister-SddcDiagnosticArchiveJob
@@ -2222,12 +2341,19 @@ function Unregister-SddcDiagnosticArchiveJob
         [string] $Cluster = '.'
     )
 
-    Unregister-ClusteredScheduledTask -Cluster $Cluster -TaskName SddcEventArchive
-
     $c = Get-Cluster -Name $Cluster -ErrorAction Stop
 
-    $c | Set-ClusterParameter -Name SddcDiagnosticArchiveDays -Delete -ErrorAction Stop
-    $c | Set-ClusterParameter -Name SddcDiagnosticArchiveSize -Delete -ErrorAction Stop
+    # silently delete parameters, if set away from defaults
+    Set-ClusterParameter -Cluster $c.Name -Name SddcDiagnosticArchiveDays -Delete -ErrorAction SilentlyContinue
+    Set-ClusterParameter -Cluster $c.Name -Name SddcDiagnosticArchivePath -Delete -ErrorAction SilentlyContinue
+    Set-ClusterParameter -Cluster $c.Name -Name SddcDiagnosticArchiveSize -Delete -ErrorAction SilentlyContinue
+
+    # unregister if present, else error
+    if (Get-ClusteredScheduledTask -Cluster $c.Name |? TaskName -eq SddcDiagnosticArchive) {
+        Unregister-ClusteredScheduledTask -Cluster $c.Name -TaskName SddcDiagnosticArchive -ErrorAction Stop
+    } else {
+        Show-Error "SddcDiagnosticArchive job not currently registered"
+    }
 }
 
 function Register-SddcDiagnosticArchiveJob
@@ -2239,15 +2365,7 @@ function Register-SddcDiagnosticArchiveJob
         
         [parameter(Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [datetime] $At = '3AM',
-        
-        [parameter(Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $Days = 60,
-        
-        [parameter(Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [uint64] $Size = 500MB
+        [datetime] $At = '3AM'
     )
 
     $c = Get-Cluster -Name $Cluster -ErrorAction Stop
@@ -2257,18 +2375,25 @@ function Register-SddcDiagnosticArchiveJob
         $Module = 'PrivateCloud.DiagnosticInfo'
         Import-Module $Module
 
-        $Path = Join-Path $env:SystemRoot "\Cluster\Reports\SddcDiagnosticArchive"
-        $LogFile = Join-Path $Path "EventArchive.log"
-        mkdir -Force $Path -ErrorAction SilentlyContinue
+        $Path = $null
+        Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
+        $null = mkdir -Force $Path -ErrorAction SilentlyContinue
+
+        $LogFile = Join-Path $Path "SddcDiagnosticArchive.log"
         Start-Transcript -Path $LogFile -Append
 
         if (-not (Get-Module $Module)) {
             Write-Output "Module $Module not installed - exiting, cannot capture"
-        }
+        } else {
 
-        Limit-SddcDiagnosticArchive
-        Update-SddcDiagnosticArchive
-        Limit-SddcDiagnosticArchive
+            try {
+                Limit-SddcDiagnosticArchive
+                Update-SddcDiagnosticArchive $Path
+                Limit-SddcDiagnosticArchive
+            } catch {
+                Show-Error "SDDC Diagnostic Archive job failed.`nError=" $_
+            }
+        }
 
         Stop-Transcript
     }
@@ -2280,9 +2405,8 @@ function Register-SddcDiagnosticArchiveJob
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg
     $trigger = New-ScheduledTaskTrigger -Daily -At $At
 
-    Unregister-ClusteredScheduledTask -Cluster $c.Name -TaskName SddcEventArchive -ErrorAction SilentlyContinue
-    Register-ClusteredScheduledTask -Cluster $c.Name -Action $action -Trigger $trigger -TaskName SddcEventArchive -TaskType ClusterWide -Description "Get-SddcDiagnosticInfo Periodic Event Archive Task"
-    Set-SddcDiagnosticArchiveJob -Cluster $c.Name -Days $Days -Size $Size
+    Unregister-ClusteredScheduledTask -Cluster $c.Name -TaskName SddcDiagnosticArchive -ErrorAction SilentlyContinue
+    Register-ClusteredScheduledTask -Cluster $c.Name -Action $action -Trigger $trigger -TaskName SddcDiagnosticArchive -TaskType ClusterWide -Description "Get-SddcDiagnosticInfo Periodic Diagnostic Archive Task"
 }
 
 #######
@@ -3531,5 +3655,6 @@ Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
     'Unregister-SddcDiagnosticArchiveJob',
     'Update-SddcDiagnosticArchive',
     'Limit-SddcDiagnosticArchive',
-    'Set-SddcDiagnosticArchiveJob',
-    'Show-SddcDiagnosticArchiveJob'
+    'Show-SddcDiagnosticArchiveJob',
+    'Set-SddcDiagnosticArchiveJobParameters',
+    'Get-SddcDiagnosticArchiveJobParameters'
