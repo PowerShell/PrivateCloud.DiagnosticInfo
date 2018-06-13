@@ -443,37 +443,135 @@ function Get-FilteredNodeList(
 ##################################################>
 
 <# 
-    .SYNOPSIS 
-       Get state and diagnostic information for all software-defined datacenter (SDDC) features in a Windows Server 2016 cluster
+.SYNOPSIS 
+    Get state and diagnostic information for all Software-Defined DataCenter (SDDC) features in a Windows Server 2016 cluster.
 
-    .DESCRIPTION 
-       Get state and diagnostic information for all software-defined datacenter (SDDC) features in a Windows Server 2016 cluster
-       Run from one of the nodes of the cluster or specify a cluster name.
-       Results are saved to a folder (default C:\Users\<user>\HealthTest) for later review and replay.
+.DESCRIPTION 
+    Get state and diagnostic information for all Software-Defined DataCenter (SDDC) features in a Windows Server 2016 cluster.
+    Run from one of the nodes of the cluster or specify a cluster name, or specify a set of nodes directly. Results are saved
+    to a ZIP archive for later review and analysis.
 
-    .LINK 
-        To provide feedback and contribute visit https://github.com/PowerShell/PrivateCloud.Health
+.LINK 
+    To provide feedback and contribute visit https://github.com/PowerShell/PrivateCloud.Health
 
-    .EXAMPLE 
-       Get-SddcDiagnosticInfo
+.EXAMPLE 
+    Get-SddcDiagnosticInfo
  
-       Uses the default temporary working folder at C:\Users\<user>\HealthTest
-       Saves the zipped results at C:\Users\<user>\HealthTest-<cluster>-<date>.ZIP
+    Targets the cluster the local computer is a member of.
+    Uses the default temporary working folder at $env:USERPROFILE\HealthTest
+    Saves the zipped results at $env:USERPROFILE\HealthTest-<cluster>-<date>.ZIP
 
-    .EXAMPLE 
-       Get-SddcDiagnosticInfo -WriteToPath C:\Test
+.EXAMPLE 
+    Get-SddcDiagnosticInfo -WriteToPath C:\Test
  
-       Uses the specified folder as the temporary working folder.
+    Uses the specified folder as the temporary working folder. This does not change the location of
+    the zipped results.
 
-    .EXAMPLE 
-       Get-SddcDiagnosticInfo -ClusterName Cluster1
+.EXAMPLE 
+    Get-SddcDiagnosticInfo -ClusterName Cluster1
  
-       Targets the cluster specified.
+    Targets the specified cluster, Cluster1.
 
-    .EXAMPLE 
-       Get-SddcDiagnosticInfo -ReadFromPath C:\Test
+.EXAMPLE 
+    Get-SddcDiagnosticInfo -ReadFromPath C:\Test.ZIP
  
-       Results are obtained from the specified folder, not from a live cluster.
+    Display the summary health report from the capture located in the given ZIP. The content is
+    unzipped to a directory (minus the .ZIP extension) and remains after the summary health report
+    is shown.
+
+    In this example, C:\Test would be created from C:\Test.ZIP. If the .ZIP path is specified and
+    the unzipped directory is present, the directory will be reused without re-unzipping the
+    content.
+
+    EQUIVALENT: Show-SddcDiagnosticReport -Report Summary -Path <ZIP or Directory>
+
+    The file 0_CloudHealthSummary.log in the capture contains the summary report at the time the
+    capture was taken. Running the report again is a re-analysis of the content, which may reflect
+    new triage if PrivateCloud.DiagnosticInfo has been updated in the interim.
+
+.EXAMPLE
+    Get-SddcDiagnosticInfo -ReadFromPath C:\Test
+
+    Display the summary health report from the capture located in the given directory, which should
+    be an unzipped capture.
+
+.PARAMETER ReadFromPath
+Path to read content from for summary health report generation.
+
+.PARAMETER WriteToPath
+Temporary path to stage capture content to, prior to ZIP creation.
+
+.PARAMETER ClusterName
+Cluster to capture content from.
+
+.PARAMETER Nodelist
+List of nodes to capture content from.
+
+.PARAMETER HoursOfEvents
+For sources which support it, limit log and event data to the prior number of hours. By default,
+all available data is captured.
+
+.PARAMETER ZipPrefix
+Path for the resulting ZIP file: -<cluster>-<timestamp>.ZIP will be appended.
+
+.PARAMETER MonitoringMode
+Run in a limited monitoring mode (deprecated)
+
+.PARAMETER ExpectedNodes
+Specify the expected number of nodes. A summary warning will be issued if a different number is
+present.
+
+.PARAMETER ExpectedNetworks
+Specify the expected number of networks. A summary warning will be issued if a different number is
+present.
+
+.PARAMETER ExpectedVolumes
+Specify the expected number of volumes. A summary warning will be issued if a different number is
+present.
+
+.PARAMETER ExpectedDedupVolumes
+Specify the expected number of dedeuplicated volumes. A summary warning will be issued if a
+different number is present.
+
+.PARAMETER ExpectedPhysicalDisks
+Specify the expected number of physical disks. A summary warning will be issued if a different
+number is present.
+
+.PARAMETER ExpectedPools
+Specify the expected number of storage pools. A summary warning will be issued if a different
+number is present.
+
+.PARAMETER ExpectedEnclosures
+Specify the expected number of storage enclosures. A summary warning will be issued if a different
+number is present.
+
+.PARAMETER ProcessCounter
+Process the performance counters into a summary report (deprecated)
+
+.PARAMETER PerfSamples
+Specify the number of performance counter samples to capture (in seconds, 1/s).
+
+.PARAMETER IncludeAssociations
+Include additional object association information (deprecated)
+
+.PARAMETER IncludeDumps
+Include minidumps and live kernel report dumps.
+
+.PARAMETER IncludeGetNetView
+Include content from the Get-NetView (NetDiagnosticInfo module) command, if present.
+
+.PARAMETER IncludeHealthReport
+Include an additional health report (deprecated)
+
+.PARAMETER IncludeLiveDump
+Include a live dump of the target systems (not valid in S2D clusters)
+
+.PARAMETER IncludePerformance
+Include a performance counter capture.
+
+.PARAMETER IncludeReliabilityCounters
+Include Storage Reliability counters. This may incur a short but observable latency cost on the
+physical disks due to varying overhead in their internal handling of SMART queries.
 
 #> 
 
@@ -482,101 +580,155 @@ function Get-SddcDiagnosticInfo
     # aliases usage in this module is idiomatic, only using defaults
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
 
-    [CmdletBinding(DefaultParameterSetName="Write")]
+    [CmdletBinding(DefaultParameterSetName="WriteC")]
     [OutputType([String])]
 
     param(
-        [parameter(ParameterSetName="Write", Position=0, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteC", Position=0, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Position=0, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Position=0, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Position=0, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $WriteToPath = $($env:userprofile + "\HealthTest\"),
 
-        [parameter(ParameterSetName="Write", Position=1, Mandatory=$false)]
+        [parameter(ParameterSetName="M", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteC", Position=1, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Position=1, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $ClusterName = ".",
         
-        [parameter(ParameterSetName="Write", Position=1, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Position=1, Mandatory=$true)]
+        [parameter(ParameterSetName="WriteNP", Position=1, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
         [string[]] $Nodelist = @(),
-        
-        [parameter(ParameterSetName="Write", Position=2, Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [string] $ZipPrefix = $($env:userprofile + "\HealthTest"),
 
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [bool] $IncludePerformance = $true,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [bool] $IncludeReliabilityCounters = $false,
-        
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [bool] $IncludeGetNetView = $false,
-
-        [parameter(Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [switch] $MonitoringMode,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedNodes,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedNetworks,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedVolumes,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedDedupVolumes,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedPhysicalDisks,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedPools,
-    
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedEnclosures,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $HoursOfEvents = -1,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $PerfSamples = 10,
-        
         [parameter(ParameterSetName="Read", Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
         [string] $ReadFromPath = "",
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        
+        [parameter(ParameterSetName="WriteCP", Mandatory=$true)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
-        [bool] $IncludeDumps = $false,
+        [bool] $IncludePerformance = $true,
 
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $PerfSamples = 10,
+
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $ProcessCounter = $false,
+        
+        [parameter(ParameterSetName="M", Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [switch] $MonitoringMode,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $HoursOfEvents = -1,
+
+        [parameter(ParameterSetName="WriteC", Position=2, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Position=2, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Position=2, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Position=2, Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $ZipPrefix = $($env:userprofile + "\HealthTest"),
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedNodes,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedNetworks,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedVolumes,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedDedupVolumes,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedPhysicalDisks,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedPools,
+    
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedEnclosures,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [bool] $IncludeAssociations = $false,
 
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $IncludeDumps = $false,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $IncludeGetNetView = $false,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [bool] $IncludeHealthReport = $false,
 
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [bool] $ProcessCounter = $false,
+        [bool] $IncludeLiveDump = $false,
 
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [bool] $IncludeLiveDump = $false
+        [bool] $IncludeReliabilityCounters = $false
         )
 
     #
@@ -969,33 +1121,22 @@ function Get-SddcDiagnosticInfo
     try { $ClusterNodes = Get-FilteredNodeList -Cluster $ClusterName -Nodes $Nodelist }
     catch { Show-Error "Unable to get Cluster Nodes" $_ }
     $ClusterNodes | Export-Clixml ($Path + "GetClusterNode.XML")
+    $AccessNode = $ClusterNodes[0].Name
 
     #
     # Get-Cluster
     #
 
     try { 
-        if ($ClusterName -eq ".")
-        {
+        # discover name if called with default dot form and/or node list
+        if ($ClusterName -eq ".") {
             foreach ($cn in $ClusterNodes)
             {
                 $Cluster = Get-Cluster -Name $cn.Name -ErrorAction SilentlyContinue
-                
-                # if we cannot connect to cluster service will still have an access node this way
-                $AccessNode = $cn.Name
-                
-                if ($Cluster -eq $null)
-                {
-                    continue;
-                }				
-                $ClusterName = $Cluster.Name
-                break;
+                if ($Cluster -ne $null) { break }
             }
-        }
-        else
-        {
+        } else {
             $Cluster = Get-Cluster -Name $ClusterName
-            $AccessNode = $ClusterNodes[0].Name
         }
     }
     catch { Show-Error("Cluster could not be contacted. `nError="+$_.Exception.Message) }
@@ -2050,6 +2191,41 @@ function Get-SddcDiagnosticInfo
 #######
 #######
 
+<#
+.SYNOPSIS
+    Install the Sddc Diagnostic Module (PrivateCloud.DiagnosticInfo) on the target nodes.
+
+.DESCRIPTION
+    Install the Sddc Diagnostic Module (PrivateCloud.DiagnosticInfo) on the target nodes.
+
+    This is done by pushing the current version of the module from the local system to the targets,
+    not by downloading from a remote location.
+
+.PARAMETER Cluster
+    Specifies the cluster to push to. All nodes will receive the module.
+
+.PARAMETER Node
+    Specifies the nodes to push to, directly.
+
+.PARAMETER Force
+    Forces (re)installation even if the target nodes have the same version as the source.
+
+.EXAMPLE
+    Install-SddcDiagnosticModule
+
+    Install the module to all nodes of the current system's cluster.
+
+.EXAMPLE
+    Install-SddcDiagnosticModule -Cluster Cluster1
+
+    Install the module to all nodes of the Cluster1 cluster.
+
+.EXAMPLE
+    Install-SddcDiagnosticModule -Node Node1,Node2
+
+    Install the module to the specified nodes.
+#>
+
 function Install-SddcDiagnosticModule
 {
     [CmdletBinding( DefaultParameterSetName = "Cluster" )]
@@ -2156,6 +2332,35 @@ function Install-SddcDiagnosticModule
     }
 }
 
+<#
+.SYNOPSIS
+    Confirm versioning of the Sddc Diagnostic module (PrivateCloud.DiagnosticInfo) on the target
+    nodes.
+
+.DESCRIPTION
+    Confirm versioning of the Sddc Diagnostic module (PrivateCloud.DiagnosticInfo) on the target
+    nodes.
+
+    Warnings will be generated for nodes which do not have the module or have versions different
+    from the one on the local system. Use Install-SddcDiagnosticModule to push updates.
+
+.PARAMETER Cluster
+    Specifies the cluster. All nodes will be validated.
+
+.PARAMETER Node
+    Specifies the nodes to validate directly.
+
+.EXAMPLE
+    Confirm-SddcDiagnosticModule
+
+    Validate versions installed across the cluster the local system is a member of.
+
+.EXAMPLE
+    Confirm-SddcDiagnosticModule -Cluster Cluster1
+
+    Validate versions installed across the Cluster1 cluster.
+#>
+
 function Confirm-SddcDiagnosticModule
 {
     [CmdletBinding()]
@@ -2197,6 +2402,25 @@ function Confirm-SddcDiagnosticModule
 
     $clusterModules
 }
+
+<#
+.SYNOPSIS
+    Perform garbage collection on the local node's Sddc Diagnostic Archive.
+
+.DESCRIPTION
+    Perform garbage collection on the local node's Sddc Diagnostic Archive.
+
+    This is an INTERNAL utililty command, used by the clustered scheduled task which performs the
+    Sddc Diagnostic Archive. It is not intended for direct use.
+
+.PARAMETER ArchivePath
+    Specifies the path to the archive to garbage collect.
+
+.EXAMPLE
+    Limit-SddcDiagnosticArchive -ArchivePath C:\Windows\SddcDiagnosticArchive
+
+    Perform garbage collection on the content of the specified directory.
+#>
 
 function Limit-SddcDiagnosticArchive
 {
@@ -2271,6 +2495,25 @@ function Limit-SddcDiagnosticArchive
     Show-Update "End: $($m.Count) ZIPs which are $('{0:0.00} MiB' -f ($m.Sum/1MB))"
 }
 
+<#
+.SYNOPSIS
+    Perform a new capture to the local node's Sddc Diagnostic Archive.
+
+.DESCRIPTION
+    Perform a new capture to the local node's Sddc Diagnostic Archive.
+
+    This is an INTERNAL utililty command, used by the clustered scheduled task which performs the
+    Sddc Diagnostic Archive. It is not intended for direct use.
+
+.PARAMETER ArchivePath
+    Specifies the path to the archive.
+
+.EXAMPLE
+    Update-SddcDiagnosticArchive -ArchivePath C:\Windows\SddcDiagnosticArchive
+
+    Capture content to the specified directory.
+#>
+
 function Update-SddcDiagnosticArchive
 {
     param(
@@ -2331,6 +2574,40 @@ function Update-SddcDiagnosticArchive
     rm -r $CapturePath -Force -ErrorAction SilentlyContinue
 }
 
+<#
+.SYNOPSIS
+    Query for Sddc Diagnostic Archive job parameters.
+
+.DESCRIPTION
+    Query for Sddc Diagnostic Archive job parameters. [ref] parameters must be specified.
+
+    This is an INTERNAL utililty command, used by the clustered scheduled task which performs the
+    Sddc Diagnostic Archive. It is not intended for direct use.
+
+    Use Show-SddcDiagnosticArchiveJob to query & show the state of the archive job on a target set
+    of systems.
+
+.PARAMETER Cluster
+    Specifies the cluster from which parameters should be queried.
+
+.PARAMETER Days
+    Receives the days of archive to maintain.
+
+.PARAMETER Path
+    Receives the path to the archive (valid only on local system)
+
+.PARAMETER Size
+    Receives the maximum size of the archive to maintain (bytes)
+
+.PARAMETER At
+    Receives the time of day that the archive update job is configured to run.
+
+.EXAMPLE
+    Get-SddcDiagnosticArchiveJobParameters -Days ([ref] $d)
+
+    Receives the days of archive configured for the cluster the local system is a member of.
+#>
+
 function Get-SddcDiagnosticArchiveJobParameters
 {
     param(
@@ -2389,6 +2666,39 @@ function Get-SddcDiagnosticArchiveJobParameters
     }
 }
 
+<#
+.SYNOPSIS
+    Set Sddc Diagnostic Archive job parameters.
+
+.DESCRIPTION
+    Set Sddc Diagnostic Archive job parameters.
+
+    Use this command to change the default archive location and garbage collection controls (days
+    of archive and its maximum size).
+
+    Use the Register-SddcDiagnosticArchiveJob to change the launch time.
+
+.PARAMETER Cluster
+    Specifies the cluster for which parameters will be set.
+
+.PARAMETER Days
+    Specifies the days of archive to maintain. This limit will be applied during the next archive
+    job execution.
+
+.PARAMETER Path
+    Specifies the path to create the archive at. Ensure that this path is available on all systems.
+    By default the archive will be placed at $env:SystemRoot\SddcDiagnosticArchive
+
+.PARAMETER Size
+    Specifies the maximum size of the archive (in bytes). This limit will be applied during the next
+    archive job execution.
+
+.EXAMPLE
+    Set-SddcDiagnosticArchiveJobParameters -Days 14
+
+    Sets the maximum days of archive to two weeks.
+#>
+
 function Set-SddcDiagnosticArchiveJobParameters
 {
     param(
@@ -2432,6 +2742,25 @@ function Set-SddcDiagnosticArchiveJobParameters
 
     # note, the scheduled start time is only modified at register time
 }
+
+<#
+.SYNOPSIS
+    Show the state of the Sddc Diagnostic Archive job.
+
+.DESCRIPTION
+    Show the state of the Sddc Diagnostic Archive job.
+
+    Use this command to generate a report on the location and garbage collection parameters for the
+    archive on the target cluster, along with space used on each node.
+
+.PARAMETER Cluster
+    Specifies the cluster to query.
+
+.EXAMPLE
+    Show-SddcDiagnosticArchiveJob -Cluster Cluster1
+
+    Shows the state of the archive job on cluster Cluster1
+#>
 
 function Show-SddcDiagnosticArchiveJob
 {
@@ -2490,6 +2819,25 @@ function Show-SddcDiagnosticArchiveJob
     }
 }
 
+<#
+.SYNOPSIS
+    Unregister (remove) the Sddc Diagnostic Archive job.
+
+.DESCRIPTION
+    Unregister (remove) the Sddc Diagnostic Archive job.
+
+    This removes all configured parameters and the Sddc Diagnostic Archive clustered scheduled task.
+    It does not remove the Sddc Diagnostic Archives themselves.
+
+.PARAMETER Cluster
+    Specifies the target cluster.
+
+.EXAMPLE
+    Unregister-SddcDiagnosticArchiveJob -Cluster Cluster1
+
+    Removes the Sddc Diagnostic Archive job from cluster Cluster1
+#>
+
 function Unregister-SddcDiagnosticArchiveJob
 {
     param(
@@ -2512,6 +2860,38 @@ function Unregister-SddcDiagnosticArchiveJob
         Show-Error "SddcDiagnosticArchive job not currently registered"
     }
 }
+
+<#
+.SYNOPSIS
+    Register the Sddc Diagnostic Archive job.
+
+.DESCRIPTION
+    Register the Sddc Diagnostic Archive job.
+
+    This creates the Sddc Diagnostic Archive clustered scheduled task on the target cluster. Use
+    Set-SddcDiagnosticArchiveJobParameters to change the default location and garbage collection
+    options. Use Show-SddcDiagnosticArchiveJob to verify the state of the job and its parameters.
+
+    Re-registering can be used to change the start time for the job. This does not affect other
+    configured parameters, and does not create an additional instance of the job.
+
+.PARAMETER Cluster
+    Specifies the target cluster.
+
+.PARAMETER At
+    Specifies the time to launch the job (1/day).
+
+.EXAMPLE
+    Register-SddcDiagnosticArchiveJob -Cluster Cluster1
+
+    Creates the Sddc Diagnostic Archive job on cluster Cluster1 with default location and garbage
+    collection parameters.
+
+.EXAMPLE
+    Register-SddcDiagnosticArchiveJob -At 4:30AM
+
+    Creates the Sddc Diagnostic Archive job, launching at 4:30AM each morning.
+#>
 
 function Register-SddcDiagnosticArchiveJob
 {
@@ -3732,17 +4112,49 @@ function Get-SummaryReport
     Show diagnostic reports based on information collected from Get-SddcDiagnosticInfo.
 
 .PARAMETER Path
-    Path to the the logs produced by Get-SddcDiagnosticInfo. This must be the un-zipped report (Expand-Archive).
+    Path to the the logs produced by Get-SddcDiagnosticInfo. This may be a ZIP or a directory
+    containing previously unzipped content. If ZIP, it will be unzipped to the same location
+    (minus .ZIP) and will remain after reporting.
 
 .PARAMETER ReportLevel
-    Controls the level of detail in the report. By default standard reports are shown. Full detail may be extensive.
+    Controls the level of detail in the report. By default standard reports are shown. Full
+    detail may be extensive and/or more time consuming to generate.
 
 .PARAMETER Report
     Specifies individual reports to produce. By default all reports will be shown.
 
 .EXAMPLE
-    Show-SddcReport -Path C:\log -Report Full
+    Show-SddcDiagnosticReport -Path C:\Test.ZIP -Report Summary
 
+    Display the summary health report from the capture located in the given ZIP. The content is
+    unzipped to a directory (minus the .ZIP extension) and remains after the summary health report
+    is shown.
+
+    In this example, C:\Test would be created from C:\Test.ZIP. If the .ZIP path is specified and
+    the unzipped directory is present, the directory will be reused without re-unzipping the
+    content.
+
+    EQUIVALENT: Get-SddcDiagnosticInfo -ReadFromPath <ZIP or Directory>
+
+    The file 0_CloudHealthSummary.log in the capture contains the summary report at the time the
+    capture was taken. Running the report again is a re-analysis of the content, which may reflect
+    new triage if PrivateCloud.DiagnosticInfo has been updated in the interim.
+
+.EXAMPLE
+    Show-SddcDiagnosticReport -Path C:\Test.ZIP
+
+    Show all available reports available from this version of PrivateCloud.DiagnosticInfo, at standard
+    report level.
+
+.EXAMPLE
+    Show-SddcDiagnosticReport -Path C:\Test.ZIP -ReportLevel Full
+
+    Show all avaliable reports, at full report level.
+
+.EXAMPLE
+    Show-SddcDiagnosticReport -Path C:\Test.ZIP -Report StorageBusCache -ReportLevel Full
+
+    Only show the StorageBusCache report, at full report level.
 #>
 
 function Show-SddcDiagnosticReport
