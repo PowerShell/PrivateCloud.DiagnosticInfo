@@ -2191,6 +2191,41 @@ function Get-SddcDiagnosticInfo
 #######
 #######
 
+<#
+.SYNOPSIS
+    Install the Sddc Diagnostic Module (PrivateCloud.DiagnosticInfo) on the target nodes.
+
+.DESCRIPTION
+    Install the Sddc Diagnostic Module (PrivateCloud.DiagnosticInfo) on the target nodes.
+
+    This is done by pushing the current version of the module from the local system to the targets,
+    not by downloading from a remote location.
+
+.PARAMETER Cluster
+    Specifies the cluster to push to. All nodes will receive the module.
+
+.PARAMETER Node
+    Specifies the nodes to push to, directly.
+
+.PARAMETER Force
+    Forces (re)installation even if the target nodes have the same version as the source.
+
+.EXAMPLE
+    Install-SddcDiagnosticModule
+
+    Install the module to all nodes of the current system's cluster.
+
+.EXAMPLE
+    Install-SddcDiagnosticModule -Cluster Cluster1
+
+    Install the module to all nodes of the Cluster1 cluster.
+
+.EXAMPLE
+    Install-SddcDiagnosticModule -Node Node1,Node2
+
+    Install the module to the specified nodes.
+#>
+
 function Install-SddcDiagnosticModule
 {
     [CmdletBinding( DefaultParameterSetName = "Cluster" )]
@@ -2297,6 +2332,35 @@ function Install-SddcDiagnosticModule
     }
 }
 
+<#
+.SYNOPSIS
+    Confirm versioning of the Sddc Diagnostic module (PrivateCloud.DiagnosticInfo) on the target
+    nodes.
+
+.DESCRIPTION
+    Confirm versioning of the Sddc Diagnostic module (PrivateCloud.DiagnosticInfo) on the target
+    nodes.
+
+    Warnings will be generated for nodes which do not have the module or have versions different
+    from the one on the local system. Use Install-SddcDiagnosticModule to push updates.
+
+.PARAMETER Cluster
+    Specifies the cluster. All nodes will be validated.
+
+.PARAMETER Node
+    Specifies the nodes to validate directly.
+
+.EXAMPLE
+    Confirm-SddcDiagnosticModule
+
+    Validate versions installed across the cluster the local system is a member of.
+
+.EXAMPLE
+    Confirm-SddcDiagnosticModule -Cluster Cluster1
+
+    Validate versions installed across the Cluster1 cluster.
+#>
+
 function Confirm-SddcDiagnosticModule
 {
     [CmdletBinding()]
@@ -2338,6 +2402,25 @@ function Confirm-SddcDiagnosticModule
 
     $clusterModules
 }
+
+<#
+.SYNOPSIS
+    Perform garbage collection on the local node's Sddc Diagnostic Archive.
+
+.DESCRIPTION
+    Perform garbage collection on the local node's Sddc Diagnostic Archive.
+
+    This is an INTERNAL utililty command, used by the clustered scheduled task which performs the
+    Sddc Diagnostic Archive. It is not intended for direct use.
+
+.PARAMETER ArchivePath
+    Specifies the path to the archive to garbage collect.
+
+.EXAMPLE
+    Limit-SddcDiagnosticArchive -ArchivePath C:\Windows\SddcDiagnosticArchive
+
+    Perform garbage collection on the content of the specified directory.
+#>
 
 function Limit-SddcDiagnosticArchive
 {
@@ -2412,6 +2495,25 @@ function Limit-SddcDiagnosticArchive
     Show-Update "End: $($m.Count) ZIPs which are $('{0:0.00} MiB' -f ($m.Sum/1MB))"
 }
 
+<#
+.SYNOPSIS
+    Perform a new capture to the local node's Sddc Diagnostic Archive.
+
+.DESCRIPTION
+    Perform a new capture to the local node's Sddc Diagnostic Archive.
+
+    This is an INTERNAL utililty command, used by the clustered scheduled task which performs the
+    Sddc Diagnostic Archive. It is not intended for direct use.
+
+.PARAMETER ArchivePath
+    Specifies the path to the archive.
+
+.EXAMPLE
+    Update-SddcDiagnosticArchive -ArchivePath C:\Windows\SddcDiagnosticArchive
+
+    Capture content to the specified directory.
+#>
+
 function Update-SddcDiagnosticArchive
 {
     param(
@@ -2472,6 +2574,40 @@ function Update-SddcDiagnosticArchive
     rm -r $CapturePath -Force -ErrorAction SilentlyContinue
 }
 
+<#
+.SYNOPSIS
+    Query for Sddc Diagnostic Archive job parameters.
+
+.DESCRIPTION
+    Query for Sddc Diagnostic Archive job parameters. [ref] parameters must be specified.
+
+    This is an INTERNAL utililty command, used by the clustered scheduled task which performs the
+    Sddc Diagnostic Archive. It is not intended for direct use.
+
+    Use Show-SddcDiagnosticArchiveJob to query & show the state of the archive job on a target set
+    of systems.
+
+.PARAMETER Cluster
+    Specifies the cluster from which parameters should be queried.
+
+.PARAMETER Days
+    Receives the days of archive to maintain.
+
+.PARAMETER Path
+    Receives the path to the archive (valid only on local system)
+
+.PARAMETER Size
+    Receives the maximum size of the archive to maintain (bytes)
+
+.PARAMETER At
+    Receives the time of day that the archive update job is configured to run.
+
+.EXAMPLE
+    Get-SddcDiagnosticArchiveJobParameters -Days ([ref] $d)
+
+    Receives the days of archive configured for the cluster the local system is a member of.
+#>
+
 function Get-SddcDiagnosticArchiveJobParameters
 {
     param(
@@ -2530,6 +2666,39 @@ function Get-SddcDiagnosticArchiveJobParameters
     }
 }
 
+<#
+.SYNOPSIS
+    Set Sddc Diagnostic Archive job parameters.
+
+.DESCRIPTION
+    Set Sddc Diagnostic Archive job parameters.
+
+    Use this command to change the default archive location and garbage collection controls (days
+    of archive and its maximum size).
+
+    Use the Register-SddcDiagnosticArchiveJob to change the launch time.
+
+.PARAMETER Cluster
+    Specifies the cluster for which parameters will be set.
+
+.PARAMETER Days
+    Specifies the days of archive to maintain. This limit will be applied during the next archive
+    job execution.
+
+.PARAMETER Path
+    Specifies the path to create the archive at. Ensure that this path is available on all systems.
+    By default the archive will be placed at $env:SystemRoot\SddcDiagnosticArchive
+
+.PARAMETER Size
+    Specifies the maximum size of the archive (in bytes). This limit will be applied during the next
+    archive job execution.
+
+.EXAMPLE
+    Set-SddcDiagnosticArchiveJobParameters -Days 14
+
+    Sets the maximum days of archive to two weeks.
+#>
+
 function Set-SddcDiagnosticArchiveJobParameters
 {
     param(
@@ -2573,6 +2742,25 @@ function Set-SddcDiagnosticArchiveJobParameters
 
     # note, the scheduled start time is only modified at register time
 }
+
+<#
+.SYNOPSIS
+    Show the state of the Sddc Diagnostic Archive job.
+
+.DESCRIPTION
+    Show the state of the Sddc Diagnostic Archive job.
+
+    Use this command to generate a report on the location and garbage collection parameters for the
+    archive on the target cluster, along with space used on each node.
+
+.PARAMETER Cluster
+    Specifies the cluster to query.
+
+.EXAMPLE
+    Show-SddcDiagnosticArchiveJob -Cluster Cluster1
+
+    Shows the state of the archive job on cluster Cluster1
+#>
 
 function Show-SddcDiagnosticArchiveJob
 {
@@ -2631,6 +2819,25 @@ function Show-SddcDiagnosticArchiveJob
     }
 }
 
+<#
+.SYNOPSIS
+    Unregister (remove) the Sddc Diagnostic Archive job.
+
+.DESCRIPTION
+    Unregister (remove) the Sddc Diagnostic Archive job.
+
+    This removes all configured parameters and the Sddc Diagnostic Archive clustered scheduled task.
+    It does not remove the Sddc Diagnostic Archives themselves.
+
+.PARAMETER Cluster
+    Specifies the target cluster.
+
+.EXAMPLE
+    Unregister-SddcDiagnosticArchiveJob -Cluster Cluster1
+
+    Removes the Sddc Diagnostic Archive job from cluster Cluster1
+#>
+
 function Unregister-SddcDiagnosticArchiveJob
 {
     param(
@@ -2653,6 +2860,38 @@ function Unregister-SddcDiagnosticArchiveJob
         Show-Error "SddcDiagnosticArchive job not currently registered"
     }
 }
+
+<#
+.SYNOPSIS
+    Register the Sddc Diagnostic Archive job.
+
+.DESCRIPTION
+    Register the Sddc Diagnostic Archive job.
+
+    This creates the Sddc Diagnostic Archive clustered scheduled task on the target cluster. Use
+    Set-SddcDiagnosticArchiveJobParameters to change the default location and garbage collection
+    options. Use Show-SddcDiagnosticArchiveJob to verify the state of the job and its parameters.
+
+    Re-registering can be used to change the start time for the job. This does not affect other
+    configured parameters, and does not create an additional instance of the job.
+
+.PARAMETER Cluster
+    Specifies the target cluster.
+
+.PARAMETER At
+    Specifies the time to launch the job (1/day).
+
+.EXAMPLE
+    Register-SddcDiagnosticArchiveJob -Cluster Cluster1
+
+    Creates the Sddc Diagnostic Archive job on cluster Cluster1 with default location and garbage
+    collection parameters.
+
+.EXAMPLE
+    Register-SddcDiagnosticArchiveJob -At 4:30AM
+
+    Creates the Sddc Diagnostic Archive job, launching at 4:30AM each morning.
+#>
 
 function Register-SddcDiagnosticArchiveJob
 {
