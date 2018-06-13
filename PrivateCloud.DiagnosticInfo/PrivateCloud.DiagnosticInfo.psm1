@@ -3873,17 +3873,49 @@ function Get-SummaryReport
     Show diagnostic reports based on information collected from Get-SddcDiagnosticInfo.
 
 .PARAMETER Path
-    Path to the the logs produced by Get-SddcDiagnosticInfo. This must be the un-zipped report (Expand-Archive).
+    Path to the the logs produced by Get-SddcDiagnosticInfo. This may be a ZIP or a directory
+    containing previously unzipped content. If ZIP, it will be unzipped to the same location
+    (minus .ZIP) and will remain after reporting.
 
 .PARAMETER ReportLevel
-    Controls the level of detail in the report. By default standard reports are shown. Full detail may be extensive.
+    Controls the level of detail in the report. By default standard reports are shown. Full
+    detail may be extensive and/or more time consuming to generate.
 
 .PARAMETER Report
     Specifies individual reports to produce. By default all reports will be shown.
 
 .EXAMPLE
-    Show-SddcReport -Path C:\log -Report Full
+    Show-SddcDiagnosticReport -Path C:\Test.ZIP -Report Summary
 
+    Display the summary health report from the capture located in the given ZIP. The content is
+    unzipped to a directory (minus the .ZIP extension) and remains after the summary health report
+    is shown.
+
+    In this example, C:\Test would be created from C:\Test.ZIP. If the .ZIP path is specified and
+    the unzipped directory is present, the directory will be reused without re-unzipping the
+    content.
+
+    EQUIVALENT: Get-SddcDiagnosticInfo -ReadFromPath <ZIP or Directory>
+
+    The file 0_CloudHealthSummary.log in the capture contains the summary report at the time the
+    capture was taken. Running the report again is a re-analysis of the content, which may reflect
+    new triage if PrivateCloud.DiagnosticInfo has been updated in the interim.
+
+.EXAMPLE
+    Show-SddcDiagnosticReport -Path C:\Test.ZIP
+
+    Show all available reports available from this version of PrivateCloud.DiagnosticInfo, at standard
+    report level.
+
+.EXAMPLE
+    Show-SddcDiagnosticReport -Path C:\Test.ZIP -ReportLevel Full
+
+    Show all avaliable reports, at full report level.
+
+.EXAMPLE
+    Show-SddcDiagnosticReport -Path C:\Test.ZIP -Report StorageBusCache -ReportLevel Full
+
+    Only show the StorageBusCache report, at full report level.
 #>
 
 function Show-SddcDiagnosticReport
