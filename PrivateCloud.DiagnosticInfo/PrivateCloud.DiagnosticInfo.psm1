@@ -1121,33 +1121,22 @@ function Get-SddcDiagnosticInfo
     try { $ClusterNodes = Get-FilteredNodeList -Cluster $ClusterName -Nodes $Nodelist }
     catch { Show-Error "Unable to get Cluster Nodes" $_ }
     $ClusterNodes | Export-Clixml ($Path + "GetClusterNode.XML")
+    $AccessNode = $ClusterNodes[0].Name
 
     #
     # Get-Cluster
     #
 
     try { 
-        if ($ClusterName -eq ".")
-        {
+        # discover name if called with default dot form and/or node list
+        if ($ClusterName -eq ".") {
             foreach ($cn in $ClusterNodes)
             {
                 $Cluster = Get-Cluster -Name $cn.Name -ErrorAction SilentlyContinue
-                
-                # if we cannot connect to cluster service will still have an access node this way
-                $AccessNode = $cn.Name
-                
-                if ($Cluster -eq $null)
-                {
-                    continue;
-                }				
-                $ClusterName = $Cluster.Name
-                break;
+                if ($Cluster -ne $null) { break }
             }
-        }
-        else
-        {
+        } else {
             $Cluster = Get-Cluster -Name $ClusterName
-            $AccessNode = $ClusterNodes[0].Name
         }
     }
     catch { Show-Error("Cluster could not be contacted. `nError="+$_.Exception.Message) }
