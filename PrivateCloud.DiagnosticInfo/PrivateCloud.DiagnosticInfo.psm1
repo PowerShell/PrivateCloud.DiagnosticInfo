@@ -2154,7 +2154,7 @@ function Limit-SddcDiagnosticArchive
     $Size = $null
     Get-SddcDiagnosticArchiveJobParameters -Days ([ref] $Days) -Size ([ref] $Size)
 
-    Show-Update "Applying limits to SDDC Archive: $Days Days & $('{0:0.00} MiB' -f ($Size/1MB))"
+    Show-Update "Applying limits to SDDC Archive @ $ArchivePath : $Days Days & $('{0:0.00} MiB' -f ($Size/1MB))"
 
     #
     # Comment/get current state
@@ -2177,6 +2177,7 @@ function Limit-SddcDiagnosticArchive
 
         $f[0..($ndelete - 1)] |% {
             Show-Update "`tDay limit: Deleting $($_.FullName)"
+            $_
         } | del -Force
 
         # re-measure the remaining
@@ -2196,7 +2197,7 @@ function Limit-SddcDiagnosticArchive
 
             Show-Update "`tSize limit: Deleting $($file.FullName)"
             $m.Sum -= $file.Length
-            del $file
+            del $file.Fullname -Force
 
             if ($m.Sum -le $Size) {
                 break
