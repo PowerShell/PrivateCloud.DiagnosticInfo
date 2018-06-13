@@ -4,6 +4,8 @@
  #                                                 #
  ##################################################>
 
+$Module = 'PrivateCloud.DiagnosticInfo'
+
 <############################################################
 #  Common helper functions/modules for main/child sessions  #
 ############################################################>
@@ -225,6 +227,105 @@ $CommonFunc = {
         }
         return $Result
     }
+
+    function Get-SddcCapturedEvents (
+        [string] $Path,
+        [int] $Hours
+    )
+    {
+        # Calculate number of milliseconds and prepare the WEvtUtil parameter to filter based on date/time
+        $QTime = $null
+        if ($Hours -ne -1) {
+            $MSecs = $Hours * 60 * 60 * 1000
+            $QTime = "*[System[TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
+        }
+
+        # Log prefixes to gather. Note that this is a simple pattern match; for instance, there are a number of
+        # different providers that match *Microsoft-Windows-Storage*: Storage, StorageManagement, StorageSpaces, etc.
+        # NOTE: please keep this list sorted to avoid accidental dups.
+        $LogPatterns = 'Microsoft-Windows-ClusterAwareUpdating',
+                        'Microsoft-Windows-DataIntegrityScan',
+                        'Microsoft-Windows-FailoverClustering',
+                        'Microsoft-Windows-HostGuardian',
+                        'Microsoft-Windows-Hyper-V',
+                        'Microsoft-Windows-Kernel',
+                        'Microsoft-Windows-NDIS',
+                        'Microsoft-Windows-Network',
+                        'Microsoft-Windows-NTFS',
+                        'Microsoft-Windows-REFS',
+                        'Microsoft-Windows-ResumeKeyFilter',
+                        'Microsoft-Windows-SMB',
+                        'Microsoft-Windows-Storage',
+                        'Microsoft-Windows-TCPIP',
+                        'Microsoft-Windows-VHDMP',
+                        'Microsoft-Windows-WMI-Activity' |% { "$_*" }
+
+        # Exclude verbose/lower value channels
+        # The FailoverClustering Diagnostics are reflected in the cluster logs, already gathered (and large)
+        # StorageSpaces Performance is very expensive to export and not usually needed
+        $LogToExclude = 'Microsoft-Windows-FailoverClustering/Diagnostic',
+                        'Microsoft-Windows-FailoverClustering/DiagnosticVerbose',
+                        'Microsoft-Windows-FailoverClustering-Client/Diagnostic',
+                        'Microsoft-Windows-StorageSpaces-Driver/Performance'
+
+        # Core logs to gather, by explicit names.
+        $LogPatterns += 'System','Application'
+
+        Get-WinEvent -ListLog $LogPatterns -Force -ErrorAction Ignore -WarningAction Ignore |? { $LogToExclude -notcontains $_.LogName } |% {
+
+            $EventFile = Join-Path $Path ($_.LogName.Replace("/","-")+".EVTX")
+
+            # analytical/debug channels can not be captured live
+            # if any are encountered (not normal), disable them temporarily for export
+            $directChannel = $false
+            if ($_.LogType -in @('Analytical','Debug') -and $_.IsEnabled) {
+                $directChannel = $true
+                wevtutil sl /e:false $_.LogName
+            }
+
+            # Export log file using, filtered to given history limit if specified
+            if ($QTime) {
+                wevtutil epl $_.LogName $EventFile /q:$QTime /ow:true
+            } else {
+                wevtutil epl $_.LogName $EventFile /ow:true
+            }
+
+            if ($directChannel -eq $true) {
+                echo y | wevtutil sl /e:true $_.LogName | out-null
+            }
+
+            # Create locale metadata for off-system rendering
+            wevtutil al $EventFile /l:$PSCulture
+
+            # Emit filename for capture
+            Write-Output $EventFile
+        }
+    }
+
+    # wrapper for common date format for file naming
+    function Format-SddcDateTime(
+        [datetime] $d
+        )
+    {
+        $d.ToString('yyyyMMdd-HHmm')
+    }
+
+    # helper for testing/emitting feedback on module presence
+    # use this on icm to remote nodes
+    # this will be obsolete if/when we can integrate with add-node
+    function Test-SddcModulePresence
+    {
+        # note that we can't pull from the global
+        $Module = 'PrivateCloud.DiagnosticInfo'
+        $m = Get-Module $Module
+
+        if (-not $m) {
+            Write-Warning "Node $($env:COMPUTERNAME) does not have the $Module module installed for Sddc Diagnostic Archive. Please 'Install-SddcDiagnosticModule -Node $($env:COMPUTERNAME)' to address."
+            $false
+        } else {
+            $true
+        }
+    }
 }
 
 # evaluate into the main session
@@ -259,6 +360,82 @@ function Check-ExtractZip(
     }
 
     return $Path
+}
+
+#
+# Utility wrapper for copyout jobs which allows seperating ones which
+# delete temporary/gathered content and ones which gather persistent
+# content (like archive logs)
+#
+
+function Start-CopyJob(
+    [string] $Path,
+    [switch] $Delete,
+    [object[]] $j
+    )
+{
+    $j |% {
+        $logs = Receive-Job $_
+
+        start-job -Name "Copy $($_.Name) $($_.Location)" -InitializationScript $CommonFunc {
+
+            $using:logs |% {
+                Copy-Item -Recurse $_ (Get-NodePath $using:Path $_.PsComputerName) -Force -ErrorAction SilentlyContinue -Verbose
+                if ($using:Delete) {
+                    Remove-Item -Recurse $_ -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
+}
+
+
+#
+# Makes a list of cluster nodes or equivalent property-containing objects (Name/State)
+# Filtered for if they are physically responding v. cluster visible state.
+#	
+
+function Get-FilteredNodeList(
+    [string] $Cluster,
+    [string[]] $Nodes
+)
+{
+    $FilteredNodes = @()
+    $NodesToPing = @()
+            
+    if ($Nodes.Count) {
+        $NodesToPing += $Nodes |% { New-Object -TypeName PSObject -Property @{ "Name" = $_; "State" = "Up" }}
+    } else {
+
+        foreach ($node in (Get-ClusterNode -Cluster $Cluster)) {
+
+            if ($node.State -ne "Down") {
+                $FilteredNodes += $node
+            } else {
+                $NodesToPing += $node
+            }
+        }
+    }
+
+    if ($NodesToPing.Count) {
+
+        # Test-NetConnection is ~3s. Parallelize for the sake of larger clusters/lists of nodes.
+        $j = $NodesToPing |% {
+
+            Start-Job -ArgumentList $_ {
+                param( $Node )
+                if (Test-Connection -ComputerName $Node.Name -Quiet) {
+                    $Node
+                }
+            }
+        }
+
+        $null = Wait-Job $j
+        $FilteredNodes += $j | Receive-Job 
+        $j | Remove-Job
+    }
+
+    return $FilteredNodes
 }
 
 <##################################################
@@ -407,52 +584,6 @@ function Get-SddcDiagnosticInfo
     #
 
     Set-StrictMode -Version Latest
-
-    #
-    # Makes a list of cluster nodes - filtered for if they are available, and hides the different options
-    # passing cluster/nodes to the script
-    #	
-
-    $FilteredNodelist = @()
-
-    Function GetFilteredNodeList {
-        if ($FilteredNodelist.Count -eq 0)
-        {
-            $NodesToPing = @();
-            
-            if ($Nodelist.Count -gt 0)
-            {
-                foreach ($node in $Nodelist)
-                {
-                    $NodesToPing += @(New-Object -TypeName PSObject -Prop (@{"Name"=$node;"State"="Up"}))
-                }
-            }
-            else
-            {
-                foreach ($node in (Get-ClusterNode -Cluster $ClusterName))
-                {
-                    if ($node.State -ne "Down")
-                    {
-                        $FilteredNodelist += @($node)
-                    }
-                    else
-                    {
-                        $NodesToPing += @($node)
-                    }
-                }
-            }
-            
-            foreach ($node in $NodesToPing)
-            {
-                if (Test-Connection -ComputerName $node.Name -Quiet -TimeToLive 5)
-                {
-                    $FilteredNodelist += @($node)
-                }
-            }
-
-        }
-        return $FilteredNodelist	
-    }
 
     function VolumeToPath {
         Param ([String] $Volume) 
@@ -666,7 +797,7 @@ function Get-SddcDiagnosticInfo
         try { $ClusterName = (Get-Cluster -Name $ClusterName).Name }
         catch { Show-Error("Cluster could not be contacted. `nError="+$_.Exception.Message) }
 
-        $NodeList = GetFilteredNodeList
+        $NodeList = Get-FilteredNodeList -Cluster $ClusterName
         
         $AccessNode = $NodeList[0].Name + "." + (Get-Cluster -Name $ClusterName).Domain
 
@@ -820,10 +951,10 @@ function Get-SddcDiagnosticInfo
     $Parameters.ExpectedPools = $ExpectedPools
     $Parameters.ExpectedEnclosures = $ExpectedEnclosures
     $Parameters.HoursOfEvents = $HoursOfEvents
-    $Parameters.Version = (Get-Module PrivateCloud.DiagnosticInfo).Version.ToString()
+    $Parameters.Version = (Get-Module $Module).Version.ToString()
     $Parameters | Export-Clixml ($Path + "GetParameters.XML")
 
-    Show-Update "PrivateCloud.DiagnosticInfo v $($Parameters.Version)"
+    Show-Update "$Module v $($Parameters.Version)"
 
     #
     # Phase 1
@@ -835,7 +966,7 @@ function Get-SddcDiagnosticInfo
     # Cluster Nodes
     #
 
-    try { $ClusterNodes = GetFilteredNodeList }
+    try { $ClusterNodes = Get-FilteredNodeList -Cluster $ClusterName -Nodes $Nodelist }
     catch { Show-Error "Unable to get Cluster Nodes" $_ }
     $ClusterNodes | Export-Clixml ($Path + "GetClusterNode.XML")
 
@@ -848,10 +979,10 @@ function Get-SddcDiagnosticInfo
         {
             foreach ($cn in $ClusterNodes)
             {
-                $Cluster = Get-Cluster -Name $cn[0].Name -ErrorAction SilentlyContinue
+                $Cluster = Get-Cluster -Name $cn.Name -ErrorAction SilentlyContinue
                 
                 # if we cannot connect to cluster service will still have an access node this way
-                $AccessNode = $cn[0].Name
+                $AccessNode = $cn.Name
                 
                 if ($Cluster -eq $null)
                 {
@@ -908,11 +1039,32 @@ function Get-SddcDiagnosticInfo
     }
 
     ####
+    # Begin paralellized captures.
     # Start accumulating static jobs which self-contain their gather.
     # These are pulled in close to the end. Consider how to regularize this down the line.
     ####
     $JobStatic = @()
     $JobCopyOut = @()
+    $JobCopyOutNoDelete = @()
+
+    if ($Cluster -and (Get-ClusteredScheduledTask -Cluster $Cluster -TaskName SddcDiagnosticArchive)) {
+
+        Show-Update "Start gather of Sddc Diagnostic Archives ..."
+        $JobCopyOutNoDelete += icm $ClusterNodes.Name -AsJob {
+
+            Import-Module $using:Module -ErrorAction SilentlyContinue
+
+            # import common functions
+            . ([scriptblock]::Create($using:CommonFunc))
+
+            if (Test-SddcModulePresence) {
+
+                $Path = $null
+                Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
+                Get-AdminSharePathFromLocal $env:COMPUTERNAME $Path
+            }
+        }
+    }
 
     Show-Update "Start gather of cluster configuration ..."
 
@@ -1186,85 +1338,12 @@ function Get-SddcDiagnosticInfo
         # import common functions
         . ([scriptblock]::Create($using:CommonFunc)) 
 
-        # Calculate number of milliseconds and prepare the WEvtUtil parameter to filter based on date/time
-        if ($Hours -ne -1) {
-            $MSecs = $Hours * 60 * 60 * 1000
-        } else {
-            $MSecs = -1
-        }
-
-        $QTime = "*[System[TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
-
         $Node = $env:COMPUTERNAME
         $NodePath = [System.IO.Path]::GetTempPath()
 
-        # Log prefixes to gather. Note that this is a simple pattern match; for instance, there are a number of
-        # different providers that match *Microsoft-Windows-Storage*: Storage, StorageManagement, StorageSpaces, etc.
-        $LogPatterns = 'Microsoft-Windows-Storage',
-                        'Microsoft-Windows-SMB',
-                        'Microsoft-Windows-FailoverClustering',
-                        'Microsoft-Windows-VHDMP',
-                        'Microsoft-Windows-Hyper-V',
-                        'Microsoft-Windows-ResumeKeyFilter',
-                        'Microsoft-Windows-REFS',
-                        'Microsoft-Windows-WMI-Activity',
-                        'Microsoft-Windows-NTFS',
-                        'Microsoft-Windows-NDIS',
-                        'Microsoft-Windows-Network',
-                        'Microsoft-Windows-TCPIP',
-                        'Microsoft-Windows-ClusterAwareUpdating',
-                        'Microsoft-Windows-HostGuardian',
-                        'Microsoft-Windows-Kernel',
-                        'Microsoft-Windows-StorageSpaces',
-                        'Microsoft-Windows-DataIntegrityScan',
-                        'Microsoft-Windows-SMB' |% { "$_*" }
+        Get-SddcCapturedEvents $NodePath $Hours |% {
 
-        # Exclude verbose/lower value channels
-        # The FailoverClustering Diagnostics are reflected in the cluster logs, already gathered (and large)
-        # StorageSpaces Performance is very expensive to export and not usually needed
-        $LogPatternsToExclude = 'Microsoft-Windows-FailoverClustering/Diagnostic',
-                                'Microsoft-Windows-FailoverClustering-Client/Diagnostic',
-                                'Microsoft-Windows-StorageSpaces-Driver/Performance' |% { "$_*" }
-
-        # Core logs to gather, by explicit names.
-        $LogPatterns += 'System','Application'
-
-        $Logs = Get-WinEvent -ListLog $LogPatterns -Force -ErrorAction Ignore -WarningAction Ignore
-
-        # now apply exclusions
-        $Logs = $Logs |? {
-            $Log = $_.LogName
-            $m = ($LogPatternsToExclude |% { $Log -like $_ } | measure -sum).sum
-            -not $m
-        }
-
-        $Logs |% {
-        
-            $NodeFile = $NodePath+$_.LogName.Replace("/","-")+".EVTX"
-
-            # analytical/debug channels can not be captured live
-            # if any are encountered (not normal), disable them temporarily for export
-            $directChannel = $false
-            if ($_.LogType -in @('Analytical','Debug') -and $_.IsEnabled) {
-                $directChannel = $true
-                wevtutil sl /e:false $_.LogName
-            }
-
-            # Export unfiltered log file using the WEvtUtil command-line tool
-            if ($_.LogName -like "Microsoft-Windows-FailoverClustering-ClusBflt/Management"  -Or ($MSecs -eq -1)) {
-                wevtutil epl $_.LogName $NodeFile /ow:true
-            } else {
-                wevtutil epl $_.LogName $NodeFile /q:$QTime /ow:true
-            }
-
-            if ($directChannel -eq $true) {
-                echo y | wevtutil sl /e:true $_.LogName | out-null
-            }
-
-            # Create locale metadata for off-system rendering
-            wevtutil al $NodeFile /l:$PSCulture
-
-            Write-Output (Get-AdminSharePathFromLocal $Node $NodeFile)
+            Write-Output (Get-AdminSharePathFromLocal $Node $_)
         }
 
         # Also export locale metadata for off-system rendering (one-shot, we'll recursively copy)
@@ -1600,31 +1679,21 @@ function Get-SddcDiagnosticInfo
     # Now receive the jobs requiring remote copyout
     ####
 
-    if ($JobCopyOut.Count) {
+    if ($JobCopyOut.Count -or $JobCopyOutNoDelete.Count) {
         Show-Update "Completing jobs with remote copyout ..." -ForegroundColor Green
-        Show-WaitChildJob $JobCopyOut 120
+        Show-WaitChildJob ($JobCopyOut + $JobCopyOutNoDelete) 120
         Show-Update "Starting remote copyout ..."
 
         # keep parallelizing on receive at the individual node/child job level
         $JobCopy = @()
-        $JobCopyOut.ChildJobs |% {
-            $logs = Receive-Job $_
-
-            $JobCopy += start-job -Name "Copy $($_.Location)" -InitializationScript $CommonFunc {
-
-                $using:logs |% {
-                    Copy-Item -Recurse $_  (Get-NodePath $using:Path $_.PsComputerName) -Force -ErrorAction SilentlyContinue -Verbose
-                    Remove-Item -Recurse $_ -Force -ErrorAction SilentlyContinue
-                }
-            }
-        }
-
+        if ($JobCopyOut.Count) { $JobCopy += Start-CopyJob $Path -Delete $JobCopyOut.ChildJobs }
+        if ($JobCopyOutNoDelete.Count) { $JobCopy += Start-CopyJob $Path $JobCopyOutNoDelete.ChildJobs }
         Show-WaitChildJob $JobCopy 30
         Remove-Job $JobCopyOut
         Remove-Job $JobCopy
-
-        Show-Update "All remote copyout complete" -ForegroundColor Green
     }
+
+    Show-Update "All remote copyout complete" -ForegroundColor Green
 
     ####
     # Now receive the static jobs
@@ -1951,9 +2020,8 @@ function Get-SddcDiagnosticInfo
 
     [System.GC]::Collect()
 
-    $ZipSuffix = '-{0}{1:00}{2:00}-{3:00}{4:00}' -f $TodayDate.Year,$TodayDate.Month,$TodayDate.Day,$TodayDate.Hour,$TodayDate.Minute
-    $ZipSuffix = "-" + $Cluster.Name + $ZipSuffix
-    $ZipPath = $ZipPrefix+$ZipSuffix+".ZIP"
+    $ZipSuffix = '-' + $Cluster.Name + '-' + (Format-SddcDateTime $TodayDate) + '.ZIP'
+    $ZipPath = $ZipPrefix + $ZipSuffix
     
     try {
         [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
@@ -1972,9 +2040,561 @@ function Get-SddcDiagnosticInfo
     Show-Update "COMPLETE ($([int]((Get-Date) - $TodayDate).TotalSeconds)s)" -ForegroundColor Green
 }
 
+#######
+#######
+#######
 ##
-# PCStorageDiagnosticInfo Reporting
+# Archive Job Management
 ##
+#######
+#######
+#######
+
+function Install-SddcDiagnosticModule
+{
+    [CmdletBinding( DefaultParameterSetName = "Cluster" )]
+    param(
+        [parameter(ParameterSetName="Cluster", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Cluster = '.',
+
+        [parameter(ParameterSetName="Node", Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Node,
+
+        [parameter(ParameterSetName="Cluster", Mandatory=$false)]
+        [parameter(ParameterSetName="Node", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [switch] $Force
+    )
+
+    switch ($psCmdlet.ParameterSetName) {
+        "Cluster" {
+            $Nodes = Get-FilteredNodeList -Cluster $Cluster
+        }
+        "Node" {
+            $Nodes = Get-FilteredNodeList -Nodes $Node
+        }
+    }
+
+    # remove the local node if present (self-update)
+    $Nodes = $Nodes |? { $_ -ne $env:COMPUTERNAME }
+
+    $thisModule = Get-Module $Module -ErrorAction Stop
+
+    $clusterModules = icm $Nodes.Name {
+        $null = Import-Module -Force $using:Module -ErrorAction SilentlyContinue
+        Get-Module $using:Module
+    }
+
+    # build list of nodes which need installation/refresh
+    $installNodes = @()
+    $updateNodes = @()
+
+    # start with nodes which lack the module
+    $Nodes.Name |? { $_ -notin $clusterModules.PsComputerName } |% { $installNodes += $_ }
+    # now add nodes which are downlevel (or, forced, the same apparent version)
+    $clusterModules |? { $thisModule.Version -gt $_.Version -or ($Force -and $thisModule.Version -eq $_.Version) } |% { $updateNodes += $_.PsComputerName }
+
+    # warn nodes which are uplevel
+    $clusterModules |? { $thisModule.Version -lt $_.Version } |% {
+        Write-Warning "Node $($_.PsComputerName) has an newer version of the $Module module ($($_.Version) > $($thisModule.Version)). Consider installing the updated module on the local system ($env:COMPUTERNAME) and updating the cluster."
+    }
+
+    if ($installNodes.Count) { Write-Host "New Install to Nodes: $(($installNodes | sort) -join ',')" }
+    if ($updateNodes.Count) { Write-Host "Update for Nodes    : $(($updateNodes | sort) -join ',')" }
+
+    # begin gathering remote install locations
+    # clean outdated installations if present
+
+    $installPaths = @()
+
+    if ($installNodes.Count -gt 0) {
+        $installPaths += icm $installNodes {
+
+            # import common functions
+            . ([scriptblock]::Create($using:CommonFunc))
+
+            # place in the Install-Module default location
+            # note we must specify all the way to final destination since we know it does not exist
+            Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME (Join-Path "$env:ProgramFiles\WindowsPowerShell\Modules\$using:Module" $using:thisModule.Version))
+        }
+    }
+
+    if ($updateNodes.Count -gt 0) {
+        $installPaths += icm $updateNodes {
+
+            # import common functions
+            . ([scriptblock]::Create($using:CommonFunc))
+
+            # wipe outdated install location - Install-Module does not place here, prefer its location
+            if (Test-Path $env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules\$using:Module) {
+
+                rm -Recurse $env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules\$using:Module -ErrorAction Stop
+
+                # place in the Install-Module default location
+                Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME (Join-Path "$env:ProgramFiles\WindowsPowerShell\Modules\$using:Module" $using:thisModule.Version))
+
+            } else { 
+        
+                $null = Import-Module $using:Module -Force
+                $m = Get-Module $using:module -ErrorAction Stop
+
+                # unload current and return its location for update
+                $md = (gi (gi $m.ModuleBase -ErrorAction SilentlyContinue).PsParentPath).FullName
+                Remove-Module $using:module -ErrorAction SilentlyContinue
+
+                # note we return the parent path - the copy will place the versioned module directory within it
+                Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $md)
+            }
+        }
+    }
+
+    # and propagate to the given locations
+    $installPaths |% {
+        cp -Recurse $thisModule.ModuleBase $_ -Force -ErrorAction Stop
+    }
+}
+
+function Confirm-SddcDiagnosticModule
+{
+    [CmdletBinding()]
+    param(
+        [parameter(ParameterSetName="Cluster", Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Cluster,
+
+        [parameter(ParameterSetName="Node", Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Node
+    )
+
+    switch ($psCmdlet.ParameterSetName) {
+        "Cluster" {
+            $Nodes = Get-FilteredNodeList -Cluster $Cluster
+        }
+        "Node" {
+            $Nodes = Get-FilteredNodeList -Nodes $Node
+        }
+    }
+
+    $thisModule = Get-Module $Module -ErrorAction Stop
+
+    $clusterModules = icm $Nodes.Name {
+        $null = Import-Module -Force $using:Module -ErrorAction SilentlyContinue
+        Get-Module $using:Module
+    }
+
+    $Nodes.Name |? { $_ -notin $clusterModules.PsComputerName } |% {
+        Write-Error "Node $_ does not have the $Module module. Please 'Install-SddcDiagnosticModule -Node $_' to address."
+    }
+    $clusterModules |? { $thisModule.Version -gt $_.Version } |% {
+        Write-Error "Node $($_.PsComputerName) has an older version of the $Module module ($($_.Version) < $($thisModule.Version)). Please 'Install-SddcDiagnosticModule -Node $_' to address."
+    }
+    $clusterModules |? { $thisModule.Version -lt $_.Version } |% {
+        Write-Warning "Node $($_.PsComputerName) has an newer version of the $Module module ($($_.Version) > $($thisModule.Version)). Consider installing the updated module on the local system ($env:COMPUTERNAME) and updating the cluster."
+    }
+
+    $clusterModules
+}
+
+function Limit-SddcDiagnosticArchive
+{
+    param(
+        [parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string] $ArchivePath
+    )
+
+    $Days = $null
+    $Size = $null
+    Get-SddcDiagnosticArchiveJobParameters -Days ([ref] $Days) -Size ([ref] $Size)
+
+    Show-Update "Applying limits to SDDC Archive @ $ArchivePath : $Days Days & $('{0:0.00} MiB' -f ($Size/1MB))"
+
+    #
+    # Comment/get current state
+    #
+
+    # note: default sort is ascending, so by our lexically sortable naming convention
+    # the oldest ZIPs will come first
+    $f = @(dir $ArchivePath\*.ZIP) | sort
+    $m = $f | measure -Sum Length
+
+    Show-Update "Begin: $($m.Count) ZIPs which are $('{0:0.00} MiB' -f ($m.Sum/1MB))"
+
+    #
+    # Day limit
+    #
+
+    if ($f.Count -gt $Days) {
+        $ndelete = $f.Count - $Days
+        Show-Update "Deleting $ndelete days of archive"
+
+        $f[0..($ndelete - 1)] |% {
+            Show-Update "`tDay limit: Deleting $($_.FullName)"
+            $_
+        } | del -Force
+
+        # re-measure the remaining
+        $f = $f[$ndelete..$($f.Count - 1)]
+        $m = $f | measure -Sum Length
+    }
+
+    #
+    # Size limit
+    #
+
+    if ($m.Sum -gt $Size) {
+
+        Show-Update "Deleting $('{0:0.00} MiB' -f ($($m.Sum-$Size)/1MB)) MiB of archive"
+
+        foreach ($file in $f) {
+
+            Show-Update "`tSize limit: Deleting $($file.FullName)"
+            $m.Sum -= $file.Length
+            del $file.Fullname -Force
+
+            if ($m.Sum -le $Size) {
+                break
+            }
+        }
+    }
+
+    #
+    # Comment final state
+    #
+
+    $f = @(dir $ArchivePath\*.ZIP) | sort
+    $m = $f | measure -Sum Length
+
+    Show-Update "End: $($m.Count) ZIPs which are $('{0:0.00} MiB' -f ($m.Sum/1MB))"
+}
+
+function Update-SddcDiagnosticArchive
+{
+    param(
+        [parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string] $ArchivePath
+    )
+
+    # get timestamp at the top, reflecting job launch time
+    $TimeStamp = Get-Date
+
+    # Scrub in just in case
+    $CapturePath = (Join-Path $ArchivePath "Capture")
+    rm -r $CapturePath -Force -ErrorAction SilentlyContinue
+    $null = mkdir $CapturePath -Force -ErrorAction Stop
+
+    #
+    # Capture
+    #
+
+    # 25 hour capture of events
+    Get-SddcCapturedEvents $CapturePath 25 |% {
+        Show-Update "Captured: $_"
+    }
+
+    # 25 hour capture of cluster/health logs
+    try {
+
+        if ($c = Get-Cluster) {
+
+            $f = Get-ClusterLog -Node $env:COMPUTERNAME -Destination $CapturePath -UseLocalTime -TimeSpan (25 * 60)
+            Show-Update "Captured: $($f.FullName)"
+            if ($c.S2DEnabled) {
+                $f = Get-ClusterLog -Node $env:COMPUTERNAME -Destination $CapturePath -Health -UseLocalTime -TimeSpan (25 * 60)
+                Show-Update "Captured: $($f.FullName)"
+            }
+        }
+    } catch {
+
+        Show-Update "Cluster/Health Logs not captured"
+    }
+
+    #
+    # Compress
+    #
+
+    $ZipFile = 'SddcDiagnosticArchive-' + $env:COMPUTERNAME + '-' + (Format-SddcDateTime ($TimeStamp)) + '.ZIP'
+    $ZipPath = (join-path $ArchivePath $ZipFile)
+    
+    try {
+        [System.IO.Compression.ZipFile]::CreateFromDirectory($CapturePath, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+        Show-Update "Zip File Name : $ZipPath"
+    } catch {
+        Show-Error "Error creating the ZIP file!" $_
+    }
+
+    # Scrub out
+    rm -r $CapturePath -Force -ErrorAction SilentlyContinue
+}
+
+function Get-SddcDiagnosticArchiveJobParameters
+{
+    param(
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Cluster = '.',
+
+        [parameter(Mandatory=$false)]
+        [ref] $Days,
+
+        [parameter(Mandatory=$false)]
+        [ref] $Path,
+
+        [parameter(Mandatory=$false)]
+        [ref] $Size,
+
+        [parameter(Mandatory=$false)]
+        [ref] $At
+    )
+
+    $c = Get-Cluster -Name $Cluster -ErrorAction Stop
+
+    if ($PSBoundParameters.ContainsKey('Days')) {
+        try {
+            $Days.Value = ($c | Get-ClusterParameter -Name SddcDiagnosticArchiveDays -ErrorAction Stop).Value
+        } catch {
+            $Days.Value = 60
+        }
+    }
+
+    if ($PSBoundParameters.ContainsKey('Path')) {
+        try {
+            $Path.Value = ($c | Get-ClusterParameter -Name SddcDiagnosticArchivePath -ErrorAction Stop).Value
+        } catch {
+            $Path.Value = Join-Path $env:SystemRoot "SddcDiagnosticArchive"
+        }
+    }
+
+    if ($PSBoundParameters.ContainsKey('Size')) {
+        try {
+            $Size.Value = ($c | Get-ClusterParameter -Name SddcDiagnosticArchiveSize -ErrorAction Stop).Value
+        } catch {
+            $Size.Value = 500MB
+        }
+    }
+
+    if ($PSBoundParameters.ContainsKey('At')) {
+        try {
+            $Task = Get-ClusteredScheduledTask -Cluster $c.Name -TaskName SddcDiagnosticArchive -ErrorAction Stop
+
+            # may be overaggresive, there should only be one trigger if we define it
+            $At.Value = [datetime] ($Task.TaskDefinition.Triggers[0].StartBoundary)
+        } catch {
+            $At.Value = [datetime] '3AM'
+        }
+    }
+}
+
+function Set-SddcDiagnosticArchiveJobParameters
+{
+    param(
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Cluster = '.',
+        
+        [parameter(Mandatory=$false)]
+        [ValidateRange(1,365)]
+        [int] $Days,
+
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Path,
+        
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [uint64] $Size
+    )
+
+    $c = Get-Cluster -Name $Cluster -ErrorAction Stop
+
+    # note: we could rewrite paths which are prefixed with recognizably $env:systemroot and other
+    # canonical paths with macros that we can expand at the destination node. strictly speaking these are
+    # not guaranteed to be identical though its extremely unlikely we'll find that condition in practice.
+
+
+    if ($PSBoundParameters.ContainsKey('Days')) {
+        $c | Set-ClusterParameter -Name SddcDiagnosticArchiveDays -Create -Value $Days -ErrorAction Stop
+    }
+    if ($PSBoundParameters.ContainsKey('Path')) {
+        if ($Path[1] -ne ':') {
+            Write-Error 'Path must be specified as an absolute path (<driveletter>:\some\path)'
+        } else {
+            $c | Set-ClusterParameter -Name SddcDiagnosticArchivePath -Create -Value $Path -ErrorAction Stop
+        }
+    }
+    if ($PSBoundParameters.ContainsKey('Size')) {
+        $c | Set-ClusterParameter -Name SddcDiagnosticArchiveSize -Create -Value $Size -ErrorAction Stop
+    }
+
+    # note, the scheduled start time is only modified at register time
+}
+
+function Show-SddcDiagnosticArchiveJob
+{
+    param(
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Cluster = '.'
+    )
+
+    $c = Get-Cluster -Name $Cluster -ErrorAction Stop
+
+    # continue if present, else error
+    if (-not (Get-ClusteredScheduledTask -Cluster $c.Name |? TaskName -eq SddcDiagnosticArchive)) {
+        Show-Error "SddcDiagnosticArchive job not currently registered"
+    }
+
+    $Days = $null
+    $Path = $null
+    $Size = $null
+    $At = $null
+
+    Get-SddcDiagnosticArchiveJobParameters -Cluster $c.Name -Days ([ref] $Days) -Path ([ref] $Path) -Size ([ref] $Size) -At ([ref] $At)
+
+    Write-Host "Target archive size per node : $('{0:0.00} MiB' -f ($Size/1MB))"
+    Write-Host "Target days of archive       : $Days"
+    Write-Host "Capture to path              : $Path"
+    Write-Host "Capture at                   : $($At.ToString("h:mm tt"))"
+
+    $Nodes = Get-FilteredNodeList -Cluster $Cluster
+
+    Write-Host "$('-'*20)`nPer Node Report"
+    $j = $Nodes | sort Name |% {
+        icm $_.Name -AsJob {
+
+            Import-Module $using:Module -ErrorAction SilentlyContinue
+
+            # import common functions
+            . ([scriptblock]::Create($using:CommonFunc))
+
+            if (Test-SddcModulePresence) {
+
+                $Path = $null
+                Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
+
+                dir $Path\*.ZIP -ErrorAction SilentlyContinue | measure -Sum Length
+            }
+        }   
+    }
+
+    $null = $j | Wait-Job
+    $j | sort Location |% {
+
+        $m = Receive-Job $_
+        Remove-Job $_
+        Write-Host "Node $($_.Location): $($m.Count) ZIPs which are $('{0:0.00} MiB' -f ($m.Sum/1MB))"
+    }
+}
+
+function Unregister-SddcDiagnosticArchiveJob
+{
+    param(
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Cluster = '.'
+    )
+
+    $c = Get-Cluster -Name $Cluster -ErrorAction Stop
+
+    # silently delete parameters, if set away from defaults
+    $c | Set-ClusterParameter -Name SddcDiagnosticArchiveDays -Delete -ErrorAction SilentlyContinue
+    $c | Set-ClusterParameter -Name SddcDiagnosticArchivePath -Delete -ErrorAction SilentlyContinue
+    $c | Set-ClusterParameter -Name SddcDiagnosticArchiveSize -Delete -ErrorAction SilentlyContinue
+
+    # unregister if present, else error
+    if (Get-ClusteredScheduledTask -Cluster $c.Name |? TaskName -eq SddcDiagnosticArchive) {
+        Unregister-ClusteredScheduledTask -Cluster $c.Name -TaskName SddcDiagnosticArchive -ErrorAction Stop
+    } else {
+        Show-Error "SddcDiagnosticArchive job not currently registered"
+    }
+}
+
+function Register-SddcDiagnosticArchiveJob
+{
+    param(
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Cluster = '.',
+        
+        [parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [datetime] $At = '3AM'
+    )
+
+    $c = Get-Cluster -Name $Cluster -ErrorAction Stop
+
+    # the scheduled task script itself
+    $scr = {
+        $Module = 'PrivateCloud.DiagnosticInfo'
+        Import-Module $Module
+
+        $Path = $null
+        Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
+        $null = mkdir -Force $Path -ErrorAction SilentlyContinue
+
+        $LogFile = Join-Path $Path "SddcDiagnosticArchive.log"
+
+        # trim log
+        $ntail = $null
+        $limit = 10MB
+        if (($l = gi $LogFile -ErrorAction SilentlyContinue) -and
+            $l.Length -gt $limit) {
+
+            $LogFileTmp = Join-Path $Path "SddcDiagnosticArchive.log.tmp"
+
+            # note: transcripts are produced in plain ASCII
+            # estimate the #lines in the tail of the file which ~10MB allows for
+            $ntail = [int] ((gc $LogFile | measure).Count * ($limit/$l.length))
+            gc $LogFile -Tail $ntail | Out-File -Encoding ascii -Width 9999 $LogFileTmp
+            del $LogFile
+            move $LogFileTmp $LogFile
+        }
+
+        Start-Transcript -Path $LogFile -Append
+
+        if ($ntail) {
+            Write-Output "Truncated $LogFile to $ntail lines ($('{0:0.00} MiB' -f ($limit/1MB)) limit)"
+        }
+
+        if (-not (Get-Module $Module)) {
+            Write-Output "Module $Module not installed - exiting, cannot capture"
+        } else {
+
+            try {
+                Update-SddcDiagnosticArchive $Path
+                Limit-SddcDiagnosticArchive $Path
+            } catch {
+                Show-Error "SDDC Diagnostic Archive job failed.`nError=" $_
+            }
+        }
+
+        Stop-Transcript
+    }
+
+    # use the encoded form to mitigate quoting complications that full scriptblock transfer exposes
+    $encscr = [System.Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes("& { $scr }"))
+    $arg = "-NoProfile -NoLogo -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $encscr"
+
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg
+    $trigger = New-ScheduledTaskTrigger -Daily -At $At
+
+    Unregister-ClusteredScheduledTask -Cluster $c.Name -TaskName SddcDiagnosticArchive -ErrorAction SilentlyContinue
+    Register-ClusteredScheduledTask -Cluster $c.Name -Action $action -Trigger $trigger -TaskName SddcDiagnosticArchive -TaskType ClusterWide -Description "Get-SddcDiagnosticInfo Periodic Diagnostic Archive Task"
+}
+
+#######
+#######
+#######
+##
+# Reporting
+##
+#######
+#######
+#######
 
 enum ReportLevelType
 {
@@ -3202,201 +3822,16 @@ New-Alias -Value Get-SddcDiagnosticInfo -Name Get-PCStorageDiagnosticInfo # Name
 New-Alias -Value Get-SddcDiagnosticInfo -Name getpcsdi # Shorthand for Get-PCStorageDiagnosticInfo
 New-Alias -Value Get-SddcDiagnosticInfo -Name gsddcdi # New alias
 
-New-Alias -Value Show-SddcDiagnosticReport -name Get-PCStorageReport
+New-Alias -Value Show-SddcDiagnosticReport -Name Get-PCStorageReport
 
-Export-ModuleMember -Alias * -Function Get-SddcDiagnosticInfo,Show-SddcDiagnosticReport
-# SIG # Begin signature block
-# MIIkAQYJKoZIhvcNAQcCoIIj8jCCI+4CAQExDzANBglghkgBZQMEAgEFADB5Bgor
-# BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAmo8dnqd8Z88pT
-# Z3UDYNBfhcpWlPRhW3Txk24yuxfdPqCCDYMwggYBMIID6aADAgECAhMzAAAAxOmJ
-# +HqBUOn/AAAAAADEMA0GCSqGSIb3DQEBCwUAMH4xCzAJBgNVBAYTAlVTMRMwEQYD
-# VQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNy
-# b3NvZnQgQ29ycG9yYXRpb24xKDAmBgNVBAMTH01pY3Jvc29mdCBDb2RlIFNpZ25p
-# bmcgUENBIDIwMTEwHhcNMTcwODExMjAyMDI0WhcNMTgwODExMjAyMDI0WjB0MQsw
-# CQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9u
-# ZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMR4wHAYDVQQDExVNaWNy
-# b3NvZnQgQ29ycG9yYXRpb24wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIB
-# AQCIirgkwwePmoB5FfwmYPxyiCz69KOXiJZGt6PLX4kvOjMuHpF4+nypH4IBtXrL
-# GrwDykbrxZn3+wQd8oUK/yJuofJnPcUnGOUoH/UElEFj7OO6FYztE5o13jhwVG87
-# 7K1FCTBJwb6PMJkMy3bJ93OVFnfRi7uUxwiFIO0eqDXxccLgdABLitLckevWeP6N
-# +q1giD29uR+uYpe/xYSxkK7WryvTVPs12s1xkuYe/+xxa8t/CHZ04BBRSNTxAMhI
-# TKMHNeVZDf18nMjmWuOF9daaDx+OpuSEF8HWyp8dAcf9SKcTkjOXIUgy+MIkogCy
-# vlPKg24pW4HvOG6A87vsEwvrAgMBAAGjggGAMIIBfDAfBgNVHSUEGDAWBgorBgEE
-# AYI3TAgBBggrBgEFBQcDAzAdBgNVHQ4EFgQUy9ZihM9gOer/Z8Jc0si7q7fDE5gw
-# UgYDVR0RBEswSaRHMEUxDTALBgNVBAsTBE1PUFIxNDAyBgNVBAUTKzIzMDAxMitj
-# ODA0YjVlYS00OWI0LTQyMzgtODM2Mi1kODUxZmEyMjU0ZmMwHwYDVR0jBBgwFoAU
-# SG5k5VAF04KqFzc3IrVtqMp1ApUwVAYDVR0fBE0wSzBJoEegRYZDaHR0cDovL3d3
-# dy5taWNyb3NvZnQuY29tL3BraW9wcy9jcmwvTWljQ29kU2lnUENBMjAxMV8yMDEx
-# LTA3LTA4LmNybDBhBggrBgEFBQcBAQRVMFMwUQYIKwYBBQUHMAKGRWh0dHA6Ly93
-# d3cubWljcm9zb2Z0LmNvbS9wa2lvcHMvY2VydHMvTWljQ29kU2lnUENBMjAxMV8y
-# MDExLTA3LTA4LmNydDAMBgNVHRMBAf8EAjAAMA0GCSqGSIb3DQEBCwUAA4ICAQAG
-# Fh/bV8JQyCNPolF41+34/c291cDx+RtW7VPIaUcF1cTL7OL8mVuVXxE4KMAFRRPg
-# mnmIvGar27vrAlUjtz0jeEFtrvjxAFqUmYoczAmV0JocRDCppRbHukdb9Ss0i5+P
-# WDfDThyvIsoQzdiCEKk18K4iyI8kpoGL3ycc5GYdiT4u/1cDTcFug6Ay67SzL1BW
-# XQaxFYzIHWO3cwzj1nomDyqWRacygz6WPldJdyOJ/rEQx4rlCBVRxStaMVs5apao
-# pIhrlihv8cSu6r1FF8xiToG1VBpHjpilbcBuJ8b4Jx/I7SCpC7HxzgualOJqnWmD
-# oTbXbSD+hdX/w7iXNgn+PRTBmBSpwIbM74LBq1UkQxi1SIV4htD50p0/GdkUieeN
-# n2gkiGg7qceATibnCCFMY/2ckxVNM7VWYE/XSrk4jv8u3bFfpENryXjPsbtrj4Ns
-# h3Kq6qX7n90a1jn8ZMltPgjlfIOxrbyjunvPllakeljLEkdi0iHv/DzEMQv3Lz5k
-# pTdvYFA/t0SQT6ALi75+WPbHZ4dh256YxMiMy29H4cAulO2x9rAwbexqSajplnbI
-# vQjE/jv1rnM3BrJWzxnUu/WUyocc8oBqAU+2G4Fzs9NbIj86WBjfiO5nxEmnL9wl
-# iz1e0Ow0RJEdvJEMdoI+78TYLaEEAo5I+e/dAs8DojCCB3owggVioAMCAQICCmEO
-# kNIAAAAAAAMwDQYJKoZIhvcNAQELBQAwgYgxCzAJBgNVBAYTAlVTMRMwEQYDVQQI
-# EwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3Nv
-# ZnQgQ29ycG9yYXRpb24xMjAwBgNVBAMTKU1pY3Jvc29mdCBSb290IENlcnRpZmlj
-# YXRlIEF1dGhvcml0eSAyMDExMB4XDTExMDcwODIwNTkwOVoXDTI2MDcwODIxMDkw
-# OVowfjELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcT
-# B1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEoMCYGA1UE
-# AxMfTWljcm9zb2Z0IENvZGUgU2lnbmluZyBQQ0EgMjAxMTCCAiIwDQYJKoZIhvcN
-# AQEBBQADggIPADCCAgoCggIBAKvw+nIQHC6t2G6qghBNNLrytlghn0IbKmvpWlCq
-# uAY4GgRJun/DDB7dN2vGEtgL8DjCmQawyDnVARQxQtOJDXlkh36UYCRsr55JnOlo
-# XtLfm1OyCizDr9mpK656Ca/XllnKYBoF6WZ26DJSJhIv56sIUM+zRLdd2MQuA3Wr
-# aPPLbfM6XKEW9Ea64DhkrG5kNXimoGMPLdNAk/jj3gcN1Vx5pUkp5w2+oBN3vpQ9
-# 7/vjK1oQH01WKKJ6cuASOrdJXtjt7UORg9l7snuGG9k+sYxd6IlPhBryoS9Z5JA7
-# La4zWMW3Pv4y07MDPbGyr5I4ftKdgCz1TlaRITUlwzluZH9TupwPrRkjhMv0ugOG
-# jfdf8NBSv4yUh7zAIXQlXxgotswnKDglmDlKNs98sZKuHCOnqWbsYR9q4ShJnV+I
-# 4iVd0yFLPlLEtVc/JAPw0XpbL9Uj43BdD1FGd7P4AOG8rAKCX9vAFbO9G9RVS+c5
-# oQ/pI0m8GLhEfEXkwcNyeuBy5yTfv0aZxe/CHFfbg43sTUkwp6uO3+xbn6/83bBm
-# 4sGXgXvt1u1L50kppxMopqd9Z4DmimJ4X7IvhNdXnFy/dygo8e1twyiPLI9AN0/B
-# 4YVEicQJTMXUpUMvdJX3bvh4IFgsE11glZo+TzOE2rCIF96eTvSWsLxGoGyY0uDW
-# iIwLAgMBAAGjggHtMIIB6TAQBgkrBgEEAYI3FQEEAwIBADAdBgNVHQ4EFgQUSG5k
-# 5VAF04KqFzc3IrVtqMp1ApUwGQYJKwYBBAGCNxQCBAweCgBTAHUAYgBDAEEwCwYD
-# VR0PBAQDAgGGMA8GA1UdEwEB/wQFMAMBAf8wHwYDVR0jBBgwFoAUci06AjGQQ7kU
-# BU7h6qfHMdEjiTQwWgYDVR0fBFMwUTBPoE2gS4ZJaHR0cDovL2NybC5taWNyb3Nv
-# ZnQuY29tL3BraS9jcmwvcHJvZHVjdHMvTWljUm9vQ2VyQXV0MjAxMV8yMDExXzAz
-# XzIyLmNybDBeBggrBgEFBQcBAQRSMFAwTgYIKwYBBQUHMAKGQmh0dHA6Ly93d3cu
-# bWljcm9zb2Z0LmNvbS9wa2kvY2VydHMvTWljUm9vQ2VyQXV0MjAxMV8yMDExXzAz
-# XzIyLmNydDCBnwYDVR0gBIGXMIGUMIGRBgkrBgEEAYI3LgMwgYMwPwYIKwYBBQUH
-# AgEWM2h0dHA6Ly93d3cubWljcm9zb2Z0LmNvbS9wa2lvcHMvZG9jcy9wcmltYXJ5
-# Y3BzLmh0bTBABggrBgEFBQcCAjA0HjIgHQBMAGUAZwBhAGwAXwBwAG8AbABpAGMA
-# eQBfAHMAdABhAHQAZQBtAGUAbgB0AC4gHTANBgkqhkiG9w0BAQsFAAOCAgEAZ/KG
-# pZjgVHkaLtPYdGcimwuWEeFjkplCln3SeQyQwWVfLiw++MNy0W2D/r4/6ArKO79H
-# qaPzadtjvyI1pZddZYSQfYtGUFXYDJJ80hpLHPM8QotS0LD9a+M+By4pm+Y9G6XU
-# tR13lDni6WTJRD14eiPzE32mkHSDjfTLJgJGKsKKELukqQUMm+1o+mgulaAqPypr
-# WEljHwlpblqYluSD9MCP80Yr3vw70L01724lruWvJ+3Q3fMOr5kol5hNDj0L8giJ
-# 1h/DMhji8MUtzluetEk5CsYKwsatruWy2dsViFFFWDgycScaf7H0J/jeLDogaZiy
-# WYlobm+nt3TDQAUGpgEqKD6CPxNNZgvAs0314Y9/HG8VfUWnduVAKmWjw11SYobD
-# HWM2l4bf2vP48hahmifhzaWX0O5dY0HjWwechz4GdwbRBrF1HxS+YWG18NzGGwS+
-# 30HHDiju3mUv7Jf2oVyW2ADWoUa9WfOXpQlLSBCZgB/QACnFsZulP0V3HjXG0qKi
-# n3p6IvpIlR+r+0cjgPWe+L9rt0uX4ut1eBrs6jeZeRhL/9azI2h15q/6/IvrC4Dq
-# aTuv/DDtBEyO3991bWORPdGdVk5Pv4BXIqF4ETIheu9BCrE/+6jMpF3BoYibV3FW
-# TkhFwELJm3ZbCoBIa/15n8G9bW1qyVJzEw16UM0xghXUMIIV0AIBATCBlTB+MQsw
-# CQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9u
-# ZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSgwJgYDVQQDEx9NaWNy
-# b3NvZnQgQ29kZSBTaWduaW5nIFBDQSAyMDExAhMzAAAAxOmJ+HqBUOn/AAAAAADE
-# MA0GCWCGSAFlAwQCAQUAoIHGMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwG
-# CisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAWTWEQ
-# OxCwaMlRVeEDeMKHFpirOC/DW4XhbAVPfRjUDTBaBgorBgEEAYI3AgEMMUwwSqAk
-# gCIATQBpAGMAcgBvAHMAbwBmAHQAIABXAGkAbgBkAG8AdwBzoSKAIGh0dHA6Ly93
-# d3cubWljcm9zb2Z0LmNvbS93aW5kb3dzMA0GCSqGSIb3DQEBAQUABIIBAC5B3J4f
-# XPANXTZMKdzXKpmZwkLm6/z8N9p+mZWxQKNB0SfrsQbBDOWZoZFm0CIvTBfJc/sb
-# IdPA3/XzfUvmhMYJIlqU1zvNm7giykj5EK9zoOGMk57kw0/ywqD+Kolk4V7OA6nn
-# XqAJqUQ6irTy4TLc6ElipqmQP4v688qbgr4xf30pvkVg14yyxRBppR6bPUm/1ePb
-# YDK/wlMu8Bl4SwP0c3Kb1VoitIr8X0f+V0lK0IY5ZLT5GUDBGAdhstji35GR1VQQ
-# bm6roJSKIb2j+V4fFDfiqn0ZtFuhbTXTl1BkHIetqsG3aIYTVRojbVOJ/Yo5xxpw
-# /3SSKBQmsHMDIy+hghNGMIITQgYKKwYBBAGCNwMDATGCEzIwghMuBgkqhkiG9w0B
-# BwKgghMfMIITGwIBAzEPMA0GCWCGSAFlAwQCAQUAMIIBOwYLKoZIhvcNAQkQAQSg
-# ggEqBIIBJjCCASICAQEGCisGAQQBhFkKAwEwMTANBglghkgBZQMEAgEFAAQgTwFf
-# C6Rrh/x0i0nIcqvvbXUktQKceyW2xccQZOdVje8CBlsC+zCN5hgTMjAxODA1MjQy
-# MDMzMTQuODM4WjAHAgEBgAIB9KCBt6SBtDCBsTELMAkGA1UEBhMCVVMxEzARBgNV
-# BAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jv
-# c29mdCBDb3Jwb3JhdGlvbjEMMAoGA1UECxMDQU9DMSYwJAYDVQQLEx1UaGFsZXMg
-# VFNTIEVTTjo3MERELTRCNUItNDU2ODElMCMGA1UEAxMcTWljcm9zb2Z0IFRpbWUt
-# U3RhbXAgU2VydmljZaCCDsswggZxMIIEWaADAgECAgphCYEqAAAAAAACMA0GCSqG
-# SIb3DQEBCwUAMIGIMQswCQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQ
-# MA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9u
-# MTIwMAYDVQQDEylNaWNyb3NvZnQgUm9vdCBDZXJ0aWZpY2F0ZSBBdXRob3JpdHkg
-# MjAxMDAeFw0xMDA3MDEyMTM2NTVaFw0yNTA3MDEyMTQ2NTVaMHwxCzAJBgNVBAYT
-# AlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYD
-# VQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xJjAkBgNVBAMTHU1pY3Jvc29mdCBU
-# aW1lLVN0YW1wIFBDQSAyMDEwMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
-# AQEAqR0NvHcRijog7PwTl/X6f2mUa3RUENWlCgCChfvtfGhLLF/Fw+Vhwna3PmYr
-# W/AVUycEMR9BGxqVHc4JE458YTBZsTBED/FgiIRUQwzXTbg4CLNC3ZOs1nMwVyaC
-# o0UN0Or1R4HNvyRgMlhgRvJYR4YyhB50YWeRX4FUsc+TTJLBxKZd0WETbijGGvmG
-# gLvfYfxGwScdJGcSchohiq9LZIlQYrFd/XcfPfBXday9ikJNQFHRD5wGPmd/9WbA
-# A5ZEfu/QS/1u5ZrKsajyeioKMfDaTgaRtogINeh4HLDpmc085y9Euqf03GS9pAHB
-# IAmTeM38vMDJRF1eFpwBBU8iTQIDAQABo4IB5jCCAeIwEAYJKwYBBAGCNxUBBAMC
-# AQAwHQYDVR0OBBYEFNVjOlyKMZDzQ3t8RhvFM2hahW1VMBkGCSsGAQQBgjcUAgQM
-# HgoAUwB1AGIAQwBBMAsGA1UdDwQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB8GA1Ud
-# IwQYMBaAFNX2VsuP6KJcYmjRPZSQW9fOmhjEMFYGA1UdHwRPME0wS6BJoEeGRWh0
-# dHA6Ly9jcmwubWljcm9zb2Z0LmNvbS9wa2kvY3JsL3Byb2R1Y3RzL01pY1Jvb0Nl
-# ckF1dF8yMDEwLTA2LTIzLmNybDBaBggrBgEFBQcBAQROMEwwSgYIKwYBBQUHMAKG
-# Pmh0dHA6Ly93d3cubWljcm9zb2Z0LmNvbS9wa2kvY2VydHMvTWljUm9vQ2VyQXV0
-# XzIwMTAtMDYtMjMuY3J0MIGgBgNVHSABAf8EgZUwgZIwgY8GCSsGAQQBgjcuAzCB
-# gTA9BggrBgEFBQcCARYxaHR0cDovL3d3dy5taWNyb3NvZnQuY29tL1BLSS9kb2Nz
-# L0NQUy9kZWZhdWx0Lmh0bTBABggrBgEFBQcCAjA0HjIgHQBMAGUAZwBhAGwAXwBQ
-# AG8AbABpAGMAeQBfAFMAdABhAHQAZQBtAGUAbgB0AC4gHTANBgkqhkiG9w0BAQsF
-# AAOCAgEAB+aIUQ3ixuCYP4FxAz2do6Ehb7Prpsz1Mb7PBeKp/vpXbRkws8LFZslq
-# 3/Xn8Hi9x6ieJeP5vO1rVFcIK1GCRBL7uVOMzPRgEop2zEBAQZvcXBf/XPleFzWY
-# JFZLdO9CEMivv3/Gf/I3fVo/HPKZeUqRUgCvOA8X9S95gWXZqbVr5MfO9sp6AG9L
-# MEQkIjzP7QOllo9ZKby2/QThcJ8ySif9Va8v/rbljjO7Yl+a21dA6fHOmWaQjP9q
-# Yn/dxUoLkSbiOewZSnFjnXshbcOco6I8+n99lmqQeKZt0uGc+R38ONiU9MalCpaG
-# pL2eGq4EQoO4tYCbIjggtSXlZOz39L9+Y1klD3ouOVd2onGqBooPiRa6YacRy5rY
-# DkeagMXQzafQ732D8OE7cQnfXXSYIghh2rBQHm+98eEA3+cxB6STOvdlR3jo+KhI
-# q/fecn5ha293qYHLpwmsObvsxsvYgrRyzR30uIUBHoD7G4kqVDmyW9rIDVWZeodz
-# OwjmmC3qjeAzLhIp9cAvVCch98isTtoouLGp25ayp0Kiyc8ZQU3ghvkqmqMRZjDT
-# u3QyS99je/WZii8bxyGvWbWu3EQ8l1Bx16HSxVXjad5XwdHeMMD9zOZN+w2/XU/p
-# nR4ZOC+8z1gFLu8NoFA12u8JJxzVs341Hgi62jbb01+P3nSISRIwggTYMIIDwKAD
-# AgECAhMzAAAAt/giFH0DIv76AAAAAAC3MA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNV
-# BAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4w
-# HAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xJjAkBgNVBAMTHU1pY3Jvc29m
-# dCBUaW1lLVN0YW1wIFBDQSAyMDEwMB4XDTE3MTAwMjIzMDA1MloXDTE5MDEwMjIz
-# MDA1MlowgbExCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYD
-# VQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xDDAK
-# BgNVBAsTA0FPQzEmMCQGA1UECxMdVGhhbGVzIFRTUyBFU046NzBERC00QjVCLTQ1
-# NjgxJTAjBgNVBAMTHE1pY3Jvc29mdCBUaW1lLVN0YW1wIFNlcnZpY2UwggEiMA0G
-# CSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC0hXZnLn7NAl1QCxJ8ZBM3LvZXoNoT
-# NaHigy1WSNDcr8jKPsVrrb5krZElwM+di1G43efi5k3O2ESPG18E+nrdaMJrnOof
-# +fCwXRLiF4XdTOXQI2gztw9EwVlYndf0dzdJZ4771xtmJJjBNA2GkAE7mJQPXAt+
-# SULHh8fIHrwP3xVwT8Ly4NNwJWqzln11U3Jm1NSsUM68ZdCqhxBuRH0E4rMvmcDw
-# xjnanzik7zq71oQ2eIu4HF/Cpv/he7RG2RKZ2uBwkom8YBEdiuUBoEubkXJSBzRL
-# 0QZRbLWaYDs9fYMzVV59kjNYkS83ffjOOms77ZsjDxAnajpcvuba2J47AgMBAAGj
-# ggEbMIIBFzAdBgNVHQ4EFgQUbWKvg3tEhnVxd9JNW4/uRC5gNWkwHwYDVR0jBBgw
-# FoAU1WM6XIoxkPNDe3xGG8UzaFqFbVUwVgYDVR0fBE8wTTBLoEmgR4ZFaHR0cDov
-# L2NybC5taWNyb3NvZnQuY29tL3BraS9jcmwvcHJvZHVjdHMvTWljVGltU3RhUENB
-# XzIwMTAtMDctMDEuY3JsMFoGCCsGAQUFBwEBBE4wTDBKBggrBgEFBQcwAoY+aHR0
-# cDovL3d3dy5taWNyb3NvZnQuY29tL3BraS9jZXJ0cy9NaWNUaW1TdGFQQ0FfMjAx
-# MC0wNy0wMS5jcnQwDAYDVR0TAQH/BAIwADATBgNVHSUEDDAKBggrBgEFBQcDCDAN
-# BgkqhkiG9w0BAQsFAAOCAQEAaaSp0uuxop+K5nske7Qn7t56ojZWiDVVHIfZvNv7
-# ARlMxECedM+O/zhwRwjhD/jfPHwwWsgg7052h1JaKDxnB6rxIWJkNvU3+Uobspja
-# SDaZFdRUpTTW3EDpzWhGs/+SIamgg+UUZC+JVYF5mMAd7b6YdMxUA+YAd823NNHe
-# wpUlEb3ok6QlafT9JZeOqu9TTzCOcL+p2WeOZ097deqx9beMd46h9KUypgf28Ppj
-# dSOcgWZRmviWVu6b4v445460NOIDGQDwBhoYOu1XMT/KxjnRP3ry5Tq++s4RI0Qe
-# gwpxKJ6jpYGQ/XaNhjhkch2wrLWC84eIjOqrU4KV2OH4aaGCA3YwggJeAgEBMIHh
-# oYG3pIG0MIGxMQswCQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4G
-# A1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMQww
-# CgYDVQQLEwNBT0MxJjAkBgNVBAsTHVRoYWxlcyBUU1MgRVNOOjcwREQtNEI1Qi00
-# NTY4MSUwIwYDVQQDExxNaWNyb3NvZnQgVGltZS1TdGFtcCBTZXJ2aWNloiUKAQEw
-# CQYFKw4DAhoFAAMVANXj0P5ZNuTCZFlJB+nXIozHReoNoIHBMIG+pIG7MIG4MQsw
-# CQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9u
-# ZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMQwwCgYDVQQLEwNBT0Mx
-# JzAlBgNVBAsTHm5DaXBoZXIgTlRTIEVTTjoyNjY1LTRDM0YtQzVERTErMCkGA1UE
-# AxMiTWljcm9zb2Z0IFRpbWUgU291cmNlIE1hc3RlciBDbG9jazANBgkqhkiG9w0B
-# AQUFAAIFAN6xGp0wIhgPMjAxODA1MjQxMTAzNTdaGA8yMDE4MDUyNTExMDM1N1ow
-# dzA9BgorBgEEAYRZCgQBMS8wLTAKAgUA3rEanQIBADAKAgEAAgICeAIB/zAHAgEA
-# AgIWEjAKAgUA3rJsHQIBADA2BgorBgEEAYRZCgQCMSgwJjAMBgorBgEEAYRZCgMB
-# oAowCAIBAAIDFuNgoQowCAIBAAIDHoSAMA0GCSqGSIb3DQEBBQUAA4IBAQAY5N3m
-# NnBC3h+HzySA1oOCdhbKJP/c70f0ffxYyJ2YRaOS6ohi4gTyiV9ixE7W3BHHeMpN
-# d5hWCkhQpT4GuE+Lgh/aNOwFwecI2P6JDk2HVnbQmYwP3QDAWKy9G5YtgzjUWbT0
-# hWhGXmcRYTsPx+GOgjBuJjZPZjL+v9seoVJkv6Xuz82hIw49+B5pwLHJhV89m5Rv
-# Pt8Y6vvg/JukmTdZjV+E/Hxz+aknj1UKCKg9CtGR2inn6UtLTXTR5KPVCJC5zPuq
-# MJiVyag0sLo1lzfLSnw1lWLRZK0CntBqERUKllywKVwW01jNWWjGCQDevolSZO2m
-# bdlU5UG6FHAMULwtMYIC9TCCAvECAQEwgZMwfDELMAkGA1UEBhMCVVMxEzARBgNV
-# BAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jv
-# c29mdCBDb3Jwb3JhdGlvbjEmMCQGA1UEAxMdTWljcm9zb2Z0IFRpbWUtU3RhbXAg
-# UENBIDIwMTACEzMAAAC3+CIUfQMi/voAAAAAALcwDQYJYIZIAWUDBAIBBQCgggEy
-# MBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAvBgkqhkiG9w0BCQQxIgQgpwL3
-# 0vAoBPjDH6EOOzknIlO9CBzZb8wolVTjW3Hu/kMwgeIGCyqGSIb3DQEJEAIMMYHS
-# MIHPMIHMMIGxBBTV49D+WTbkwmRZSQfp1yKMx0XqDTCBmDCBgKR+MHwxCzAJBgNV
-# BAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4w
-# HAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xJjAkBgNVBAMTHU1pY3Jvc29m
-# dCBUaW1lLVN0YW1wIFBDQSAyMDEwAhMzAAAAt/giFH0DIv76AAAAAAC3MBYEFEt9
-# dnJ92sjBLqqBgKx2kxgspv+SMA0GCSqGSIb3DQEBCwUABIIBAFm1fC/n4uYgUjQF
-# H6w51iEdWAlGCRBYqz8ubdlfifLenwKjeYAWrwSf/ydnfDomS6fUcNSgkZ4fUBpE
-# T1TCGeKx1C6gBADZYmXBs25z0yOSVAieeDOqS5SX9K3lSapy/8uT51dmHvnWjo3o
-# fNlxy3OVwjijfrg5GxXHzU7U+rLSrcS3giC+qYkuI+xxnPjcKoIHgNnU0MiXeesV
-# NBSmdZ9kDR8bzwQJx047/82YKxKiQeWwPuFk+QsjzOZTaDYMjCeDCI7Ef4pSSGKB
-# DLkZt9oj6AtG7lXUanb2PDEKD4BC6zwWzYeJieX9rrS4r6fg3+kthflqyTdJPIoo
-# IqY0lRY=
-# SIG # End signature block
+Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
+    'Show-SddcDiagnosticReport',
+    'Install-SddcDiagnosticModule',
+    'Confirm-SddcDiagnosticModule',
+    'Register-SddcDiagnosticArchiveJob',
+    'Unregister-SddcDiagnosticArchiveJob',
+    'Update-SddcDiagnosticArchive',
+    'Limit-SddcDiagnosticArchive',
+    'Show-SddcDiagnosticArchiveJob',
+    'Set-SddcDiagnosticArchiveJobParameters',
+    'Get-SddcDiagnosticArchiveJobParameters'
