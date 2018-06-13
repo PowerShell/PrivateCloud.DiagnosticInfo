@@ -443,37 +443,135 @@ function Get-FilteredNodeList(
 ##################################################>
 
 <# 
-    .SYNOPSIS 
-       Get state and diagnostic information for all software-defined datacenter (SDDC) features in a Windows Server 2016 cluster
+.SYNOPSIS 
+    Get state and diagnostic information for all Software-Defined DataCenter (SDDC) features in a Windows Server 2016 cluster.
 
-    .DESCRIPTION 
-       Get state and diagnostic information for all software-defined datacenter (SDDC) features in a Windows Server 2016 cluster
-       Run from one of the nodes of the cluster or specify a cluster name.
-       Results are saved to a folder (default C:\Users\<user>\HealthTest) for later review and replay.
+.DESCRIPTION 
+    Get state and diagnostic information for all Software-Defined DataCenter (SDDC) features in a Windows Server 2016 cluster.
+    Run from one of the nodes of the cluster or specify a cluster name, or specify a set of nodes directly. Results are saved
+    to a ZIP archive for later review and analysis.
 
-    .LINK 
-        To provide feedback and contribute visit https://github.com/PowerShell/PrivateCloud.Health
+.LINK 
+    To provide feedback and contribute visit https://github.com/PowerShell/PrivateCloud.Health
 
-    .EXAMPLE 
-       Get-SddcDiagnosticInfo
+.EXAMPLE 
+    Get-SddcDiagnosticInfo
  
-       Uses the default temporary working folder at C:\Users\<user>\HealthTest
-       Saves the zipped results at C:\Users\<user>\HealthTest-<cluster>-<date>.ZIP
+    Targets the cluster the local computer is a member of.
+    Uses the default temporary working folder at $env:USERPROFILE\HealthTest
+    Saves the zipped results at $env:USERPROFILE\HealthTest-<cluster>-<date>.ZIP
 
-    .EXAMPLE 
-       Get-SddcDiagnosticInfo -WriteToPath C:\Test
+.EXAMPLE 
+    Get-SddcDiagnosticInfo -WriteToPath C:\Test
  
-       Uses the specified folder as the temporary working folder.
+    Uses the specified folder as the temporary working folder. This does not change the location of
+    the zipped results.
 
-    .EXAMPLE 
-       Get-SddcDiagnosticInfo -ClusterName Cluster1
+.EXAMPLE 
+    Get-SddcDiagnosticInfo -ClusterName Cluster1
  
-       Targets the cluster specified.
+    Targets the specified cluster, Cluster1.
 
-    .EXAMPLE 
-       Get-SddcDiagnosticInfo -ReadFromPath C:\Test
+.EXAMPLE 
+    Get-SddcDiagnosticInfo -ReadFromPath C:\Test.ZIP
  
-       Results are obtained from the specified folder, not from a live cluster.
+    Display the summary health report from the capture located in the given ZIP. The content is
+    unzipped to a directory (minus the .ZIP extension) and remains after the summary health report
+    is shown.
+
+    In this example, C:\Test would be created from C:\Test.ZIP. If the .ZIP path is specified and
+    the unzipped directory is present, the directory will be reused without re-unzipping the
+    content.
+
+    EQUIVALENT: Show-SddcDiagnosticReport -Report Summary -Path <ZIP or Directory>
+
+    The file 0_CloudHealthSummary.log in the capture contains the summary report at the time the
+    capture was taken. Running the report again is a re-analysis of the content, which may reflect
+    new triage if PrivateCloud.DiagnosticInfo has been updated in the interim.
+
+.EXAMPLE
+    Get-SddcDiagnosticInfo -ReadFromPath C:\Test
+
+    Display the summary health report from the capture located in the given directory, which should
+    be an unzipped capture.
+
+.PARAMETER ReadFromPath
+Path to read content from for summary health report generation.
+
+.PARAMETER WriteToPath
+Temporary path to stage capture content to, prior to ZIP creation.
+
+.PARAMETER ClusterName
+Cluster to capture content from.
+
+.PARAMETER Nodelist
+List of nodes to capture content from.
+
+.PARAMETER HoursOfEvents
+For sources which support it, limit log and event data to the prior number of hours. By default,
+all available data is captured.
+
+.PARAMETER ZipPrefix
+Path for the resulting ZIP file: -<cluster>-<timestamp>.ZIP will be appended.
+
+.PARAMETER MonitoringMode
+Run in a limited monitoring mode (deprecated)
+
+.PARAMETER ExpectedNodes
+Specify the expected number of nodes. A summary warning will be issued if a different number is
+present.
+
+.PARAMETER ExpectedNetworks
+Specify the expected number of networks. A summary warning will be issued if a different number is
+present.
+
+.PARAMETER ExpectedVolumes
+Specify the expected number of volumes. A summary warning will be issued if a different number is
+present.
+
+.PARAMETER ExpectedDedupVolumes
+Specify the expected number of dedeuplicated volumes. A summary warning will be issued if a
+different number is present.
+
+.PARAMETER ExpectedPhysicalDisks
+Specify the expected number of physical disks. A summary warning will be issued if a different
+number is present.
+
+.PARAMETER ExpectedPools
+Specify the expected number of storage pools. A summary warning will be issued if a different
+number is present.
+
+.PARAMETER ExpectedEnclosures
+Specify the expected number of storage enclosures. A summary warning will be issued if a different
+number is present.
+
+.PARAMETER ProcessCounter
+Process the performance counters into a summary report (deprecated)
+
+.PARAMETER PerfSamples
+Specify the number of performance counter samples to capture (in seconds, 1/s).
+
+.PARAMETER IncludeAssociations
+Include additional object association information (deprecated)
+
+.PARAMETER IncludeDumps
+Include minidumps and live kernel report dumps.
+
+.PARAMETER IncludeGetNetView
+Include content from the Get-NetView (NetDiagnosticInfo module) command, if present.
+
+.PARAMETER IncludeHealthReport
+Include an additional health report (deprecated)
+
+.PARAMETER IncludeLiveDump
+Include a live dump of the target systems (not valid in S2D clusters)
+
+.PARAMETER IncludePerformance
+Include a performance counter capture.
+
+.PARAMETER IncludeReliabilityCounters
+Include Storage Reliability counters. This may incur a short but observable latency cost on the
+physical disks due to varying overhead in their internal handling of SMART queries.
 
 #> 
 
@@ -482,101 +580,155 @@ function Get-SddcDiagnosticInfo
     # aliases usage in this module is idiomatic, only using defaults
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
 
-    [CmdletBinding(DefaultParameterSetName="Write")]
+    [CmdletBinding(DefaultParameterSetName="WriteC")]
     [OutputType([String])]
 
     param(
-        [parameter(ParameterSetName="Write", Position=0, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteC", Position=0, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Position=0, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Position=0, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Position=0, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $WriteToPath = $($env:userprofile + "\HealthTest\"),
 
-        [parameter(ParameterSetName="Write", Position=1, Mandatory=$false)]
+        [parameter(ParameterSetName="M", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteC", Position=1, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Position=1, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $ClusterName = ".",
         
-        [parameter(ParameterSetName="Write", Position=1, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Position=1, Mandatory=$true)]
+        [parameter(ParameterSetName="WriteNP", Position=1, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
         [string[]] $Nodelist = @(),
-        
-        [parameter(ParameterSetName="Write", Position=2, Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [string] $ZipPrefix = $($env:userprofile + "\HealthTest"),
 
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [bool] $IncludePerformance = $true,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [bool] $IncludeReliabilityCounters = $false,
-        
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [bool] $IncludeGetNetView = $false,
-
-        [parameter(Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [switch] $MonitoringMode,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedNodes,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedNetworks,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedVolumes,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedDedupVolumes,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedPhysicalDisks,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedPools,
-    
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $ExpectedEnclosures,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $HoursOfEvents = -1,
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [int] $PerfSamples = 10,
-        
         [parameter(ParameterSetName="Read", Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
         [string] $ReadFromPath = "",
-
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        
+        [parameter(ParameterSetName="WriteCP", Mandatory=$true)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
-        [bool] $IncludeDumps = $false,
+        [bool] $IncludePerformance = $true,
 
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $PerfSamples = 10,
+
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $ProcessCounter = $false,
+        
+        [parameter(ParameterSetName="M", Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [switch] $MonitoringMode,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $HoursOfEvents = -1,
+
+        [parameter(ParameterSetName="WriteC", Position=2, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Position=2, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Position=2, Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Position=2, Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string] $ZipPrefix = $($env:userprofile + "\HealthTest"),
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedNodes,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedNetworks,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedVolumes,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedDedupVolumes,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedPhysicalDisks,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedPools,
+    
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [int] $ExpectedEnclosures,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [bool] $IncludeAssociations = $false,
 
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $IncludeDumps = $false,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $IncludeGetNetView = $false,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [bool] $IncludeHealthReport = $false,
 
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [bool] $ProcessCounter = $false,
+        [bool] $IncludeLiveDump = $false,
 
-        [parameter(ParameterSetName="Write", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [bool] $IncludeLiveDump = $false
+        [bool] $IncludeReliabilityCounters = $false
         )
 
     #
