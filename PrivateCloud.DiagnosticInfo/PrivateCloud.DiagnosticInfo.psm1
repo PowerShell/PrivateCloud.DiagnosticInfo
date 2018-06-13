@@ -2394,6 +2394,29 @@ function Show-SddcDiagnosticArchiveJob
     Write-Host "Target days of archive       : $Days"
     Write-Host "Capture to path              : $Path"
     Write-Host "Capture at                   : $($At.ToString("h:mm tt"))"
+
+    $Nodes = Get-FilteredNodeList -Cluster $Cluster
+
+    Write-Host "$('-'*20)`nPer Node Report"
+    $j = $Nodes | sort Name |% {
+        icm $_.Name -AsJob {
+
+            Import-Module PrivateCloud.DiagnosticInfo
+
+            $Path = $null
+            Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
+
+            dir $Path\*.ZIP -ErrorAction SilentlyContinue | measure -Sum Length
+        }   
+    }
+
+    $null = $j | Wait-Job
+    $j | sort Location |% {
+
+        $m = Receive-Job $_
+        Remove-Job $_
+        Write-Host "Node $($_.Location): $($m.Count) ZIPs which are $('{0:0.00} MiB' -f ($m.Sum/1MB))"
+    }
 }
 
 function Unregister-SddcDiagnosticArchiveJob
