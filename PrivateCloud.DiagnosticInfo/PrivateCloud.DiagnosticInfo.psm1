@@ -2466,7 +2466,28 @@ function Register-SddcDiagnosticArchiveJob
         $null = mkdir -Force $Path -ErrorAction SilentlyContinue
 
         $LogFile = Join-Path $Path "SddcDiagnosticArchive.log"
+
+        # trim log
+        $ntail = $null
+        $limit = 10MB
+        if (($l = gi $LogFile -ErrorAction SilentlyContinue) -and
+            $l.Length -gt $limit) {
+
+            $LogFileTmp = Join-Path $Path "SddcDiagnosticArchive.log.tmp"
+
+            # note: transcripts are produced in plain ASCII
+            # estimate the #lines in the tail of the file which ~10MB allows for
+            $ntail = [int] ((gc $LogFile | measure).Count * ($limit/$l.length))
+            gc $LogFile -Tail $ntail | Out-File -Encoding ascii -Width 9999 $LogFileTmp
+            del $LogFile
+            move $LogFileTmp $LogFile
+        }
+
         Start-Transcript -Path $LogFile -Append
+
+        if ($ntail) {
+            Write-Output "Truncated $LogFile to $ntail lines ($('{0:0.00} MiB' -f ($limit/1MB)) limit)"
+        }
 
         if (-not (Get-Module $Module)) {
             Write-Output "Module $Module not installed - exiting, cannot capture"
