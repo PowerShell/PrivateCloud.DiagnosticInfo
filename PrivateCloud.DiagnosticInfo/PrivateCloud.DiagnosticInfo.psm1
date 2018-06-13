@@ -309,6 +309,23 @@ $CommonFunc = {
     {
         $d.ToString('yyyyMMdd-HHmm')
     }
+
+    # helper for testing/emitting feedback on module presence
+    # use this on icm to remote nodes
+    # this will be obsolete if/when we can integrate with add-node
+    function Test-SddcModulePresence
+    {
+        # note that we can't pull from the global
+        $Module = 'PrivateCloud.DiagnosticInfo'
+        $m = Get-Module $Module
+
+        if (-not $m) {
+            Write-Warning "Node $($env:COMPUTERNAME) does not have the $Module module installed for Sddc Diagnostic Archive. Please 'Install-SddcDiagnosticModule -Node $($env:COMPUTERNAME)' to address."
+            $false
+        } else {
+            $true
+        }
+    }
 }
 
 # evaluate into the main session
@@ -344,6 +361,34 @@ function Check-ExtractZip(
 
     return $Path
 }
+
+#
+# Utility wrapper for copyout jobs which allows seperating ones which
+# delete temporary/gathered content and ones which gather persistent
+# content (like archive logs)
+#
+
+function Start-CopyJob(
+    [string] $Path,
+    [switch] $Delete,
+    [object[]] $j
+    )
+{
+    $j |% {
+        $logs = Receive-Job $_
+
+        start-job -Name "Copy $($_.Name) $($_.Location)" -InitializationScript $CommonFunc {
+
+            $using:logs |% {
+                Copy-Item -Recurse $_ (Get-NodePath $using:Path $_.PsComputerName) -Force -ErrorAction SilentlyContinue -Verbose
+                if ($using:Delete) {
+                    Remove-Item -Recurse $_ -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
+}
+
 
 #
 # Makes a list of cluster nodes or equivalent property-containing objects (Name/State)
@@ -994,11 +1039,32 @@ function Get-SddcDiagnosticInfo
     }
 
     ####
+    # Begin paralellized captures.
     # Start accumulating static jobs which self-contain their gather.
     # These are pulled in close to the end. Consider how to regularize this down the line.
     ####
     $JobStatic = @()
     $JobCopyOut = @()
+    $JobCopyOutNoDelete = @()
+
+    if ($Cluster -and (Get-ClusteredScheduledTask -Cluster $Cluster -TaskName SddcDiagnosticArchive)) {
+
+        Show-Update "Start gather of Sddc Diagnostic Archives ..."
+        $JobCopyOutNoDelete += icm $ClusterNodes.Name -AsJob {
+
+            Import-Module $using:Module -ErrorAction SilentlyContinue
+
+            # import common functions
+            . ([scriptblock]::Create($using:CommonFunc))
+
+            if (Test-SddcModulePresence) {
+
+                $Path = $null
+                Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
+                Get-AdminSharePathFromLocal $env:COMPUTERNAME $Path
+            }
+        }
+    }
 
     Show-Update "Start gather of cluster configuration ..."
 
@@ -1613,31 +1679,21 @@ function Get-SddcDiagnosticInfo
     # Now receive the jobs requiring remote copyout
     ####
 
-    if ($JobCopyOut.Count) {
+    if ($JobCopyOut.Count -or $JobCopyOutNoDelete.Count) {
         Show-Update "Completing jobs with remote copyout ..." -ForegroundColor Green
-        Show-WaitChildJob $JobCopyOut 120
+        Show-WaitChildJob ($JobCopyOut + $JobCopyOutNoDelete) 120
         Show-Update "Starting remote copyout ..."
 
         # keep parallelizing on receive at the individual node/child job level
         $JobCopy = @()
-        $JobCopyOut.ChildJobs |% {
-            $logs = Receive-Job $_
-
-            $JobCopy += start-job -Name "Copy $($_.Name) $($_.Location)" -InitializationScript $CommonFunc {
-
-                $using:logs |% {
-                    Copy-Item -Recurse $_  (Get-NodePath $using:Path $_.PsComputerName) -Force -ErrorAction SilentlyContinue -Verbose
-                    Remove-Item -Recurse $_ -Force -ErrorAction SilentlyContinue
-                }
-            }
-        }
-
+        if ($JobCopyOut.Count) { $JobCopy += Start-CopyJob $Path -Delete $JobCopyOut.ChildJobs }
+        if ($JobCopyOutNoDelete.Count) { $JobCopy += Start-CopyJob $Path $JobCopyOutNoDelete.ChildJobs }
         Show-WaitChildJob $JobCopy 30
         Remove-Job $JobCopyOut
         Remove-Job $JobCopy
-
-        Show-Update "All remote copyout complete" -ForegroundColor Green
     }
+
+    Show-Update "All remote copyout complete" -ForegroundColor Green
 
     ####
     # Now receive the static jobs
@@ -2341,7 +2397,7 @@ function Set-SddcDiagnosticArchiveJobParameters
         [string] $Cluster = '.',
         
         [parameter(Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
+        [ValidateRange(1,365)]
         [int] $Days,
 
         [parameter(Mandatory=$false)]
@@ -2355,11 +2411,20 @@ function Set-SddcDiagnosticArchiveJobParameters
 
     $c = Get-Cluster -Name $Cluster -ErrorAction Stop
 
+    # note: we could rewrite paths which are prefixed with recognizably $env:systemroot and other
+    # canonical paths with macros that we can expand at the destination node. strictly speaking these are
+    # not guaranteed to be identical though its extremely unlikely we'll find that condition in practice.
+
+
     if ($PSBoundParameters.ContainsKey('Days')) {
         $c | Set-ClusterParameter -Name SddcDiagnosticArchiveDays -Create -Value $Days -ErrorAction Stop
     }
     if ($PSBoundParameters.ContainsKey('Path')) {
-        $c | Set-ClusterParameter -Name SddcDiagnosticArchivePath -Create -Value $Path -ErrorAction Stop
+        if ($Path[1] -ne ':') {
+            Write-Error 'Path must be specified as an absolute path (<driveletter>:\some\path)'
+        } else {
+            $c | Set-ClusterParameter -Name SddcDiagnosticArchivePath -Create -Value $Path -ErrorAction Stop
+        }
     }
     if ($PSBoundParameters.ContainsKey('Size')) {
         $c | Set-ClusterParameter -Name SddcDiagnosticArchiveSize -Create -Value $Size -ErrorAction Stop
@@ -2401,12 +2466,18 @@ function Show-SddcDiagnosticArchiveJob
     $j = $Nodes | sort Name |% {
         icm $_.Name -AsJob {
 
-            Import-Module PrivateCloud.DiagnosticInfo
+            Import-Module $using:Module -ErrorAction SilentlyContinue
 
-            $Path = $null
-            Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
+            # import common functions
+            . ([scriptblock]::Create($using:CommonFunc))
 
-            dir $Path\*.ZIP -ErrorAction SilentlyContinue | measure -Sum Length
+            if (Test-SddcModulePresence) {
+
+                $Path = $null
+                Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
+
+                dir $Path\*.ZIP -ErrorAction SilentlyContinue | measure -Sum Length
+            }
         }   
     }
 
