@@ -375,20 +375,39 @@ function Start-CopyJob(
     )
 {
     $j |% {
-        $logs = Receive-Job $_
 
-        start-job -Name "Copy $($_.Name) $($_.Location)" -InitializationScript $CommonFunc {
+        $parent = $_
+        $parent.ChildJobs |% {
 
-            $using:logs |% {
-                Copy-Item -Recurse $_ (Get-NodePath $using:Path $_.PsComputerName) -Force -ErrorAction SilentlyContinue -Verbose
-                if ($using:Delete) {
-                    Remove-Item -Recurse $_ -Force -ErrorAction SilentlyContinue
+            $logs = Receive-Job $_
+
+            # avoid the job if not needed, no content
+            if (@($logs).Count) {
+
+                # create/use a specific job destination if present
+                # ex: "foo" -> \node_xxx\foo\<rest> v. the default \node_xxx\<rest>
+                $Destination = (Get-NodePath $Path $_.Location)
+                if (Get-Member -InputObject $_ -Name Destination) {
+                    $Destination = Join-Path $Destination $_.Destination
+                    if (-not (Test-Path $Destination)) {
+                        $null = md $Destination -Force -ErrorAction Continue
+                    }
+                }
+
+                start-job -Name "Copy $($parent.Name) $($_.Location)" -InitializationScript $CommonFunc {
+
+                    $using:logs |% {
+                        # allow errors to propagte for triage
+                        Copy-Item -Recurse $_ $using:Destination -Force -ErrorAction Continue
+                        if ($using:Delete) {
+                            Remove-Item -Recurse $_ -Force -ErrorAction Continue
+                        }
+                    }
                 }
             }
         }
     }
 }
-
 
 #
 # Makes a list of cluster nodes or equivalent property-containing objects (Name/State)
@@ -397,7 +416,7 @@ function Start-CopyJob(
 
 function Get-FilteredNodeList(
     [string] $Cluster,
-    [string[]] $Nodes
+    [string[]] $Nodes = @()
 )
 {
     $FilteredNodes = @()
@@ -508,8 +527,15 @@ Cluster to capture content from.
 List of nodes to capture content from.
 
 .PARAMETER HoursOfEvents
-For sources which support it, limit log and event data to the prior number of hours. By default,
-all available data is captured.
+For sources which support it, limit log and event data to the prior number of hours. By default
+all available data is captured (-1).
+
+.PARAMETER DaysOfArchive
+Limit the number of days of Sddc Diagnostic Archive captured. Only applicable if Sddc Diagnostic
+Archive is active in the target cluster. By default 8 days are captured.
+
+Specify -1 to capture the complete archive - NOTE: this may be very large.
+Specify 0 to disable capture of the archive.
 
 .PARAMETER ZipPrefix
 Path for the resulting ZIP file: -<cluster>-<timestamp>.ZIP will be appended.
@@ -580,6 +606,15 @@ function Get-SddcDiagnosticInfo
     # aliases usage in this module is idiomatic, only using defaults
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
 
+    #
+    # Parameter sets:
+    #    Read - backcompat alias for Show Summary report
+    #    Write(C|N)[P] -
+    #        capture with -Cluster or -Nodelist
+    #        with or without -IncludePerformance and counter options
+    #    M - monitoring mode
+    #
+
     [CmdletBinding(DefaultParameterSetName="WriteC")]
     [OutputType([String])]
 
@@ -609,7 +644,7 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="WriteCP", Mandatory=$true)]
         [parameter(ParameterSetName="WriteNP", Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
-        [bool] $IncludePerformance = $true,
+        [switch] $IncludePerformance = $true,
 
         [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
         [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
@@ -631,6 +666,13 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [int] $HoursOfEvents = -1,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
+        [ValidateRange(-1,365)]
+        [int] $DaysOfArchive = 8,
 
         [parameter(ParameterSetName="WriteC", Position=2, Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Position=2, Mandatory=$false)]
@@ -693,42 +735,42 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
         [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [bool] $IncludeAssociations = $false,
+        [switch] $IncludeAssociations = $false,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
         [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [bool] $IncludeDumps = $false,
+        [switch] $IncludeDumps = $false,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
         [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [bool] $IncludeGetNetView = $false,
+        [switch] $IncludeGetNetView = $false,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
         [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [bool] $IncludeHealthReport = $false,
+        [switch] $IncludeHealthReport = $false,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
         [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [bool] $IncludeLiveDump = $false,
+        [switch] $IncludeLiveDump = $false,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
         [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [bool] $IncludeReliabilityCounters = $false
+        [switch] $IncludeReliabilityCounters = $false
         )
 
     #
@@ -1188,22 +1230,91 @@ function Get-SddcDiagnosticInfo
     $JobCopyOut = @()
     $JobCopyOutNoDelete = @()
 
-    if ($Cluster -and (Get-ClusteredScheduledTask -Cluster $Cluster -TaskName SddcDiagnosticArchive)) {
+    # capture Sddc Diagnostic Archive if requested and active on the target cluster
+    if ($Cluster -and
+        (Get-ClusteredScheduledTask -Cluster $Cluster -TaskName SddcDiagnosticArchive)) {
 
-        Show-Update "Start gather of Sddc Diagnostic Archives ..."
-        $JobCopyOutNoDelete += icm $ClusterNodes.Name -AsJob {
+        if ($DaysOfArchive -gt 0) {
 
-            Import-Module $using:Module -ErrorAction SilentlyContinue
+            Show-Update "Start gather of Sddc Diagnostic Archives ..."
 
-            # import common functions
-            . ([scriptblock]::Create($using:CommonFunc))
+            $JobStatic += Start-Job -Name 'Sddc Diagnostic Archive Report' {
 
-            if (Test-SddcModulePresence) {
+                Import-Module $using:Module -ErrorAction SilentlyContinue
 
-                $Path = $null
-                Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
-                Get-AdminSharePathFromLocal $env:COMPUTERNAME $Path
+                # capture state of the job regardless of archive capture
+                $o = (Join-Path $using:Path SddcDiagnosticArchiveJob.txt)
+                Show-SddcDiagnosticArchiveJob -Cluster $using:Cluster > $o
+
+                # use confirm to capture the version validation warnings for replay - note that
+                # we self-document the version producing the report, so we only need to look for/capture
+                # warnings to highlight variance
+                $o = (Join-Path $using:Path SddcDiagnosticArchiveJobWarn.txt)
+                $null = Confirm-SddcDiagnosticModule -Cluster $using:Cluster 3> $o
             }
+
+            $j = icm $ClusterNodes.Name -AsJob -JobName SddcDiagnosticArchive {
+
+                Import-Module $using:Module -ErrorAction SilentlyContinue
+
+                # note we only receive module exports from the import, must ...
+                # import common functions
+                . ([scriptblock]::Create($using:CommonFunc))
+
+                if (Test-SddcModulePresence) {
+
+                    # generate the archive report on the node chosen as accessnode, for single instancing
+                    if ($env:COMPUTERNAME -eq $using:AccessNode) {
+
+                    }
+
+
+                    $Path = $null
+                    Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
+
+                    # emit 
+                    & {
+                        # filter archive?
+                        if ($using:DaysOfArchive -ne -1) {
+
+                            # get archive in increasing order of time (our timestamp is lexically sortable)
+                            $Archive = dir $Path\*.ZIP | sort -Descending
+                            if ($Archive.Count -gt $using:DaysOfArchive) {
+                                $Archive = $Archive[0..$($using:DaysOfArchive - 1)]
+                            }
+
+                            $Archive.FullName
+                            (dir $Path\*.log).FullName
+
+                        } else {
+
+                            # get entire archive
+                            # note: we use the wildcard so that we copy the content of the directory
+                            # to the appropriate destination. the path itself is configurable.
+                            # see comment below.
+                            Join-Path (gi $Path).FullName "*"
+                        }
+                    } |% {
+
+                        Get-AdminSharePathFromLocal $env:COMPUTERNAME $_
+                    }
+                }
+            }
+        
+            # since the archive directory is configurable, we always need to specify the
+            # destination within the capture - it may be \some\dir\foo, but we want it to be 
+            # node_xxx\SddcDiagnosticArchive in the capture.
+            #
+            # we add a member to the jobs to indicate this. also rename them to indicate the
+            # activity in these jobs, so we report runtime in a more useful way.
+            $j.ChildJobs |% {
+                $_ | Add-Member -NotePropertyName Destination -NotePropertyValue SddcDiagnosticArchive   
+            }
+
+            # and add to the copyout-nodelete set
+            # we do not want to scrub away the archive, unlike content we generate on the target node
+            # and then do want to delete after capture.
+            $JobCopyOutNoDelete += $j
         }
     }
 
@@ -1827,10 +1938,14 @@ function Get-SddcDiagnosticInfo
 
         # keep parallelizing on receive at the individual node/child job level
         $JobCopy = @()
-        if ($JobCopyOut.Count) { $JobCopy += Start-CopyJob $Path -Delete $JobCopyOut.ChildJobs }
-        if ($JobCopyOutNoDelete.Count) { $JobCopy += Start-CopyJob $Path $JobCopyOutNoDelete.ChildJobs }
+        if ($JobCopyOut.Count) { $JobCopy += Start-CopyJob $Path -Delete $JobCopyOut }
+        if ($JobCopyOutNoDelete.Count) { $JobCopy += Start-CopyJob $Path $JobCopyOutNoDelete }
         Show-WaitChildJob $JobCopy 30
+
+        # receive any copyout errors for logging/triage
+        Receive-Job $JobCopy
         Remove-Job $JobCopyOut
+        Remove-Job $JobCopyOutNoDelete
         Remove-Job $JobCopy
     }
 
@@ -2135,7 +2250,7 @@ function Get-SddcDiagnosticInfo
         }
     }    
 
-    Show-Update "GATHERS COMPLETE ($([int]((Get-Date) - $TodayDate).TotalSeconds)s)" -ForegroundColor Green
+    Show-Update "GATHERS COMPLETE ($(((Get-Date) - $TodayDate).ToString("m'm's\.f's'")))" -ForegroundColor Green
 
     # Stop Transcript
     Stop-Transcript
@@ -2178,7 +2293,7 @@ function Get-SddcDiagnosticInfo
     Show-Update "Cleaning up CimSessions"
     Get-CimSession | Remove-CimSession
 
-    Show-Update "COMPLETE ($([int]((Get-Date) - $TodayDate).TotalSeconds)s)" -ForegroundColor Green
+    Show-Update "COMPLETE ($(((Get-Date) - $TodayDate).ToString("m'm's\.f's'")))" -ForegroundColor Green
 }
 
 #######
@@ -2365,9 +2480,9 @@ function Confirm-SddcDiagnosticModule
 {
     [CmdletBinding()]
     param(
-        [parameter(ParameterSetName="Cluster", Mandatory=$true)]
+        [parameter(ParameterSetName="Cluster", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [string] $Cluster,
+        [string] $Cluster = '.',
 
         [parameter(ParameterSetName="Node", Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -2391,10 +2506,10 @@ function Confirm-SddcDiagnosticModule
     }
 
     $Nodes.Name |? { $_ -notin $clusterModules.PsComputerName } |% {
-        Write-Error "Node $_ does not have the $Module module. Please 'Install-SddcDiagnosticModule -Node $_' to address."
+        Write-Warning "Node $_ does not have the $Module module. Please 'Install-SddcDiagnosticModule -Node $_' to address."
     }
     $clusterModules |? { $thisModule.Version -gt $_.Version } |% {
-        Write-Error "Node $($_.PsComputerName) has an older version of the $Module module ($($_.Version) < $($thisModule.Version)). Please 'Install-SddcDiagnosticModule -Node $_' to address."
+        Write-Warning "Node $($_.PsComputerName) has an older version of the $Module module ($($_.Version) < $($thisModule.Version)). Please 'Install-SddcDiagnosticModule -Node $_' to address."
     }
     $clusterModules |? { $thisModule.Version -lt $_.Version } |% {
         Write-Warning "Node $($_.PsComputerName) has an newer version of the $Module module ($($_.Version) > $($thisModule.Version)). Consider installing the updated module on the local system ($env:COMPUTERNAME) and updating the cluster."
@@ -2784,14 +2899,14 @@ function Show-SddcDiagnosticArchiveJob
 
     Get-SddcDiagnosticArchiveJobParameters -Cluster $c.Name -Days ([ref] $Days) -Path ([ref] $Path) -Size ([ref] $Size) -At ([ref] $At)
 
-    Write-Host "Target archive size per node : $('{0:0.00} MiB' -f ($Size/1MB))"
-    Write-Host "Target days of archive       : $Days"
-    Write-Host "Capture to path              : $Path"
-    Write-Host "Capture at                   : $($At.ToString("h:mm tt"))"
+    Write-Output "Target archive size per node : $('{0:0.00} MiB' -f ($Size/1MB))"
+    Write-Output "Target days of archive       : $Days"
+    Write-Output "Capture to path              : $Path"
+    Write-Output "Capture at                   : $($At.ToString("h:mm tt"))"
 
     $Nodes = Get-FilteredNodeList -Cluster $Cluster
 
-    Write-Host "$('-'*20)`nPer Node Report"
+    Write-Output "$('-'*20)`nPer Node Report"
     $j = $Nodes | sort Name |% {
         icm $_.Name -AsJob {
 
@@ -2815,7 +2930,12 @@ function Show-SddcDiagnosticArchiveJob
 
         $m = Receive-Job $_
         Remove-Job $_
-        Write-Host "Node $($_.Location): $($m.Count) ZIPs which are $('{0:0.00} MiB' -f ($m.Sum/1MB))"
+
+        # note we will not have a measurement if the remote node lacks the module
+        # a warning will have already been passed to the output in this case
+        if ($m) {
+            Write-Output "Node $($_.Location): $($m.Count) ZIPs which are $('{0:0.00} MiB' -f ($m.Sum/1MB))"
+        }
     }
 }
 
@@ -3743,7 +3863,7 @@ function Get-SummaryReport
     ##### Phase 1 Summary
     #####
 
-    Show-Update "<<< Phase 1 - Storage Health Overview >>>`n" -ForegroundColor Cyan
+    Show-Update "<<< Phase 1 - Health Overview >>>`n" -ForegroundColor Cyan
 
     Write-Host ("Date of capture : " + $TodayDate)
     $ClusterNodes = Import-Clixml (Join-Path $Path "GetClusterNode.XML")
@@ -3764,6 +3884,23 @@ function Get-SummaryReport
         Write-Host "Cluster Name                  : Cluster was unavailable"
         Write-Host "S2D Enabled                   : Cluster was unavailable"
     }
+
+    # Sddc Diagnostic Archive status
+    # re-emit the warnings as such so they are well-distinguished
+    $f = Join-Path $Path SddcDiagnosticArchiveJob.txt
+    if (gi $f) {
+        Write-Host "$("-"*3)`nSddc Diagnostic Archive Status`n"
+        gc $f
+        $f = Join-Path $Path SddcDiagnosticArchiveJobWarn.txt
+        if ((gi $f).Length) {
+            gc $f |% { Show-Warning $_ }
+        }
+        Write-Host $("-"*3)
+    }
+
+    #
+    # Cluster status
+    #
 
     $ClusterGroups = Import-Clixml (Join-Path $Path "GetClusterGroup.XML")
 
@@ -3817,15 +3954,6 @@ function Get-SummaryReport
         }
     }
 
-    # Cluster shared volume health
-
-    $CSV = Import-Clixml (Join-Path $Path "GetClusterSharedVolume.XML")
-
-    $CSVTotal = NCount($CSV)
-    $CSVHealthy = NCount($CSV |? State -like "Online")
-    Write-Host "Cluster Shared Volumes Online : $CSVHealthy / $CSVTotal"
-    if ($CSVHealthy -lt $CSVTotal) { Show-Warning "Unhealthy cluster shared volumes detected" }
-
     # Storage subsystem health
     $Subsystem = Import-Clixml (Join-Path $Path "GetStorageSubsystem.XML")
 
@@ -3867,6 +3995,10 @@ function Get-SummaryReport
         $StorageJobs | ft -AutoSize
     }
 
+    #
+    # Start the component/object count-out.
+    #
+
     Write-Host "`nHealthy Components count: [SMBShare -> CSV -> VirtualDisk -> StoragePool -> PhysicalDisk -> StorageEnclosure]"
 
     # Scale-out share health
@@ -3893,7 +4025,16 @@ function Get-SummaryReport
     Write-Host "Users with a Witness          : $WitTotal"
     if ($FileTotal -ne 0 -and $WitTotal -eq 0) { Show-Warning "No users with a Witness" }
 
-    # Volume status
+    # Cluster shared volume status
+
+    $CSV = Import-Clixml (Join-Path $Path "GetClusterSharedVolume.XML")
+
+    $CSVTotal = NCount($CSV)
+    $CSVHealthy = NCount($CSV |? State -like "Online")
+    Write-Host "Cluster Shared Volumes Online : $CSVHealthy / $CSVTotal"
+    if ($CSVHealthy -lt $CSVTotal) { Show-Warning "Offline cluster shared volumes detected" }
+
+    # Volume health
 
     $Volumes = Import-Clixml (Join-Path $Path "GetVolume.XML")
 
@@ -4015,15 +4156,15 @@ function Get-SummaryReport
 
     if ($CSVTotal -ne $CSVHealthy) { 
         $Failed = $true
-        Write-Host "Cluster Shared Volumes:"
+        Write-Host "Cluster Shared Volumes not Online:"
         $CSV |? State -ne "Online" | Format-Table -AutoSize 
     }
 
     if ($VolsTotal -ne $VolsHealthy) { 
         $Failed = $true
-        Write-Host "Volumes:"
-        $Volumes |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) }  | 
-        Format-Table Path,HealthStatus  -AutoSize
+        Write-Host "Cluster Shared Volumes not Healthy:"
+        $Volumes |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
+        Format-Table Path,HealthStatus -AutoSize
     }
 
     if ($DedupEnabled -and $DedupTotal -ne $DedupHealthy) { 
