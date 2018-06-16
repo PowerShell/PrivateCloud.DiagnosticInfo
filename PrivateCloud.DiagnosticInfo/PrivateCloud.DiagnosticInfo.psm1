@@ -337,6 +337,47 @@ $CommonFunc = {
 #  Common helper functions for main session only    #
 ####################################################>
 
+#
+# This tests whether a path is a valid prefix name for a new file (e.g., $path + .ZIP)
+#
+
+function Test-PrefixFilePath(
+    $path
+    )
+{
+    $elements = @($path -split '\\')
+
+    # we need to tear off the last element and test the parent. before doing that,
+    # need to check that we have enough path to use in the first place.
+    # also check to see if we have simple cases of a usable single name
+
+    # the last split element cannot be empty (e.g., bad: some\path\, good: some\path)
+    # a single element is OK as long as it isn't a driveletter (e.g., bad: C:, good: foo)
+    # unc is OK as long as we see at least 5 post-split elements (e.g., bad: \\foo, \\foo\bar, good: \\foo\bar\baz)
+
+    $lastempty = $elements[-1] -notmatch '\S'
+    $islocabs = $elements[0][1] -eq ':'
+    $isunc = $path -like '\\*'
+
+    if ($lastempty -or
+        ($islocabs -and $elements.Count -eq 1) -or
+        ($isunc -and $elements.Count -lt 5)) {
+        return $false
+    }
+
+    # simple single names: relative path "foo" or "\foo"
+    if ($elements.Count -eq 1 -or
+        ($elements.Count -eq 2 -and
+         $elements[0].Length -eq 0)) {
+        return $true
+    }
+
+    # rejoin without the tail and test
+    $p = $elements[0..($elements.Count-2)] -join '\'
+
+    Test-Path $p
+}
+
 function Check-ExtractZip(
     [string] $Path
     )
@@ -609,9 +650,7 @@ function Get-SddcDiagnosticInfo
     #
     # Parameter sets:
     #    Read - backcompat alias for Show Summary report
-    #    Write(C|N)[P] -
-    #        capture with -Cluster or -Nodelist
-    #        with or without -IncludePerformance and counter options
+    #    Write(C|N) - capture with -Cluster or -Nodelist
     #    M - monitoring mode
     #
 
@@ -621,19 +660,15 @@ function Get-SddcDiagnosticInfo
     param(
         [parameter(ParameterSetName="WriteC", Position=0, Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Position=0, Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Position=0, Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Position=0, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $WriteToPath = $($env:userprofile + "\HealthTest\"),
 
-        [parameter(ParameterSetName="M", Mandatory=$false)]
+        [parameter(ParameterSetName="M", Position=1, Mandatory=$false)]
         [parameter(ParameterSetName="WriteC", Position=1, Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Position=1, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $ClusterName = ".",
         
         [parameter(ParameterSetName="WriteN", Position=1, Mandatory=$true)]
-        [parameter(ParameterSetName="WriteNP", Position=1, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
         [string[]] $Nodelist = @(),
 
@@ -641,136 +676,96 @@ function Get-SddcDiagnosticInfo
         [ValidateNotNullOrEmpty()]
         [string] $ReadFromPath = "",
         
-        [parameter(ParameterSetName="WriteCP", Mandatory=$true)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$true)]
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [switch] $IncludePerformance = $true,
 
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [ValidateRange(1,3600)]
         [int] $PerfSamples = 10,
 
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [bool] $ProcessCounter = $false,
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [switch] $ProcessCounter,
         
         [parameter(ParameterSetName="M", Mandatory=$true)]
-        [ValidateNotNullOrEmpty()]
         [switch] $MonitoringMode,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [int] $HoursOfEvents = -1,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
         [ValidateRange(-1,365)]
         [int] $DaysOfArchive = 8,
 
         [parameter(ParameterSetName="WriteC", Position=2, Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Position=2, Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Position=2, Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Position=2, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $ZipPrefix = $($env:userprofile + "\HealthTest"),
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
+        [ValidateRange(1,1000)]
         [int] $ExpectedNodes,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
+        [ValidateRange(1,1000)]
         [int] $ExpectedNetworks,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
+        [ValidateRange(0,1000)]
         [int] $ExpectedVolumes,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
+        [ValidateRange(0,1000)]
         [int] $ExpectedDedupVolumes,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
+        [ValidateRange(1,10000)]
         [int] $ExpectedPhysicalDisks,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
+        [ValidateRange(1,1000)]
         [int] $ExpectedPools,
     
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
+        [ValidateRange(1,10000)]
         [int] $ExpectedEnclosures,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [switch] $IncludeAssociations = $false,
+        [switch] $IncludeAssociations,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [switch] $IncludeDumps = $false,
+        [switch] $IncludeDumps,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [switch] $IncludeGetNetView = $false,
+        [switch] $IncludeGetNetView,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [switch] $IncludeHealthReport = $false,
+        [switch] $IncludeHealthReport,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [switch] $IncludeLiveDump = $false,
+        [switch] $IncludeLiveDump,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteCP", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteNP", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [switch] $IncludeReliabilityCounters = $false
+        [switch] $IncludeReliabilityCounters
         )
 
     #
@@ -1077,6 +1072,15 @@ function Get-SddcDiagnosticInfo
     }
 
     #
+    # Verify zip location
+    #
+
+    if (-not (Test-PrefixFilePath $ZipPrefix)) {
+        Write-Error "$ZipPrefix is not a valid prefix for ZIP: $ZipPrefix.ZIP must be creatable"
+        return
+    }
+
+    #
     # Veriyfing path
     #
 
@@ -1126,7 +1130,7 @@ function Get-SddcDiagnosticInfo
     catch [System.InvalidOperationException]{}
     Start-Transcript -Path $transcriptFile -Force
 
-    Show-Update "Writing to path : $Path"
+    Show-Update "Temporary write path : $Path"
 
     #
     # Handle parameters to archive/pass into the summary report generator.
@@ -2105,17 +2109,11 @@ function Get-SddcDiagnosticInfo
     } else {
 
         Show-Update "Get counter sets"
-        $set = Get-Counter -ListSet *"virtual disk"*, *"hybrid"*, *"cluster storage"*, *"cluster csv"*,*"storage spaces"* -ComputerName $ClusterNodes.Name
+        $set = Get-Counter -ListSet "Cluster Storage*","Cluster CSV*","Storage Spaces*" -ComputerName $ClusterNodes.Name
         Show-Update "Start monitoring ($($PerfSamples)s)"		
         $PerfRaw = Get-Counter -Counter $set.Paths -SampleInterval 1 -MaxSamples $PerfSamples -ErrorAction Ignore -WarningAction Ignore
-
-        #$PerfCounters = "reads/sec","writes/sec","read latency","write latency"
-        #$PerfItems = $PerfNodes |% { $Node=$_; $PerfCounters |% { ("\\"+$Node+"\Cluster CSV File System(*)\"+$_) } }
-        #$PerfRaw = Get-Counter -Counter $PerfItems -SampleInterval 1 -MaxSamples $PerfSamples
-
         Show-Update "Exporting counters"
         $PerfRaw | Export-counter -Path ($Path + "GetCounters.blg") -Force -FileFormat BLG
-
         Show-Update "Completed"
 
         if ($ProcessCounter) {
