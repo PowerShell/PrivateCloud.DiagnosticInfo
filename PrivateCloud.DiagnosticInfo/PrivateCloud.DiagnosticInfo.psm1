@@ -1711,62 +1711,6 @@ function Get-SddcDiagnosticInfo
     }
 
     #
-    # Generate SBL Connectivity report based on input clusport information
-    #
-    
-    if ($S2DEnabled) {
-
-        Show-Update "Unhealthy VD"
-
-        try {
-            $NonHealthyVDs = Get-VirtualDisk |? {$_.HealthStatus -ne "Healthy" -OR $_.OperationalStatus -ne "OK"}
-            $NonHealthyVDs | Export-Clixml ($Path + "NonHealthyVDs.XML")
-
-            foreach ($NonHealthyVD in $NonHealthyVDs) {
-                $NonHealthyExtents = $NonHealthyVD | Get-PhysicalExtent |? OperationalStatus -ne Active | sort-object VirtualDiskOffset, CopyNumber
-                $NonHealthyExtents | Export-Clixml($Path + $NonHealthyVD.FriendlyName + "_Extents.xml")
-            }
-        } catch {
-            Show-Warning "Not able to query extents for faulted virtual disks"
-        } 
-
-        Show-Update "SSB Disks and SSU"
-
-        try {
-            Get-StoragePool -ErrorAction SilentlyContinue |? IsPrimordial -eq $false |% {
-                $Disks = $_ | Get-PhysicalDisk 
-                $Disks | Export-Clixml($Path + $_.FriendlyName + "_Disks.xml")
-                    
-                $SSU = $Disks | Get-StorageFaultDomain -type StorageScaleUnit | group FriendlyName |% { $_.Group[0] }
-                $SSU | Export-Clixml($Path + $_.FriendlyName + "_SSU.xml")
-            }
-        } catch {
-            Show-Warning "Not able to query faulty disks and SSU for faulted pools"
-        }
-
-        Show-Update "S2D Connectivity"
-
-        try {
-            $j = $ClusterNodes |? { $_.State.ToString() -eq 'Up' } |% {
-                $node = $_.Name
-                Start-Job -Name $node -InitializationScript $CommonFunc {
-                    Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $using:node |
-                        Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusPort.xml")
-                    Get-CimInstance -Namespace root\wmi -ClassName ClusBfltDeviceInformation -ComputerName $using:node |
-                        Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusBflt.xml")
-                }
-            }
-
-            $null = $j | Wait-Job
-            $j | Receive-Job
-            $j | Remove-Job
-
-        } catch {
-            Show-Warning "Gathering SBL connectivity failed"
-        }
-    }
-
-    #
     # SMB share health/status
     #
 
@@ -1839,10 +1783,11 @@ function Get-SddcDiagnosticInfo
     
 
     # Virtual disk health
+    # Used in S2D-specific gather below
 
     try { 
-        $o = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $SubSystem 
-        $o | Export-Clixml ($Path + "GetVirtualDisk.XML")
+        $VirtualDisk = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $SubSystem 
+        $VirtualDisk | Export-Clixml ($Path + "GetVirtualDisk.XML")
     }
     catch { Show-Warning("Unable to get Virtual Disks. `nError="+$_.Exception.Message) }
     
@@ -1873,8 +1818,8 @@ function Get-SddcDiagnosticInfo
     # Storage tier information
 
     try {
-        $o = Get-StorageTier -CimSession $AccessNode
-        $o | Export-Clixml ($Path + "GetStorageTier.XML") }
+        Get-StorageTier -CimSession $AccessNode |
+            Export-Clixml ($Path + "GetStorageTier.XML") }
     catch { Show-Warning("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
     
     # Storage pool health
@@ -1888,8 +1833,8 @@ function Get-SddcDiagnosticInfo
 
     try {
         # cannot subsystem scope Get-StorageJob at this time
-        $o = icm $AccessNode { Get-StorageJob }
-        $o | Export-Clixml ($Path + "GetStorageJob.XML") }
+        icm $AccessNode { Get-StorageJob } |
+            Export-Clixml ($Path + "GetStorageJob.XML") }
     catch { Show-Warning("Unable to get Storage Jobs. `nError="+$_.Exception.Message) }
 
     Show-Update "Clustered PhysicalDisks and SNV"
@@ -1902,8 +1847,8 @@ function Get-SddcDiagnosticInfo
     catch { Show-Error("Unable to get Physical Disks. `nError="+$_.Exception.Message) }
 
     try {
-        $PhysicalDiskSNV = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $SubSystem | Get-PhysicalDiskSNV -CimSession $AccessNode
-        $PhysicalDiskSNV | Export-Clixml ($Path + "GetPhysicalDiskSNV.XML") }
+        $PhysicalDiskSNV = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $SubSystem | Get-PhysicalDiskSNV -CimSession $AccessNode |
+            Export-Clixml ($Path + "GetPhysicalDiskSNV.XML") }
     catch { Show-Error("Unable to get Physical Disk Storage Node View. `nError="+$_.Exception.Message) }
 
     # Reliability counters
@@ -1915,8 +1860,8 @@ function Get-SddcDiagnosticInfo
         Show-Update "Storage Reliability Counters"
 
         try {
-            $o = $PhysicalDisks | Get-StorageReliabilityCounter -CimSession $AccessNode
-            $o | Export-Clixml ($Path + "GetReliabilityCounter.XML") }
+            $PhysicalDisks | Get-StorageReliabilityCounter -CimSession $AccessNode |
+                Export-Clixml ($Path + "GetReliabilityCounter.XML") }
         catch { Show-Error("Unable to get Storage Reliability Counters. `nError="+$_.Exception.Message) }
 
     }
@@ -1926,10 +1871,52 @@ function Get-SddcDiagnosticInfo
     Show-Update "Storage Enclosures"
 
     try {
-        $o = Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $SubSystem
-        $o | Export-Clixml ($Path + "GetStorageEnclosure.XML") }
+        Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $SubSystem |
+            Export-Clixml ($Path + "GetStorageEnclosure.XML") }
     catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
 
+    #
+    # Generate SBL Connectivity report based on input clusport information
+    #
+    
+    if ($S2DEnabled) {
+
+        Show-Update "Pooled Disks"
+
+        try {
+            $StoragePools |% {
+                $_ | Get-PhysicalDisk -CimSession $AccessNode |
+                    Export-Clixml (Join-Path $Path ("GetPhysicalDisk_Pool_" + $_.FriendlyName + ".xml"))
+            }
+        } catch {
+            Show-Error "Not able to query pooled disks" $_
+        }
+
+        Show-Update "Storage Scale Units"
+
+        try {
+            $SubSystem | Get-StorageFaultDomain -CimSession $AccessNode -Type StorageScaleUnit |
+                Export-Clixml (Join-Path $Path ("GetStorageFaultDomain_SSU_SubSystem_" + $SubSystem.FriendlyName + ".xml"))
+        } catch {
+            Show-Error "Not able to query Storage Scale Units" $_
+        }
+
+        Show-Update "S2D Connectivity"
+
+        try {
+            $JobStatic += $ClusterNodes |% {
+                $node = $_.Name
+                Start-Job -Name $node -InitializationScript $CommonFunc {
+                    Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $using:node |
+                        Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusPort.xml")
+                    Get-CimInstance -Namespace root\wmi -ClassName ClusBfltDeviceInformation -ComputerName $using:node |
+                        Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusBflt.xml")
+                }
+            }
+        } catch {
+            Show-Warning "Gathering SBL connectivity failed"
+        }
+    }
 
     ####
     # Now receive the jobs requiring remote copyout
