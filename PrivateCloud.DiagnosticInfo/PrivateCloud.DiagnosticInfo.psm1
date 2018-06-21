@@ -1906,7 +1906,7 @@ function Get-SddcDiagnosticInfo
         try {
             $JobStatic += $ClusterNodes |% {
                 $node = $_.Name
-                Start-Job -Name $node -InitializationScript $CommonFunc {
+                Start-Job -Name "S2D Connectivity: $node" -InitializationScript $CommonFunc {
                     Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $using:node |
                         Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusPort.xml")
                     Get-CimInstance -Namespace root\wmi -ClassName ClusBfltDeviceInformation -ComputerName $using:node |
