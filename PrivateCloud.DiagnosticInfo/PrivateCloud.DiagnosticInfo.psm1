@@ -1765,19 +1765,27 @@ function Get-SddcDiagnosticInfo
     
     Show-Update "Clustered Subsystem"
 
-    # NOTE: $SubSystem is reused several times below
+    # NOTE: $Subsystem is reused several times below
     try {
-        $SubSystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-        $SubSystem | Export-Clixml ($Path + "GetStorageSubsystem.XML")
+        $Subsystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+        $Subsystem | Export-Clixml ($Path + "GetStorageSubsystem.XML")
     }
-    catch { Show-Warning("Unable to get Clustered Subsystem. `nError="+$_.Exception.Message) }
+    catch { Show-Warning("Unable to get Clustered Subsystem.`nError="+$_.Exception.Message) }
+
+    if ($Subsystem.HealthStatus -notlike "Healthy") {
+        try {
+            $Subsystem | Debug-StorageSubsystem -CimSession $AccessNode |
+                Export-Clixml (Join-Path $Path "DebugStorageSubsystem.XML")
+        }
+        catch { Show-Error "Unable to get Debug-StorageSubsystem for unhealthy StorageSubsystem.`nError=" $_ }
+    }
 
     Show-Update "Volumes & Virtual Disks"
 
     # Volume status
 
     try { 
-        $Volumes = Get-Volume -CimSession $AccessNode -StorageSubSystem $SubSystem 
+        $Volumes = Get-Volume -CimSession $AccessNode -StorageSubSystem $Subsystem 
         $Volumes | Export-Clixml ($Path + "GetVolume.XML") }
     catch { Show-Error("Unable to get Volumes. `nError="+$_.Exception.Message) }
     
@@ -1786,10 +1794,10 @@ function Get-SddcDiagnosticInfo
     # Used in S2D-specific gather below
 
     try { 
-        $VirtualDisk = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $SubSystem 
+        $VirtualDisk = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $Subsystem 
         $VirtualDisk | Export-Clixml ($Path + "GetVirtualDisk.XML")
     }
-    catch { Show-Warning("Unable to get Virtual Disks. `nError="+$_.Exception.Message) }
+    catch { Show-Warning("Unable to get Virtual Disks.`nError="+$_.Exception.Message) }
     
     # Deduplicated volume health
     # XXX the counts/healthy likely not needed once phase 2 shifted into summary report
@@ -1801,7 +1809,7 @@ function Get-SddcDiagnosticInfo
         try {
             $DedupVolumes = Invoke-Command -ComputerName $AccessNode { Get-DedupStatus }
             $DedupVolumes | Export-Clixml ($Path + "GetDedupVolume.XML") }
-        catch { Show-Error("Unable to get Dedup Volumes. `nError="+$_.Exception.Message) }
+        catch { Show-Error("Unable to get Dedup Volumes.`nError="+$_.Exception.Message) }
 
         $DedupTotal = NCount($DedupVolumes)
         $DedupHealthy = NCount($DedupVolumes |? LastOptimizationResult -eq 0 )
@@ -1825,7 +1833,7 @@ function Get-SddcDiagnosticInfo
     # Storage pool health
 
     try { 
-        $StoragePools = Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $SubSystem -ErrorAction SilentlyContinue
+        $StoragePools = Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $Subsystem -ErrorAction SilentlyContinue
         $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML") }
     catch { Show-Error("Unable to get Storage Pools. `nError="+$_.Exception.Message) }
 
@@ -1842,12 +1850,12 @@ function Get-SddcDiagnosticInfo
     # Physical disk health
 
     try {
-        $PhysicalDisks = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $SubSystem
+        $PhysicalDisks = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $Subsystem
         $PhysicalDisks | Export-Clixml ($Path + "GetPhysicalDisk.XML") }
     catch { Show-Error("Unable to get Physical Disks. `nError="+$_.Exception.Message) }
 
     try {
-        $PhysicalDiskSNV = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $SubSystem | Get-PhysicalDiskSNV -CimSession $AccessNode |
+        $PhysicalDiskSNV = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $Subsystem | Get-PhysicalDiskSNV -CimSession $AccessNode |
             Export-Clixml ($Path + "GetPhysicalDiskSNV.XML") }
     catch { Show-Error("Unable to get Physical Disk Storage Node View. `nError="+$_.Exception.Message) }
 
@@ -1871,7 +1879,7 @@ function Get-SddcDiagnosticInfo
     Show-Update "Storage Enclosures"
 
     try {
-        Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $SubSystem |
+        Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $Subsystem |
             Export-Clixml ($Path + "GetStorageEnclosure.XML") }
     catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
 
@@ -1895,8 +1903,8 @@ function Get-SddcDiagnosticInfo
         Show-Update "Storage Scale Units"
 
         try {
-            $SubSystem | Get-StorageFaultDomain -CimSession $AccessNode -Type StorageScaleUnit |
-                Export-Clixml (Join-Path $Path ("GetStorageFaultDomain_SSU_SubSystem_" + $SubSystem.FriendlyName + ".xml"))
+            $Subsystem | Get-StorageFaultDomain -CimSession $AccessNode -Type StorageScaleUnit |
+                Export-Clixml (Join-Path $Path ("GetStorageFaultDomain_SSU_SubSystem_" + $Subsystem.FriendlyName + ".xml"))
         } catch {
             Show-Error "Not able to query Storage Scale Units" $_
         }
@@ -3942,9 +3950,11 @@ function Get-SummaryReport
     # Storage subsystem health
     $Subsystem = Import-Clixml (Join-Path $Path "GetStorageSubsystem.XML")
 
+    $SubsystemUnhealthy = $false
     if ($Subsystem -eq $null) {
         Show-Warning "No clustered storage subsystem present"
     } elseif ($Subsystem.HealthStatus -notlike "Healthy") {
+        $SubsystemUnhealthy = $true
         Show-Warning "Clustered storage subsystem '$($Subsystem.FriendlyName)' is in health state $($Subsystem.HealthStatus)"
     } else {
         Write-Host "Clustered storage subsystem '$($Subsystem.FriendlyName)' is healthy"
@@ -4137,6 +4147,11 @@ function Get-SummaryReport
                 @{ Label = 'State'; Expression = { $_.State.Value }},
                 OwnerGroup,
                 ResourceType
+    }
+
+    if ($SubsystemUnhealthy) {
+        Write-Host "Clustered storage subsystem '$($Subsystem.FriendlyName)' not healthy:"
+        Import-Clixml (Join-Path $Path "DebugStorageSubsystem.XML") | ft -AutoSize
     }
 
     if ($CSVTotal -ne $CSVHealthy) { 
