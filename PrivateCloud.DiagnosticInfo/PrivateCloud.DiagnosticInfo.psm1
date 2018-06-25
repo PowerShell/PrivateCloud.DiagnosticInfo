@@ -558,7 +558,7 @@ function Get-FilteredNodeList(
 .PARAMETER ReadFromPath
 Path to read content from for summary health report generation.
 
-.PARAMETER WriteToPath
+.PARAMETER TemporaryPath
 Temporary path to stage capture content to, prior to ZIP creation.
 
 .PARAMETER ClusterName
@@ -660,8 +660,9 @@ function Get-SddcDiagnosticInfo
     param(
         [parameter(ParameterSetName="WriteC", Position=0, Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Position=0, Mandatory=$false)]
+        [alias("WriteToPath")]
         [ValidateNotNullOrEmpty()]
-        [string] $WriteToPath = $($env:userprofile + "\HealthTest\"),
+        [string] $TemporaryPath = $($env:userprofile + "\HealthTest\"),
 
         [parameter(ParameterSetName="M", Position=1, Mandatory=$false)]
         [parameter(ParameterSetName="WriteC", Position=1, Mandatory=$false)]
@@ -1088,7 +1089,7 @@ function Get-SddcDiagnosticInfo
         $Path = $ReadFromPath
         $Read = $true
     } else {
-        $Path = $WriteToPath
+        $Path = $TemporaryPath
         $Read = $false
     }
 
@@ -1500,7 +1501,7 @@ function Get-SddcDiagnosticInfo
                             "Get-NetIPv6Protocol -CimSession _C_",
                             "Get-NetOffloadGlobalSetting -CimSession _C_",
                             "Get-NetPrefixPolicy -CimSession _C_",
-                            "Get-NetTCPConnection -CimSession _C_",
+                            "Get-NetTcpConnection -CimSession _C_",
                             "Get-NetTcpSetting -CimSession _C_",
                             "Get-NetAdapterBinding -CimSession _C_",
                             "Get-NetAdapterChecksumOffload -CimSession _C_",
@@ -1833,7 +1834,7 @@ function Get-SddcDiagnosticInfo
     # Storage pool health
 
     try { 
-        $StoragePools = Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $Subsystem -ErrorAction SilentlyContinue
+        $StoragePools = @(Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $Subsystem -ErrorAction SilentlyContinue)
         $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML") }
     catch { Show-Error("Unable to get Storage Pools. `nError="+$_.Exception.Message) }
 
@@ -1892,9 +1893,9 @@ function Get-SddcDiagnosticInfo
         Show-Update "Pooled Disks"
 
         try {
-            $StoragePools |% {
-                $_ | Get-PhysicalDisk -CimSession $AccessNode |
-                    Export-Clixml (Join-Path $Path ("GetPhysicalDisk_Pool_" + $_.FriendlyName + ".xml"))
+            if ($StoragePools.Count -eq 1) {
+                $StoragePools | Get-PhysicalDisk -CimSession $AccessNode |
+                    Export-Clixml (Join-Path $Path ("GetPhysicalDisk_Pool.xml"))
             }
         } catch {
             Show-Error "Not able to query pooled disks" $_
@@ -1904,7 +1905,7 @@ function Get-SddcDiagnosticInfo
 
         try {
             $Subsystem | Get-StorageFaultDomain -CimSession $AccessNode -Type StorageScaleUnit |
-                Export-Clixml (Join-Path $Path ("GetStorageFaultDomain_SSU_SubSystem_" + $Subsystem.FriendlyName + ".xml"))
+                Export-Clixml (Join-Path $Path ("GetStorageFaultDomain_SSU.xml"))
         } catch {
             Show-Error "Not able to query Storage Scale Units" $_
         }
@@ -4075,11 +4076,15 @@ function Get-SummaryReport
 
     # Storage pool health
 
-    $StoragePools = Import-Clixml (Join-Path $Path "GetStoragePool.XML")
+    $StoragePools = @(Import-Clixml (Join-Path $Path "GetStoragePool.XML"))
 
     $PoolsTotal = NCount($StoragePools)
     $PoolsHealthy = NCount($StoragePools |? { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
     Write-Host "Storage Pools Healthy         : $PoolsHealthy / $PoolsTotal "
+
+    if ($S2DEnabled -and $StoragePools.Count -ne 1) {
+        Show-Warning "S2D is enabled but the number of non-primordial pools $($StoragePools.Count) != 1"
+    }
 
     if ($PoolsTotal -lt $ExpectedPools) { Show-Warning "Fewer storage pools than the $ExpectedPools expected" }
     if ($PoolsHealthy -lt $PoolsTotal) { Show-Warning "Unhealthy storage pools detected" }
