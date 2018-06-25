@@ -32,6 +32,8 @@ Update-Module PrivateCloud.DiagnosticInfo
 ## To install module from GitHub
 Download the latest module from github - https://github.com/PowerShell/PrivateCloud.DiagnosticInfo/archive/master.zip and extract directory PrivateCloud.DiagnosticInfo to the correct powershell modules path pointed by $env:PSModulePath
 
+**Note**: this is generally deprecated unless you are working directly with Microsoft engineering. For normal usage please acquire the module from the Powershell Gallery.
+
 ``` PowerShell
 # Allow Tls12 and Tls11 -- GitHub now requires Tls12
 # If this is not set, the Invoke-WebRequest fails with "The request was aborted: Could not create SSL/TLS secure channel."
@@ -97,125 +99,336 @@ Transcripts of the gather process and its summary report.
 - 0_CloudHealthGatherTranscript.log
 - 0_CloudHealthSummary.log
 
-## Whole cluster data
-As XML files (Import-Clixml)
--	GetAllErrors.XML
--	GetAssociations.XML
--	GetCluster.XML
--	GetClusterGroup.XML
--	GetClusterNetwork.XML
--	GetClusterNode.XML
--	GetClusterResource.XML
--	GetClusterSharedVolume.XML
--	GetDedupVolume.XML
--	GetNetAdapter_NodeName.FQDN.XML
--	GetParameters.XML
--	GetPhysicalDisk.XML
--	GetReliabilityCounter.XML
--	GetSmbOpenFile.XML
--	GetSmbServerNetworkInterface_NodeName.FQDN.XML
--	GetSmbWitness.XML
--	GetStorageEnclosure.XML
--	GetStorageNodeView.XML
--	GetStoragePool.XML
--	GetVirtualDisk.XML
--	GetVolume.XML
--	NonHealthyVDs.XML
--	NodeName_GetDrivers.XML
+## Whole-cluster data
+Whole-cluster data as Powershell object XML export files (Import-Clixml)
+- GetCluster.XML : **Get-Cluster**
+- GetClusterGroup.XML : **Get-ClusterGroup**
+- GetClusterNetwork.XML : **Get-ClusterNetwork**
+- GetClusterNode.XML : **Get-ClusterNode**
+- GetClusterResource.XML : **Get-ClusterResource**
+- GetClusterResourceParameters.XML : **Get-ClusterResource** | **Get-ClusterParameter**
+- GetClusterSharedVolume.XML : **Get-ClusterSharedVolume**
+- GetParameters.XML : Parameters provided to **Get-SDDCDiagnosticInfo**
+- GetPhysicalDisk.XML : **Get-PhysicalDisk** at the StorageSubsystem
+- GetPhysicalDiskSNV.XML : **Get-PhysicalDiskSNV** at the StorageSubsystem
+- GetPhysicalDisk_Pool.xml : **Get-PhysicalDisk** at the StoragePool
+- GetSmbOpenFile.XML : **Get-SMBOpenFile**
+- GetSmbWitness.XML : **Get-SMBWitnessClient**
+- GetStorageEnclosure.XML : **Get-StoragEnclosure** at the StorageSubsystem
+- GetStorageFaultDomain_SSU.xml : **Get-StorageFaultDomain** at the StorageSubsystem, for StorageScaleUnits
+- GetStorageJob.XML : **Get-StorageJob**
+- GetStoragePool.XML : **Get-StoragePool** at the StorageSubsystem, all non-primordial
+- GetStorageSubsystem.XML : **Get-StorageSubsystem** for the clustered StorageSubsystem
+- GetStorageTier.XML : **Get-StorageTier**
+- GetVirtualDisk.XML : **Get-VirtualDisk** at the StorageSubsystem
+- GetVolume.XML : **Get-Volume** at the StorageSubsystem
+- ShareStatus.XML : **Get-SMBShare** with a 'Health' parameter added indicating accessibility at time of capture
 
-Cluster & Health log
-- NodeName.FQDN_cluster.log
-- NodeName.FQDN_health.log
+### If de-duplication was present
 
-## System Information (MSInfo32)
-- NodeName.FQDN_SystemInfo.TXT
+-	GetDedupVolume.XML : **Get-DedupStatus**
 
-## Event Logs (unfiltered)
-- NodeName_UnfilteredEvent_Application.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-BranchCacheSMB-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-CloudStorageWizard-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-DiskDiagnostic-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-DiskDiagnosticDataCollector-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-DiskDiagnosticResolver-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-ClusBflt-Management.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-ClusBflt-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-Clusport-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-CsvFs-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-Diagnostic.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-DiagnosticVerbose.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-Manager-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-Manager-Diagnostic.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-Manager-Tracing.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-NetFt-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-FailoverClustering-WMIProvider-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Compute-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Compute-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Config-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Config-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Guest-Drivers-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Guest-Drivers-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-High-Availability-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Hypervisor-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Hypervisor-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Shared-VHDX-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Shared-VHDX-Reservation.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-StorageVSP-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-VID-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-VMMS-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-VMMS-Networking.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-VMMS-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-VMMS-Storage.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-VmSwitch-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Hyper-V-Worker-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-ApphelpCache-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-Boot-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-EventTracing-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-IO-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-PnP-Configuration.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-Power-Thermal-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-ShimEngine-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-StoreMgr-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-WDI-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-WHEA-Errors.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Kernel-WHEA-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Ntfs-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Ntfs-WHC.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-ResumeKeyFilter-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-ScmDisk0101-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-SmbClient-Connectivity.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-SMBClient-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-SmbClient-Security.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-SMBDirect-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-SMBServer-Audit.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-SMBServer-Connectivity.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-SMBServer-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-SMBServer-Security.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-SMBWitnessClient-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-SMBWitnessClient-Informational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-SMBWitnessServer-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Storage-ATAPort-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Storage-ATAPort-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Storage-ClassPnP-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Storage-ClassPnP-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Storage-Disk-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Storage-Disk-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Storage-Storport-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Storage-Storport-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-Storage-Tiering-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-StorageManagement-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-StorageSpaces-Driver-Diagnostic.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-StorageSpaces-Driver-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-StorageSpaces-ManagementAgent-WHC.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-StorageSpaces-SpaceManager-Diagnostic.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-StorageSpaces-SpaceManager-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-TerminalServices-PnPDevices-Admin.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-TerminalServices-PnPDevices-Operational.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-UserPnp-ActionCenter.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-UserPnp-DeviceInstall.EVTX
-- NodeName_UnfilteredEvent_Microsoft-Windows-VHDMP-Operational.EVTX
-- NodeName_UnfilteredEvent_System.EVTX   
+### If the clustered storage subsystem was not healthy
 
-## Storage Diagnostics
-- OperationalLog.evtx
-- OperationalLog_0.MTA
+- DebugStorageSubsystem.XML : **Debug-StorageSubsystem** at the StorageSubsystem
+
+### Performance counters
+
+- GetCounters.blg
+
+### Cluster & Health logs
+- NodeName.FQDN_cluster.log : **Get-ClusterLog**
+- NodeName.FQDN_health.log : **Get-ClusterLog** -Health
+
+### If the Sddc Diagnostic Archive was active
+
+- SddcDiagnosticArchiveJob.txt : **Show-SddcDiagnosticArchiveJob**
+- SddcDiagnosticArchiveJobWarn.txt : any WARNINGs from **Show-SddcDiagnosticArchiveJob**
+
+## Per node
+
+Per-node data as Powershell object XML export files (Import-Clixml)
+
+- ClusBflt.xml : **Get-CimInstance** -Namespace root\wmi -ClassName **ClusBfltDeviceInformation** (S2D Cache/Target)
+- ClusPort.xml : **Get-CimInstance** -Namespace root\wmi -ClassName **ClusPortDeviceInformation** (S2D Client)
+- GetDrivers.XML : **Get-CimInstance** -ClassName Win32_PnPSignedDriver
+
+As XML and text
+
+- GetHotFix.xml : **Get-HotFix**
+- GetScheduledTask.xml : **Get-ScheduledTask**
+- GetSmbServerNetworkInterface.xml : **Get-SmbServerNetworkInterface**
+
+Network focused, as XML and text
+
+- GetNetAdapter.xml : **Get-NetAdapter**
+- GetNetAdapterAdvancedProperty.xml : **Get-NetAdapterAdvancedProperty**
+- GetNetAdapterBinding.xml : **Get-NetAdapterBinding**
+- GetNetAdapterChecksumOffload.xml : **Get-NetAdapterChecksumOffload**
+- GetNetAdapterIPsecOffload.xml : **Get-NetAdapterIPsecOffload**
+- GetNetAdapterLso.xml : **Get-NetAdapterLso**
+- GetNetAdapterPacketDirect.xml : **Get-NetAdapterPacketDirect**
+- GetNetAdapterRdma.xml : **Get-NetAdapterRdma**
+- GetNetAdapterRsc.xml : **GetNetAdapterRsc**
+- GetNetIpAddress.xml : **Get-NetIpAddress**
+- GetNetAdapterRss.xml : **GetNetAdapterRss**
+- GetNetIPv4Protocol.xml : **Get-NetIPv4Protocol**
+- GetNetIPv6Protocol.xml : **Get-NetIPv6Protocol**
+- GetNetLbfoTeam.xml : **Get-NetLbfoTeam**
+- GetNetLbfoTeamMember.xml : **Get-NetLbfoTeamMember**
+- GetNetLbfoTeamNic.xml : **Get-NetLbfoTeamNic**
+- GetNetOffloadGlobalSetting.xml : **Get-NetOffloadGlobalSetting**
+- GetNetPrefixPolicy.xml : **Get-NetPrefixPolicy**
+- GetNetQosPolicy.xml : **Get-NetQosPolicy**
+- GetNetRoute.xml : **Get-NetRoute**
+- GetNetTCPConnection.xml : **Get-NetTcpConnection**
+- GetNetTcpSetting.xml **Get-NetTcpSetting**
+
+### System Information (SystemInfo.exe)
+- SystemInfo.txt
+
+### System verifier configuration
+- verifier-query.txt : **verifer** /query
+- verifier-querysettings.txt : **verifier** /querysettings
+
+### Event Logs
+Application and System events:
+- Application.EVTX
+- System.EVTX
+
+All event channels prefixed with the following:
+
+- Microsoft-Windows-ClusterAwareUpdating
+- Microsoft-Windows-DataIntegrityScan
+- Microsoft-Windows-FailoverClustering
+- Microsoft-Windows-HostGuardian
+- Microsoft-Windows-Hyper-V
+- Microsoft-Windows-Kernel
+- Microsoft-Windows-NDIS
+- Microsoft-Windows-Network
+- Microsoft-Windows-NTFS
+- Microsoft-Windows-REFS
+- Microsoft-Windows-ResumeKeyFilter
+- Microsoft-Windows-SMB
+- Microsoft-Windows-Storage
+- Microsoft-Windows-TCPIP
+- Microsoft-Windows-VHDMP
+- Microsoft-Windows-WMI-Activity
+
+Certain channels may be excluded for size and value considerations. At this time, that includes:
+
+- Microsoft-Windows-FailoverClustering/Diagnostic
+- Microsoft-Windows-FailoverClustering/DiagnosticVerbose
+- Microsoft-Windows-FailoverClustering-Client/Diagnostic
+- Microsoft-Windows-StorageSpaces-Driver/Performance
+
+On Windows Server 2016, this results in the following being captured. Note that if event channels are
+added which match the criteria above, they will be automatically added to the capture.
+
+- Microsoft-Windows-ClusterAwareUpdating-Admin.EVTX
+- Microsoft-Windows-ClusterAwareUpdating-Debug.EVTX
+- Microsoft-Windows-ClusterAwareUpdating-Management-Admin.EVTX
+- Microsoft-Windows-DataIntegrityScan-Admin.EVTX
+- Microsoft-Windows-DataIntegrityScan-CrashRecovery.EVTX
+- Microsoft-Windows-FailoverClustering-ClusBflt-Diagnostic.EVTX
+- Microsoft-Windows-FailoverClustering-ClusBflt-Management.EVTX
+- Microsoft-Windows-FailoverClustering-ClusBflt-Operational.EVTX
+- Microsoft-Windows-FailoverClustering-Clusport-Diagnostic.EVTX
+- Microsoft-Windows-FailoverClustering-Clusport-Operational.EVTX
+- Microsoft-Windows-FailoverClustering-CsvFlt-Diagnostic.EVTX
+- Microsoft-Windows-FailoverClustering-CsvFs-Diagnostic.EVTX
+- Microsoft-Windows-FailoverClustering-CsvFs-Operational.EVTX
+- Microsoft-Windows-FailoverClustering-Manager-Admin.EVTX
+- Microsoft-Windows-FailoverClustering-Manager-Diagnostic.EVTX
+- Microsoft-Windows-FailoverClustering-Manager-Tracing.EVTX
+- Microsoft-Windows-FailoverClustering-NetFt-Diagnostic.EVTX
+- Microsoft-Windows-FailoverClustering-NetFt-Operational.EVTX
+- Microsoft-Windows-FailoverClustering-Operational.EVTX
+- Microsoft-Windows-FailoverClustering-Performance-CSV.EVTX
+- Microsoft-Windows-FailoverClustering-WMIProvider-Admin.EVTX
+- Microsoft-Windows-FailoverClustering-WMIProvider-Diagnostic.EVTX
+- Microsoft-Windows-HostGuardianService-Client-Admin.EVTX
+- Microsoft-Windows-HostGuardianService-Client-Analytic.EVTX
+- Microsoft-Windows-HostGuardianService-Client-Debug.EVTX
+- Microsoft-Windows-HostGuardianService-Client-Operational.EVTX
+- Microsoft-Windows-Hyper-V-Compute-Admin.EVTX
+- Microsoft-Windows-Hyper-V-Compute-Analytic.EVTX
+- Microsoft-Windows-Hyper-V-Compute-Operational.EVTX
+- Microsoft-Windows-Hyper-V-Config-Admin.EVTX
+- Microsoft-Windows-Hyper-V-Config-Analytic.EVTX
+- Microsoft-Windows-Hyper-V-Config-Operational.EVTX
+- Microsoft-Windows-Hyper-V-Guest-Drivers-Admin.EVTX
+- Microsoft-Windows-Hyper-V-Guest-Drivers-Analytic.EVTX
+- Microsoft-Windows-Hyper-V-Guest-Drivers-Debug.EVTX
+- Microsoft-Windows-Hyper-V-Guest-Drivers-Diagnose.EVTX
+- Microsoft-Windows-Hyper-V-Guest-Drivers-Operational.EVTX
+- Microsoft-Windows-Hyper-V-High-Availability-Admin.EVTX
+- Microsoft-Windows-Hyper-V-High-Availability-Analytic.EVTX
+- Microsoft-Windows-Hyper-V-Hypervisor-Admin.EVTX
+- Microsoft-Windows-Hyper-V-Hypervisor-Analytic.EVTX
+- Microsoft-Windows-Hyper-V-Hypervisor-Operational.EVTX
+- Microsoft-Windows-Hyper-V-NETVSC-Diagnostic.EVTX
+- Microsoft-Windows-Hyper-V-Shared-VHDX-Diagnostic.EVTX
+- Microsoft-Windows-Hyper-V-Shared-VHDX-Operational.EVTX
+- Microsoft-Windows-Hyper-V-Shared-VHDX-Reservation.EVTX
+- Microsoft-Windows-Hyper-V-StorageVSP-Admin.EVTX
+- Microsoft-Windows-Hyper-V-VfpExt-Analytic.EVTX
+- Microsoft-Windows-Hyper-V-VID-Admin.EVTX
+- Microsoft-Windows-Hyper-V-VID-Analytic.EVTX
+- Microsoft-Windows-Hyper-V-VMMS-Admin.EVTX
+- Microsoft-Windows-Hyper-V-VMMS-Analytic.EVTX
+- Microsoft-Windows-Hyper-V-VMMS-Networking.EVTX
+- Microsoft-Windows-Hyper-V-VMMS-Operational.EVTX
+- Microsoft-Windows-Hyper-V-VMMS-Storage.EVTX
+- Microsoft-Windows-Hyper-V-VMSP-Debug.EVTX
+- Microsoft-Windows-Hyper-V-VmSwitch-Diagnostic.EVTX
+- Microsoft-Windows-Hyper-V-VmSwitch-Operational.EVTX
+- Microsoft-Windows-Hyper-V-Worker-Admin.EVTX
+- Microsoft-Windows-Hyper-V-Worker-Analytic.EVTX
+- Microsoft-Windows-Hyper-V-Worker-VDev-Analytic.EVTX
+- Microsoft-Windows-Kernel-Acpi-Diagnostic.EVTX
+- Microsoft-Windows-Kernel-AppCompat-General.EVTX
+- Microsoft-Windows-Kernel-AppCompat-Performance.EVTX
+- Microsoft-Windows-Kernel-ApphelpCache-Analytic.EVTX
+- Microsoft-Windows-Kernel-ApphelpCache-Debug.EVTX
+- Microsoft-Windows-Kernel-ApphelpCache-Operational.EVTX
+- Microsoft-Windows-Kernel-Boot-Analytic.EVTX
+- Microsoft-Windows-Kernel-Boot-Operational.EVTX
+- Microsoft-Windows-Kernel-BootDiagnostics-Diagnostic.EVTX
+- Microsoft-Windows-Kernel-Disk-Analytic.EVTX
+- Microsoft-Windows-Kernel-EventTracing-Admin.EVTX
+- Microsoft-Windows-Kernel-EventTracing-Analytic.EVTX
+- Microsoft-Windows-Kernel-File-Analytic.EVTX
+- Microsoft-Windows-Kernel-Interrupt-Steering-Diagnostic.EVTX
+- Microsoft-Windows-Kernel-IO-Operational.EVTX
+- Microsoft-Windows-Kernel-LiveDump-Analytic.EVTX
+- Microsoft-Windows-Kernel-Memory-Analytic.EVTX
+- Microsoft-Windows-Kernel-Network-Analytic.EVTX
+- Microsoft-Windows-Kernel-Pdc-Diagnostic.EVTX
+- Microsoft-Windows-Kernel-Pep-Diagnostic.EVTX
+- Microsoft-Windows-Kernel-PnP-Boot Diagnostic.EVTX
+- Microsoft-Windows-Kernel-PnP-Configuration Diagnostic.EVTX
+- Microsoft-Windows-Kernel-PnP-Configuration.EVTX
+- Microsoft-Windows-Kernel-PnP-Device Enumeration Diagnostic.EVTX
+- Microsoft-Windows-Kernel-PnP-Driver Diagnostic.EVTX
+- Microsoft-Windows-Kernel-Power-Diagnostic.EVTX
+- Microsoft-Windows-Kernel-Power-Thermal-Diagnostic.EVTX
+- Microsoft-Windows-Kernel-Power-Thermal-Operational.EVTX
+- Microsoft-Windows-Kernel-Prefetch-Diagnostic.EVTX
+- Microsoft-Windows-Kernel-Process-Analytic.EVTX
+- Microsoft-Windows-Kernel-Processor-Power-Diagnostic.EVTX
+- Microsoft-Windows-Kernel-Registry-Analytic.EVTX
+- Microsoft-Windows-Kernel-Registry-Performance.EVTX
+- Microsoft-Windows-Kernel-ShimEngine-Debug.EVTX
+- Microsoft-Windows-Kernel-ShimEngine-Diagnostic.EVTX
+- Microsoft-Windows-Kernel-ShimEngine-Operational.EVTX
+- Microsoft-Windows-Kernel-StoreMgr-Analytic.EVTX
+- Microsoft-Windows-Kernel-StoreMgr-Operational.EVTX
+- Microsoft-Windows-Kernel-WDI-Analytic.EVTX
+- Microsoft-Windows-Kernel-WDI-Debug.EVTX
+- Microsoft-Windows-Kernel-WDI-Operational.EVTX
+- Microsoft-Windows-Kernel-WHEA-Errors.EVTX
+- Microsoft-Windows-Kernel-WHEA-Operational.EVTX
+- Microsoft-Windows-Kernel-XDV-Analytic.EVTX
+- Microsoft-Windows-NDIS-Diagnostic.EVTX
+- Microsoft-Windows-NDIS-Operational.EVTX
+- Microsoft-Windows-NDIS-PacketCapture-Diagnostic.EVTX
+- Microsoft-Windows-NdisImPlatform-Operational.EVTX
+- Microsoft-Windows-Network-and-Sharing-Center-Diagnostic.EVTX
+- Microsoft-Windows-Network-Connection-Broker.EVTX
+- Microsoft-Windows-Network-DataUsage-Analytic.EVTX
+- Microsoft-Windows-Network-Setup-Diagnostic.EVTX
+- Microsoft-Windows-NetworkBridge-Diagnostic.EVTX
+- Microsoft-Windows-NetworkController-NcHostAgent-Admin.EVTX
+- Microsoft-Windows-Networking-Correlation-Diagnostic.EVTX
+- Microsoft-Windows-Networking-RealTimeCommunication-Tracing.EVTX
+- Microsoft-Windows-NetworkLocationWizard-Operational.EVTX
+- Microsoft-Windows-NetworkProfile-Diagnostic.EVTX
+- Microsoft-Windows-NetworkProfile-Operational.EVTX
+- Microsoft-Windows-NetworkProvider-Operational.EVTX
+- Microsoft-Windows-NetworkSecurity-Debug.EVTX
+- Microsoft-Windows-NetworkStatus-Analytic.EVTX
+- Microsoft-Windows-Ntfs-Operational.EVTX
+- Microsoft-Windows-Ntfs-Performance.EVTX
+- Microsoft-Windows-Ntfs-WHC.EVTX
+- Microsoft-Windows-ReFS-Operational.EVTX
+- Microsoft-Windows-ResumeKeyFilter-Analytic.EVTX
+- Microsoft-Windows-ResumeKeyFilter-Operational.EVTX
+- Microsoft-Windows-ResumeKeyFilter-Performance.EVTX
+- Microsoft-Windows-SMBClient-Analytic.EVTX
+- Microsoft-Windows-SmbClient-Connectivity.EVTX
+- Microsoft-Windows-SmbClient-Diagnostic.EVTX
+- Microsoft-Windows-SMBClient-HelperClassDiagnostic.EVTX
+- Microsoft-Windows-SMBClient-ObjectStateDiagnostic.EVTX
+- Microsoft-Windows-SMBClient-Operational.EVTX
+- Microsoft-Windows-SmbClient-Security.EVTX
+- Microsoft-Windows-SMBDirect-Admin.EVTX
+- Microsoft-Windows-SMBDirect-Debug.EVTX
+- Microsoft-Windows-SMBDirect-Netmon.EVTX
+- Microsoft-Windows-SMBServer-Analytic.EVTX
+- Microsoft-Windows-SMBServer-Audit.EVTX
+- Microsoft-Windows-SMBServer-Connectivity.EVTX
+- Microsoft-Windows-SMBServer-Diagnostic.EVTX
+- Microsoft-Windows-SMBServer-Operational.EVTX
+- Microsoft-Windows-SMBServer-Performance.EVTX
+- Microsoft-Windows-SMBServer-Security.EVTX
+- Microsoft-Windows-SMBWitnessClient-Admin.EVTX
+- Microsoft-Windows-SMBWitnessClient-Informational.EVTX
+- Microsoft-Windows-SMBWitnessServer-Admin.EVTX
+- Microsoft-Windows-Storage-ATAPort-Admin.EVTX
+- Microsoft-Windows-Storage-ATAPort-Analytic.EVTX
+- Microsoft-Windows-Storage-ATAPort-Debug.EVTX
+- Microsoft-Windows-Storage-ATAPort-Diagnose.EVTX
+- Microsoft-Windows-Storage-ATAPort-Operational.EVTX
+- Microsoft-Windows-Storage-ClassPnP-Admin.EVTX
+- Microsoft-Windows-Storage-ClassPnP-Analytic.EVTX
+- Microsoft-Windows-Storage-ClassPnP-Debug.EVTX
+- Microsoft-Windows-Storage-ClassPnP-Diagnose.EVTX
+- Microsoft-Windows-Storage-ClassPnP-Operational.EVTX
+- Microsoft-Windows-Storage-Disk-Admin.EVTX
+- Microsoft-Windows-Storage-Disk-Analytic.EVTX
+- Microsoft-Windows-Storage-Disk-Debug.EVTX
+- Microsoft-Windows-Storage-Disk-Diagnose.EVTX
+- Microsoft-Windows-Storage-Disk-Operational.EVTX
+- Microsoft-Windows-Storage-Storport-Admin.EVTX
+- Microsoft-Windows-Storage-Storport-Analytic.EVTX
+- Microsoft-Windows-Storage-Storport-Debug.EVTX
+- Microsoft-Windows-Storage-Storport-Diagnose.EVTX
+- Microsoft-Windows-Storage-Storport-Operational.EVTX
+- Microsoft-Windows-Storage-Tiering-Admin.EVTX
+- Microsoft-Windows-Storage-Tiering-IoHeat-Heat.EVTX
+- Microsoft-Windows-StorageManagement-Debug.EVTX
+- Microsoft-Windows-StorageManagement-Operational.EVTX
+- Microsoft-Windows-StorageSpaces-Driver-Diagnostic.EVTX
+- Microsoft-Windows-StorageSpaces-Driver-Operational.EVTX
+- Microsoft-Windows-StorageSpaces-ManagementAgent-WHC.EVTX
+- Microsoft-Windows-StorageSpaces-SpaceManager-Diagnostic.EVTX
+- Microsoft-Windows-StorageSpaces-SpaceManager-Operational.EVTX
+- Microsoft-Windows-TCPIP-Diagnostic.EVTX
+- Microsoft-Windows-TCPIP-Operational.EVTX
+- Microsoft-Windows-VHDMP-Analytic.EVTX
+- Microsoft-Windows-VHDMP-Operational.EVTX
+- Microsoft-Windows-WMI-Activity-Debug.EVTX
+- Microsoft-Windows-WMI-Activity-Operational.EVTX
+- Microsoft-Windows-WMI-Activity-Trace.EVTX
+
+### Additional captures in per-node subdirectories
+
+The following subdirectories will appear per-node, containing additional captures.
+
+- ClusterReports : all content at $env:SystemRoot\Cluster\Reports (validation reports, et.al.)
+- LocaleMetaData : event log archive metadata for formatting event messages in the captured EVTX (wevtutil archive-log)
+- SddcDiagnosticArchive : the Sddc Diagnostic Archive for the node
+
+### Sddc Diagnostic Archive
+
+The Sddc Diagnostic Archive is a series of timestamped ZIP containing a per-day snapshot of event, cluster and health logs. The event logs are the same as those mentioned previously.
+
+- **Install-SddcDiagnosticModule** : install the Sddc Diagnostic Archive module (PrivateCloud.DiagnosticInfo) on a cluster/node
+- **Confirm-SddcDiagnosticModule** : confirm (check) the status of the module on a cluster/node
+- **Register-SddcDiagnosticArchiveJob** : register (start) the archive job for a cluster
+- **Show-SddcDiagnosticArchiveJob** : show the state of the archive job for a cluster (module state, sizes)
+- **Unregister-SddcDiagnosticArchiveJob** : unregister (remove/stop) the archive job for a cluster
+- **Set-SddcDiagnosticArchiveJobParameters** : adjust garbage collection parameters for the diagnostic archive (days of, size, path)
+
+See individual per-command help for more details.
