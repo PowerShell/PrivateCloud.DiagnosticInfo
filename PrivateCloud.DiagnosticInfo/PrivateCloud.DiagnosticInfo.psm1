@@ -10,7 +10,7 @@ $Module = 'PrivateCloud.DiagnosticInfo'
 #  Common helper functions/modules for main/child sessions  #
 ############################################################>
 
-$CommonFunc = {
+$CommonFuncBlock = {
 
     # FailoverClusters is Server-only. We allow the module to run (Show) on client.
 
@@ -326,7 +326,145 @@ $CommonFunc = {
             $true
         }
     }
+
+    # function for constructing filter xpath queries for event channels
+    # event: list of event ids
+    # timebase: time base for timedelta query (default: current system time)
+    # timedeltams: time in ms relatve to base to filter event timestamps to (older than base)
+    # data: table of k=v the event(s) must match
+    #
+    # events are OR'd
+    # time is AND
+    # data is AND
+    function Get-FilterXpath
+    {
+        [CmdletBinding(PositionalBinding=$false)]
+        param (
+            [int[]] $Event = @(),
+
+            [datetime] $TimeBase,
+
+            [ValidateScript({$_ -gt 0})]
+            [int] $TimeDeltaMs = -1,
+
+            [hashtable] $Data = $null
+            )
+
+        # first build out the system property clauses
+        $systemclauses = @()
+
+        # build the event id clause
+        if ($Event.Count) {
+            $c = $Event |% { "(EventID=$_)" }
+            # bracket eventids iff there are multiple
+            if ($Event.Count -gt 1) {
+                $systemclauses += "(" + ($c -join " or ") + ")"
+            } else {
+                $systemclauses += $c
+            }
+        }
+
+        # build the time delta clause
+        # based - two argument, relative to $TimeBase
+        # unbase - one argument, relative to instantaneous system time
+        if ($TimeDeltaMs -gt 0) {
+            if ($TimeBase) {
+                $t = $TimeBase.ToUniversalTime().ToString('s')
+                $systemclauses += "(TimeCreated[timediff(@SystemTime,'$($t)') <= $($TimeDeltaMs)])"
+            } else {
+                $systemclauses += "(TimeCreated[timediff(@SystemTime) <= $($TimeDeltaMs)])"
+            }
+        }
+
+        # system property clauses and together
+        $systemclause = "System[" + ($systemclauses -join " and ") + "]"
+
+        # now build data clauses
+        if ($data) {
+            $c = @($Data.Keys | sort |% {
+                "(Data[@Name='" + $_ + "'] and (Data=" + $Data[$_] + "))"
+            })
+
+            $dataclause = "EventData[" + ($c -join " and ") + "]"
+        } else {
+            $dataclause = $null
+        }
+
+        # and join with and
+        if ($dataclause) {
+            $xpath = "*[$systemclause and $dataclause]"
+        } else {
+            $xpath = "*[$systemclause]"
+        }
+
+        $xpath
+    }
+
+    # Makes a custom object out of an input stream of colon seperated k/v data
+    # ex:
+    #    creationTime: 2018-06-25T20:07:47.030Z
+    #    lastAccessTime: 2018-06-25T20:07:47.030Z
+    #    lastWriteTime: 2018-06-25T19:53:58.000Z
+    #    fileSize: 1118208
+    #    attributes: 32
+    #    numberOfLogRecords: 523
+    #    oldestRecordNumber: 1
+    #
+    # -> object with named members. Any member name ending in Time is pre-cast to [datetime].
+    function Parse-SemicolonKVData
+    {
+        BEGIN { $o = new-object psobject }
+        PROCESS {
+            # split at the first semi
+            $null = $_ -match '^([^:]+)\s*:\s*(.*)$'
+            $k = $matches[1]
+            $v = $matches[2]
+            if ($k -like '*time') {
+                $o | Add-Member -NotePropertyName $matches[1] -NotePropertyValue ([datetime]$matches[2])
+            } else {
+                $o | Add-Member -NotePropertyName $matches[1] -NotePropertyValue $matches[2]
+            }
+
+        }
+        END { $o }
+    }
+
+    # count the number of events in a given event log which match a given xpath query
+    #
+    # powershell's event pipeline is very slow for bulk counting when there may be many
+    # events (or simply many event channels that our caller needs to sift through)
+    # use wevtutil queries to a temporary file and then count it using its gli facility
+    function Count-EventLog
+    {
+        param(
+            [string] $path,
+            [string] $xpath
+            )
+
+        $f = New-TemporaryFile
+
+        try {
+
+            wevtutil epl /lf:true $path $f /q:$xpath /ow:true
+            $gli = wevtutil gli /lf:true $f | Parse-SemicolonKVData
+            $gli.numberOfLogRecords
+
+        } finally {
+            del -Force $f
+        }
+    }
 }
+
+# do a basic compression on the common function block, removing
+#    comment-only lines
+#    whitespace-only lines
+#    leading whitespace
+# this is observed to reduce it by about 50% in character count
+# the string transform of the block is used in session passing (job -InitializationScript) and
+# cannot exceed about 14KiB in size
+$CommonFunc = [scriptblock]::Create($(
+    ((([string]$CommonFuncBlock) -split "`n") |? { $_ -notmatch '^\s*#' } |? { $_ -notmatch '^\s*$' }) -replace '^\s+','' -join "`n"
+))
 
 # evaluate into the main session
 # without a direct assist like start-job -initialization script, passing into
@@ -3103,6 +3241,7 @@ enum ReportType
 {
     All = 0
     Summary
+    SmbConnectivity
     StorageBusCache
     StorageBusConnectivity
     StorageLatency
@@ -3798,6 +3937,8 @@ function Get-LsiEventReport
 
         # can we get an authoratative list of lsi providers? otherwise, this
         # deep filter may serve well enough to make it performant
+        # note: we should put the provider test into the xpath query as well; extend Get-FilterXpath for this
+        #    when we have another test log to work against
         $ev = Get-WinEvent -Path $_ -FilterXPath '*[System[(EventID=11)]]' -ErrorAction SilentlyContinue |? ProviderName -match "lsi" |% {
 
             new-object psobject -Property @{
@@ -3822,6 +3963,98 @@ function Get-LsiEventReport
             }
         }
     }
+}
+
+function Get-SmbConnectivityReport
+{
+    # aliases usage in this module is idiomatic, only using defaults
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+    param(
+        [parameter(Position=0, Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $Path,
+
+        [parameter(Mandatory=$true)]
+        [ReportLevelType]
+        $ReportLevel
+    )
+
+    $ReportTableBlock = {
+        param(
+            [string[]] $paths,
+            [int] $ev,
+            [datetime] $timebase,
+            [System.ConsoleColor] $warncol,
+            [string] $warn
+            )
+
+        $r = $paths |% {
+            
+            $node = "<unknown>"
+            if ($_ -match "Node_([^\\]+)\\") {
+                $node = $matches[1]
+            }
+
+            # relative time deltas in milliseconds
+            $last5 = (1000*60*5)
+            $lasthour = (1000*60*60)
+            $lastday = (1000*60*60*24)
+
+            New-Object psobject -Property @{
+                'ComputerName' = $node
+                'RDMA Last5Min' = Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $last5    -Data @{'ConnectionType'=2})
+                'RDMA LastHour' = Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lasthour -Data @{'ConnectionType'=2})
+                'RDMA LastDay' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -Data @{'ConnectionType'=2})
+
+                'TCP Last5Min' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $last5    -Data @{'ConnectionType'=1})
+                'TCP LastHour' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lasthour -Data @{'ConnectionType'=1})
+                'TCP LastDay' =   Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -Data @{'ConnectionType'=1}) 
+            }
+        }
+
+        $hdr = 'ComputerName','RDMA Last5Min','RDMA LastHour','RDMA LastDay','TCP Last5Min','TCP LastHour','TCP LastDay'
+        $rdmafail = ($r |% { $row = $_; $hdr |? {$_ -like 'RDMA*' } |% { $row.$_ }} | measure -sum).sum -ne 0
+
+        if ($rdmafail) {
+            Write-Host -ForegroundColor $warncol $warn
+        }
+
+        $r | sort -Property ComputerName | ft -Property $hdr
+    }
+
+    # get the timebase from the capture parameters
+    $Parameters = Import-Clixml (Join-Path $Path "GetParameters.XML")
+    $CaptureDate = $Parameters.TodayDate
+
+    $eventlogs = (dir $Path\Node_*\Microsoft-Windows-SmbClient-Connectivity.EVTX).FullName
+
+    $j = @()
+
+    $w = @"
+WARNING: the SMB Client is receiving RDMA disconnects. This is an error whose root"
+`t cause may be PFC/CoS misconfiguration (if RoCE) on hosts or switches, physical"
+`t issues (ex: bad cable), switch or NIC firmware issues, and will lead to severely"
+`t degraded performance."
+"@
+
+    $j += Start-Job -name 'SMB Connectivity Error Check - Disconnect Failures (Event 30804)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30804,$CaptureDate,([ConsoleColor]'Red'),$w
+
+    $w = @"
+WARNING: the SMB Client is receiving RDMA connect errors. This is an error whose root
+`t cause may be actual lack of connectivity or fundamental problems with the RDMA
+`t network fabric. Please inspect especially if in the Last5 bucket.
+"@
+
+    $j += Start-Job -name 'SMB Connectivity Error Check - Connect Failures (Event 30803)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30803,$CaptureDate,([ConsoleColor]'Yellow'),$w 
+
+    $null = $j | Wait-Job
+    $j | sort Name |% {
+
+        Write-Host -ForegroundColor Cyan $_.Name
+        Receive-Job $_
+    }
+    $j | Remove-Job
 }
 
 function Get-SummaryReport
@@ -4349,6 +4582,9 @@ function Show-SddcDiagnosticReport
         switch ($r) {
             { $_ -eq [ReportType]::Summary } {
                 Get-SummaryReport $Path -ReportLevel:$ReportLevel
+            }
+            { $_ -eq [ReportType]::SmbConnectivity } {
+                Get-SmbConnectivityReport $Path -ReportLevel:$ReportLevel
             }
             { $_ -eq [ReportType]::StorageBusCache } {
                 Get-StorageBusCacheReport $Path -ReportLevel:$ReportLevel
