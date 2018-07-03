@@ -13,9 +13,16 @@ $Module = 'PrivateCloud.DiagnosticInfo'
 $CommonFuncBlock = {
 
     # FailoverClusters is Server-only. We allow the module to run (Show) on client.
+    #
+    # Handling of import failures in Start-Job initialization blocks is special - we
+    # cannot control failure to load errors there, and need to use GM to check; neither
+    # -ErrorAction nor try/catch control propagation of the errors.
+
+    if (Get-Module -ListAvailable FailoverClusters) {
+        Import-Module FailoverClusters
+    }
 
     Import-Module CimCmdlets
-    Import-Module FailoverClusters -ErrorAction SilentlyContinue
     Import-Module NetAdapter
     Import-Module NetQos
     Import-Module SmbShare
@@ -4027,6 +4034,8 @@ function Get-SmbConnectivityReport
     $Parameters = Import-Clixml (Join-Path $Path "GetParameters.XML")
     $CaptureDate = $Parameters.TodayDate
 
+    Write-Host "This report is relative to the time of data capture: $($CaptureDate)"
+
     $eventlogs = (dir $Path\Node_*\Microsoft-Windows-SmbClient-Connectivity.EVTX).FullName
 
     $j = @()
@@ -4115,7 +4124,7 @@ function Get-SummaryReport
     # Sddc Diagnostic Archive status
     # re-emit the warnings as such so they are well-distinguished
     $f = Join-Path $Path SddcDiagnosticArchiveJob.txt
-    if (gi $f) {
+    if (gi -ErrorAction SilentlyContinue $f) {
         Write-Host "$("-"*3)`nSddc Diagnostic Archive Status`n"
         gc $f
         $f = Join-Path $Path SddcDiagnosticArchiveJobWarn.txt
