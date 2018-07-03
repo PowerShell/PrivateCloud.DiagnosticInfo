@@ -4041,10 +4041,11 @@ function Get-SmbConnectivityReport
     $j = @()
 
     $w = @"
-WARNING: the SMB Client is receiving RDMA disconnects. This is an error whose root"
-`t cause may be PFC/CoS misconfiguration (if RoCE) on hosts or switches, physical"
-`t issues (ex: bad cable), switch or NIC firmware issues, and will lead to severely"
-`t degraded performance."
+WARNING: the SMB Client is receiving RDMA disconnects. This is an error whose root
+`t cause may be PFC/CoS misconfiguration (if RoCE) on hosts or switches, physical
+`t issues (ex: bad cable), switch or NIC firmware issues, and will lead to severely
+`t degraded performance. Please inspect especially if in the Last5 bucket. Note that
+`t cluster node reboots are a natural & expected source of disconnects.
 "@
 
     $j += Start-Job -name 'SMB Connectivity Error Check - Disconnect Failures (Event 30804)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30804,$CaptureDate,([ConsoleColor]'Red'),$w
