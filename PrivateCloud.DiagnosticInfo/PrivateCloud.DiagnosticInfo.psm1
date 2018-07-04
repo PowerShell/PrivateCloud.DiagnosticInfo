@@ -597,12 +597,13 @@ function Start-CopyJob(
 
 #
 # Makes a list of cluster nodes or equivalent property-containing objects (Name/State)
-# Filtered for if they are physically responding v. cluster visible state.
+# Optionally filtered for if they are physically responding v. cluster visible state.
 #	
 
-function Get-FilteredNodeList(
+function Get-NodeList(
     [string] $Cluster,
-    [string[]] $Nodes = @()
+    [string[]] $Nodes = @(),
+    [switch] $Filter
 )
 {
     $FilteredNodes = @()
@@ -622,22 +623,29 @@ function Get-FilteredNodeList(
         }
     }
 
-    if ($NodesToPing.Count) {
+    if ($Filter) {
 
-        # Test-NetConnection is ~3s. Parallelize for the sake of larger clusters/lists of nodes.
-        $j = $NodesToPing |% {
+        if ($NodesToPing.Count) {
 
-            Start-Job -ArgumentList $_ {
-                param( $Node )
-                if (Test-Connection -ComputerName $Node.Name -Quiet) {
-                    $Node
+            # Test-NetConnection is ~3s. Parallelize for the sake of larger clusters/lists of nodes.
+            $j = $NodesToPing |% {
+
+                Start-Job -ArgumentList $_ {
+                    param( $Node )
+                    if (Test-Connection -ComputerName $Node.Name -Quiet) {
+                        $Node
+                    }
                 }
             }
-        }
 
-        $null = Wait-Job $j
-        $FilteredNodes += $j | Receive-Job 
-        $j | Remove-Job
+            $null = Wait-Job $j
+            $FilteredNodes += $j | Receive-Job 
+            $j | Remove-Job
+        }
+    } else {
+
+        # unfiltered, return all
+        $FilteredNodes += $NodesToPing
     }
 
     return $FilteredNodes
@@ -1132,7 +1140,7 @@ function Get-SddcDiagnosticInfo
         try { $ClusterName = (Get-Cluster -Name $ClusterName).Name }
         catch { Show-Error("Cluster could not be contacted. `nError="+$_.Exception.Message) }
 
-        $NodeList = Get-FilteredNodeList -Cluster $ClusterName
+        $NodeList = Get-NodeList -Cluster $ClusterName -Filter
         
         $AccessNode = $NodeList[0].Name + "." + (Get-Cluster -Name $ClusterName).Domain
 
@@ -1308,11 +1316,18 @@ function Get-SddcDiagnosticInfo
 
     #
     # Cluster Nodes
+    # Note: get unfiltered list for reporting, then filter for continued use during gather
+    # (i.e., only contact responsive nodes)
     #
 
-    try { $ClusterNodes = Get-FilteredNodeList -Cluster $ClusterName -Nodes $Nodelist }
-    catch { Show-Error "Unable to get Cluster Nodes" $_ }
+    try { $ClusterNodes = Get-NodeList -Cluster $ClusterName -Nodes $Nodelist }
+    catch { Show-Error "Unable to get Cluster Nodes for reporting" $_ }
     $ClusterNodes | Export-Clixml ($Path + "GetClusterNode.XML")
+
+    try { $ClusterNodes = Get-NodeList -Cluster $ClusterName -Nodes $Nodelist -Filter }
+    catch { Show-Error "Unable to get filtered Cluster Nodes for gathering" $_ }
+
+    # use a filtered node as the access node
     $AccessNode = $ClusterNodes[0].Name
 
     #
@@ -2500,10 +2515,10 @@ function Install-SddcDiagnosticModule
 
     switch ($psCmdlet.ParameterSetName) {
         "Cluster" {
-            $Nodes = Get-FilteredNodeList -Cluster $Cluster
+            $Nodes = Get-NodeList -Cluster $Cluster -Filter
         }
         "Node" {
-            $Nodes = Get-FilteredNodeList -Nodes $Node
+            $Nodes = Get-NodeList -Nodes $Node -Filter
         }
     }
 
@@ -2630,10 +2645,10 @@ function Confirm-SddcDiagnosticModule
 
     switch ($psCmdlet.ParameterSetName) {
         "Cluster" {
-            $Nodes = Get-FilteredNodeList -Cluster $Cluster
+            $Nodes = Get-NodeList -Cluster $Cluster -Filter
         }
         "Node" {
-            $Nodes = Get-FilteredNodeList -Nodes $Node
+            $Nodes = Get-NodeList -Nodes $Node -Filter
         }
     }
 
@@ -3043,7 +3058,7 @@ function Show-SddcDiagnosticArchiveJob
     Write-Output "Capture to path              : $Path"
     Write-Output "Capture at                   : $($At.ToString("h:mm tt"))"
 
-    $Nodes = Get-FilteredNodeList -Cluster $Cluster
+    $Nodes = Get-NodeList -Cluster $Cluster -Filter
 
     Write-Output "$('-'*20)`nPer Node Report"
     $j = $Nodes | sort Name |% {
