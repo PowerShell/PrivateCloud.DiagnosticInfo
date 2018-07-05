@@ -1428,12 +1428,6 @@ function Get-SddcDiagnosticInfo
 
                 if (Test-SddcModulePresence) {
 
-                    # generate the archive report on the node chosen as accessnode, for single instancing
-                    if ($env:COMPUTERNAME -eq $using:AccessNode) {
-
-                    }
-
-
                     $Path = $null
                     Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
 
