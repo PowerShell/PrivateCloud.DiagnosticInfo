@@ -1635,9 +1635,9 @@ function Get-SddcDiagnosticInfo
 
     $JobStatic += $($ClusterNodes).Name |% {
 
-        Start-Job -Name "System Info: $_" -ArgumentList $_,$ClusterDomain -InitializationScript $CommonFunc {
+        Start-Job -Name "System Info: $_" -ArgumentList $_,$ClusterDomain,$AccessNode -InitializationScript $CommonFunc {
 
-            param($NodeName,$DomainName)
+            param($NodeName,$DomainName,$AccessNode)
 
             $Node = "$NodeName.$DomainName"
             $LocalNodeDir = Get-NodePath $using:Path $NodeName
@@ -1651,7 +1651,9 @@ function Get-SddcDiagnosticInfo
             #
             # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
             # will be trimmed to "cmd" for logging
-            # _C_ token will be replaced with node for cimsession/computername callouts
+            # _A_ token will be replaced with the chosen cluster access node
+            # _C_ token will be replaced with node fqdn for cimsession/computername callouts
+            # _N_ token will be replaced with node non-fqdn
             $CmdsToLog = "Get-NetAdapter -CimSession _C_",
                             "Get-NetAdapterAdvancedProperty -CimSession _C_",
                             "Get-NetIpAddress -CimSession _C_",
@@ -1676,7 +1678,8 @@ function Get-SddcDiagnosticInfo
                             "Get-NetLbfoTeamMember -CimSession _C_",
                             "Get-SmbServerNetworkInterface -CimSession _C_",
                             "Get-HotFix -ComputerName _C_",
-                            "Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_"
+                            "Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_",
+                            "Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_"
 
             foreach ($cmd in $CmdsToLog)
             {
@@ -1684,10 +1687,10 @@ function Get-SddcDiagnosticInfo
                 $LocalFile = (Join-Path $LocalNodeDir (($cmd.split(' '))[0] -replace "-",""))
                 try {
 
-                    $out = iex ($cmd -replace '_C_',$Node)
+                    $out = iex ($cmd -replace '_C_',$Node -replace '_N_',$NodeName -replace '_A_',$AccessNode)
 
                     # capture as txt and xml for quick analysis according to taste
-                    $out | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
+                    $out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
                     $out | Export-Clixml -Path "$LocalFile.xml"
 
                 } catch {
@@ -3648,7 +3651,7 @@ function Get-StorageLatencyReport
 
         # parallelize processing of per-node event logs
 
-        $j += Start-Job -Name $node -ArgumentList $($ReportLevel -eq [ReportLevelType]::Full) {
+        $j += Start-Job -InitializationScript $CommonFunc -Name $node -ArgumentList $($ReportLevel -eq [ReportLevelType]::Full) {
 
             param($dofull)
 
@@ -3673,7 +3676,7 @@ function Get-StorageLatencyReport
             # less efficient and this is already somewhat time consuming.
         
             # the erroraction handles (potentially) disabled logs, which have no events
-            Get-WinEvent -Path $using:file -ErrorAction SilentlyContinue |? Id -eq 505 |% {
+            Get-WinEvent -Path $using:file -FilterXPath (Get-FilterXpath -Event 505) -ErrorAction SilentlyContinue |% {
 
                 # must cast through the XML representation of the event to get named properties
                 # hash them
