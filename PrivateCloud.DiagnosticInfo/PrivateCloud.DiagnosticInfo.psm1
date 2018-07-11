@@ -4709,7 +4709,7 @@ function Show-SddcDiagnosticStorageLatencyReport
 
         [ValidateRange(0,100000)]
         [int]
-        $CutoffMs = 200
+        $CutoffMs = 500
     )
 
     # Common header for path validation
@@ -4736,7 +4736,12 @@ function Show-SddcDiagnosticStorageLatencyReport
         $HoursOfEvents = $Days * 24
     }
 
+    $t0 = Get-Date
+
     Get-StorageLatencyReport -Path $Path -ReportLevel $ReportLevel -CutoffMs $CutoffMs -TimeBase $CaptureDate -HoursOfEvents $HoursOfEvents
+
+    $td = (Get-Date) - $t0
+    Write-Output ("Report took {0:N2} seconds" -f $td.TotalSeconds)
 }
 
 <#
