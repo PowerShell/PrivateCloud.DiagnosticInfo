@@ -66,6 +66,7 @@ Description = 'Evaluates and Reports Windows Software Defined Data Center (SDDC)
 # Functions to export from this module
 FunctionsToExport = 'Get-SddcDiagnosticInfo',
                     'Show-SddcDiagnosticReport',
+                    'Show-SddcDiagnosticStorageLatencyReport',
                     'Install-SddcDiagnosticModule',
                     'Confirm-SddcDiagnosticModule',
                     'Register-SddcDiagnosticArchiveJob',

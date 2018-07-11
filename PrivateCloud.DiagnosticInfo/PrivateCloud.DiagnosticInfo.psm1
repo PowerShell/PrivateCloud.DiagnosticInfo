@@ -341,8 +341,9 @@ $CommonFuncBlock = {
     # data: table of k=v the event(s) must match
     #
     # events are OR'd
-    # time is AND
-    # data is AND
+    # time is AND'd
+    # dataand is AND'd
+    # dataor is dataand AND dataor OR'd (e.g. (a and b and c) and (d or e or f)
     function Get-FilterXpath
     {
         [CmdletBinding(PositionalBinding=$false)]
@@ -354,7 +355,8 @@ $CommonFuncBlock = {
             [ValidateScript({$_ -gt 0})]
             [int] $TimeDeltaMs = -1,
 
-            [hashtable] $Data = $null
+            [hashtable] $DataAnd = @{},
+            [hashtable] $DataOr = @{}
             )
 
         # first build out the system property clauses
@@ -362,7 +364,7 @@ $CommonFuncBlock = {
 
         # build the event id clause
         if ($Event.Count) {
-            $c = $Event |% { "(EventID=$_)" }
+            $c = $Event |% { "EventID = $_" }
             # bracket eventids iff there are multiple
             if ($Event.Count -gt 1) {
                 $systemclauses += "(" + ($c -join " or ") + ")"
@@ -387,17 +389,24 @@ $CommonFuncBlock = {
         $systemclause = "System[" + ($systemclauses -join " and ") + "]"
 
         # now build data clauses
-        if ($data) {
-            $c = @($Data.Keys | sort |% {
-                "(Data[@Name='" + $_ + "'] and (Data=" + $Data[$_] + "))"
-            })
+        $cAnd = @($DataAnd.Keys | sort |% {
+            "Data[@Name = '" + $_ + "'] " + $DataAnd[$_]
+        }) -join " and "
 
-            $dataclause = "EventData[" + ($c -join " and ") + "]"
+        $cOr = @($DataOr.Keys | sort |% {
+            "Data[@Name = '" + $_ + "'] " + $DataOr[$_]
+        }) -join " or "
+
+        # both and'd, one or the other, or neither
+        if ($cAnd.Length -and $cOr.Length) {
+            $dataclause = "EventData[$cAnd and ($cOr)]"
+        } elseif ($cAnd.Length -or $cOr.Length) {
+            $dataclause = "EventData[$($cAnd + $cOr)]"
         } else {
             $dataclause = $null
         }
 
-        # and join with and
+        # and join system+data with and
         if ($dataclause) {
             $xpath = "*[$systemclause and $dataclause]"
         } else {
@@ -459,6 +468,23 @@ $CommonFuncBlock = {
         } finally {
             del -Force $f
         }
+    }
+
+    function Get-EventDataHash
+    {
+
+        param(
+            [System.Diagnostics.Eventing.Reader.EventLogRecord] $event
+        )
+
+        # must cast through the XML representation of the event to get named properties
+        # insert text into hash and return
+        $xh = @{}
+        $x = ([xml]$event.ToXml()).Event.EventData.Data
+        $x |% {
+            $xh[$_.Name] = $_.'#text'
+        }
+        $xh
     }
 }
 
@@ -1510,7 +1536,6 @@ function Get-SddcDiagnosticInfo
             $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
         }
         catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
-
     }
 
     $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterSharedVolume {
@@ -2101,8 +2126,7 @@ function Get-SddcDiagnosticInfo
 
         # receive any copyout errors for logging/triage
         Receive-Job $JobCopy
-        Remove-Job $JobCopyOut
-        Remove-Job $JobCopyOutNoDelete
+        Remove-Job ($JobCopyOut + $JobCopyOutNoDelete)
         Remove-Job $JobCopy
     }
 
@@ -3630,7 +3654,16 @@ function Get-StorageLatencyReport
 
         [parameter(Mandatory=$true)]
         [ReportLevelType]
-        $ReportLevel
+        $ReportLevel,
+
+        [int]
+        $CutoffMs = 0,
+        
+        [datetime]
+        $TimeBase,
+
+        [int]
+        $HoursOfEvents = -1
     )
 
     $j = @()
@@ -3649,10 +3682,28 @@ function Get-StorageLatencyReport
 
             param($dofull)
 
+            # helper function for getting list of bucketnames from x->end
+            function Get-Bucket
+            {
+                param(
+                    [int] $i,
+                    [int] $max,
+                    [string[]] $s
+                )
+
+                $i .. $max |% {
+                    $l = $_
+                    $s |% { "BucketIo$_$l" }
+                }
+            }
+
             # hash for devices, label schema, and whether values are absolute counts or split success/faul
             $buckhash = @{}
             $bucklabels = $null
             $buckvalueschema = $null
+
+            # note: cutoff bucket is 1-based, following the actual event schema labels (BucketIoCountNNN)
+            $cutoffbuck = 1
 
             $evs = @()
 
@@ -3670,93 +3721,176 @@ function Get-StorageLatencyReport
             # less efficient and this is already somewhat time consuming.
         
             # the erroraction handles (potentially) disabled logs, which have no events
-            Get-WinEvent -Path $using:file -FilterXPath (Get-FilterXpath -Event 505) -ErrorAction SilentlyContinue |% {
 
-                # must cast through the XML representation of the event to get named properties
-                # hash them
-                $x = ([xml]$_.ToXml()).Event.EventData.Data
-                $xh = @{}
-                $x |% {
-                    $xh[$_.Name] = $_.'#text'
-                }
+            # get single event from the log (if present)
+            $e = Get-WinEvent -Path $using:file -FilterXPath (Get-FilterXpath -Event 505) -ErrorAction SilentlyContinue -MaxEvents 1
 
-                # physical disk device id - string the curly to normalize later matching
-                $dev = [string] $xh['ClassDeviceGuid']
-                if ($dev -match '{(.*)}') {
-                    $dev = $matches[1]
-                }
+            if ($e) {
+
+                # use this event to determine schema and cutoff bucket (if specified)
+
+                $xh = Get-EventDataHash $e
 
                 # only need to get the bucket label schema once
                 # the number of labels and the number of bucket counts should be equal
                 # determine the count schema at the same time
-                if ($null -eq $bucklabels) {
-                    $bucklabels = $xh['IoLatencyBuckets'] -split ',\s+'
+                $bucklabels = $xh['IoLatencyBuckets'] -split ',\s+'
 
-                    # is the count scheme split (RS5) or combined (RS1)?
-                    # match 1 is the bucket type
-                    # match 2 is the value bucket number (1 .. n)
-                    if ($xh.ContainsKey("BucketIoSuccess1")) {
-                        $buckvalueschema = "^BucketIo(Success|Failed)(\d+)$"
-                    } else {
-                        $buckvalueschema = "^BucketIo(Count)(\d+)$"
-                    }
-                }
-
-                # counting array for each bucket
-                $buckvalues = @($null) * $bucklabels.length
-
-                $xh.Keys |% {
-                    if ($_ -match $buckvalueschema) {
-
-                        # the schema parses the bucket number into match 2
-                        # number is 1-based
-                        $buckvalues[([int] $matches[2]) - 1] += [int] $xh[$_]
-                    }
-                }
-
-                # if the counting array contains null entries, we got confused matching
-                # counts to the label schema
-                if ($buckvalues -contains $null) {
-                    throw "misparsed 505 event latency buckets: labels $($bucklabels.count) values $(($buckvalues | measure).count)"
-                }
-
-                if (-not $buckhash.ContainsKey($dev)) {
-                    # new device
-                    $buckhash[$dev] = $buckvalues |% { if ($_) { 1 } else { 0 }}
+                # is the count scheme split (RS5) or combined (RS1)?
+                # match 1 is the bucket type
+                # match 2 is the value bucket number (1 .. n)
+                if ($xh.ContainsKey("BucketIoSuccess1")) {
+                    $schemasplit = $true
+                    $buckvalueschema = "^BucketIo(Success|Failed)(\d+)$"
                 } else {
-                    # increment device bucket hit counts
-                    foreach ($i in 0..($buckvalues.count - 1)) {
-                        if ($buckvalues[$i]) { $buckhash[$dev][$i] += 1}
+                    $schemasplit = $false
+                    $buckvalueschema = "^BucketIo(Count)(\d+)$"
+                }
+
+                # initialize empty data element test
+                $DataOr = @{}
+
+                if ($using:CutoffMs) {
+
+                    $CutoffUs = $using:CutoffMs * 1000
+
+                    # parse the buckets to determine where the cutoff is
+                    $a = $xh['IoLatencyBuckets'] -split ',\s+' |% {
+
+                        switch -Regex ($_) {
+
+                            "^(\d+)us$" { [int] $matches[1] }
+                            "^(\d+)ms$" { ([int] $matches[1]) * 1000 }
+                            "^(\d+)\+ms$" { [int]::MaxValue }
+
+                            default { throw "misparsed storport 505 event latency bucket label $_ " }
+                        }
+                    }
+
+                    # determine which bucket contains the cutoff, and build the must-be-gtz kv
+                    foreach ($i in 0..($a.Count - 1)) {
+                        if ($CutoffUs -lt $a[$i]) {
+                            # cutoff bucket matches the event schema, which is one-based, i.e. we're putting the cutoff
+                            # at BucketIoCount3 if we found the cutoff in the 0-1-2nd array entry
+                            $cutoffbuck = $i+1
+                            break
+                        }
+                    }
+
+                    # ... build the named buckets in the event which must-be-gtz
+                    if ($schemasplit) {
+                        $buck = Get-Bucket $cutoffbuck $a.Count 'Success','Failed'
+                    } else {
+                        $buck = Get-Bucket $cutoffbuck $a.Count 'Count'
+                    }
+
+                    # ... build out the DataOor as must-be-gtz tests
+                    $DataOr = @{}
+                    $buck |% {
+                        $DataOr[$_] = "> 0"
                     }
                 }
 
-                if ($dofull -and $buckvalues[-1] -ne 0) {
-                    $evs += $(
+                # now do two things based on determining the cutoff (or lack thereof)
+                # 1. relabel the cutoff bucket (the first we will return) to indicate the lower bound of latency
+                #       - if there is no cutoff, we add 0- to indicate it contains 0-<label>
+                #       - if there is a cutoff, we add <lower bucket>- to indicate  contains events
+                #           from that latency upward, i.e. 64ms-2048ms
+                # 2. trim off the cut labels from the front of bucklabels (the length of this drives the rest)
 
-                        # events must be cracked into plain objects to survive deserialization through the session
-
-                        # base object with time/device
-                        $o = New-Object psobject -Property @{
-                            'Time' = $_.TimeCreated
-                            'Device' = [string] $_.Properties[4].Value
-                        }
-
-                        # add on the named latency buckets
-                        foreach ($i in 0..($bucklabels.count -1)) {
-                            $o | Add-Member -NotePropertyName $bucklabels[$i] -NotePropertyValue $buckvalues[$i]
-                        }
-
-                        # and emit
-                        $o
-                    )
+                if ($cutoffbuck -eq 1) {
+                    # no cutoff, prepend 0- to first entry
+                    $bucklabels[0] = "0-" + $bucklabels[0]
+                } else {
+                    # cutoff, prepend lower neighbor
+                    $bucklabels[$cutoffbuck - 1] = $bucklabels[$cutoffbuck - 2] + "-" + $bucklabels[$cutoffbuck - 1]
+                    # trim labels to the cutoff bucket and upward
+                    $bucklabels = $bucklabels[($cutoffbuck - 1) .. ($bucklabels.Count - 1)]
                 }
-            }
 
-            # return label schema, counting hash, and events
-            # labels must be en-listed to pass the pipeline as a list as opposed to individual values
-            ,$bucklabels
-            $buckhash
-            $evs 
+                # construct the xpath filter w/wo the time filter
+                # if the data element test is empty, it will not be built into the xpath query
+                if ($using:HoursOfEvents -ne -1) {
+                    $xpath = Get-FilterXpath -Event 505 -TimeBase $using:TimeBase -TimeDeltaMs ($using:HoursOfEvents * 60 * 60 * 1000) -DataOr $DataOr
+                } else {
+                    $xpath = Get-FilterXpath -Event 505 -DataOr $DataOr
+                }
+
+                # now, with schema, process all events
+                Get-WinEvent -Path $using:file -FilterXPath $xpath |% {
+
+                    $xh = Get-EventDataHash $_
+
+                    # physical disk device id - string the curly to normalize later matching
+                    $dev = [string] $xh['ClassDeviceGuid']
+                    if ($dev -match '{(.*)}') {
+                        $dev = $matches[1]
+                    }
+
+                    # counting array for each bucket
+                    $buckvalues = @($null) * $bucklabels.length
+
+                    # place all data values into the counting array
+                    $xh.Keys |% {
+                        if ($_ -match $buckvalueschema) {
+
+                            # the schema parses the bucket number into match 2
+                            # number is 1-based, as is the cutoff
+                            # this converts it to a 0-base
+                            $thisbuck = [int] $matches[2]
+                            if ($thisbuck -ge $cutoffbuck) {
+                                $buckvalues[$thisbuck - $cutoffbuck] += [int] $xh[$_]
+                            }
+                        }
+                    }
+
+                    # the counting array should not contain null entries; all buckets should be represented in the event
+                    if ($buckvalues -contains $null) {
+                        throw "misparsed 505 event latency buckets: labels $($bucklabels.count) values $(($buckvalues | measure).count)"
+                    }
+
+                    # now place the counting array into the device hash; each nonzero bucket adds +1
+                    if (-not $buckhash.ContainsKey($dev)) {
+                        # new device
+                        $buckhash[$dev] = $buckvalues |% { if ($_) { 1 } else { 0 }}
+                    } else {
+                        # increment device bucket hit counts
+                        foreach ($i in 0..($buckvalues.count - 1)) {
+                            if ($buckvalues[$i]) { $buckhash[$dev][$i] += 1}
+                        }
+                    }
+
+                    # in the full report, show
+                    # 1. all events above a cutoff, if applied
+                    # 2. or events in the highest bucket
+                    if ($dofull -and ($buckvalues[-1] -ne 0 -or $cutoffbuck -ne 1)) {
+                        $evs += $(
+
+                            # events must be cracked into plain objects to survive deserialization through the session
+
+                            # base object with time/device
+                            $o = New-Object psobject -Property @{
+                                'Time' = $_.TimeCreated
+                                'Device' = [string] $_.Properties[4].Value
+                            }
+
+                            # add on the named latency buckets
+                            foreach ($i in 0..($bucklabels.count -1)) {
+                                $o | Add-Member -NotePropertyName $bucklabels[$i] -NotePropertyValue $buckvalues[$i]
+                            }
+
+                            # and emit
+                            $o
+                        )
+                    }
+                }
+
+                # return label schema, counting hash, and events
+                # labels must be en-listed to pass the pipeline as a list as opposed to individual values
+                ,$bucklabels
+                $buckhash
+                $evs
+            }
         }
     }
 
@@ -3791,7 +3925,7 @@ function Get-StorageLatencyReport
                 @{ Label = 'Usage'; Expression = { $PhysicalDisksTable[$_.Device].Usage }}
             
     # now wait for the event processing jobs and emit the per-node reports
-    $j | wait-job| sort name |% {
+    $j | Wait-Job| sort name |% {
 
         ($bucklabels, $buckhash, $evs) = receive-job $_
         $node = $_.Name
@@ -3845,7 +3979,7 @@ function Get-StorageLatencyReport
             #  to avoid geneating the events in the first place.
             if ($ReportLevel -eq [ReportLevelType]::Full) {
 
-                Write-Output "`nHighest Bucket ($($bucklabels[-1])) Latency Events"
+                Write-Output "`nHigh Latency Events"
 
                 $n = 0
                 if ($null -ne $evs) {
@@ -4022,13 +4156,13 @@ function Get-SmbConnectivityReport
 
             New-Object psobject -Property @{
                 'ComputerName' = $node
-                'RDMA Last5Min' = Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $last5    -Data @{'ConnectionType'=2})
-                'RDMA LastHour' = Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lasthour -Data @{'ConnectionType'=2})
-                'RDMA LastDay' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -Data @{'ConnectionType'=2})
+                'RDMA Last5Min' = Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $last5    -DataAnd @{'ConnectionType'='=2'})
+                'RDMA LastHour' = Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lasthour -DataAnd @{'ConnectionType'='=2'})
+                'RDMA LastDay' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -Data @{'ConnectionType'='=2'})
 
-                'TCP Last5Min' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $last5    -Data @{'ConnectionType'=1})
-                'TCP LastHour' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lasthour -Data @{'ConnectionType'=1})
-                'TCP LastDay' =   Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -Data @{'ConnectionType'=1}) 
+                'TCP Last5Min' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $last5    -DataAnd @{'ConnectionType'='=1'})
+                'TCP LastHour' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lasthour -DataAnd @{'ConnectionType'='=1'})
+                'TCP LastDay' =   Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -DataAnd @{'ConnectionType'='=1'}) 
             }
         }
 
@@ -4507,6 +4641,106 @@ function Get-SummaryReport
 
 <#
 .SYNOPSIS
+    Show extended reports based on storage latency information collected from Get-SddcDiagnosticInfo.
+
+.DESCRIPTION
+    Show extended reports based on storage latency information collected from Get-SddcDiagnosticInfo.
+
+.PARAMETER Path
+    Path to the the logs produced by Get-SddcDiagnosticInfo. This may be a ZIP or a directory
+    containing previously unzipped content. If ZIP, it will be unzipped to the same location
+    (minus .ZIP) and will remain after reporting.
+
+.PARAMETER ReportLevel
+    Controls the level of detail in the report. By default standard reports are shown. Full
+    detail may be extensive and/or more time consuming to generate.
+
+.PARAMETER Report
+    Specifies individual reports to produce. By default all reports will be shown.
+
+.EXAMPLE
+    Show-SddcDiagnosticStorageLatencyReport -Path C:\Test.ZIP -Report Summary
+
+    Display the summary health report from the capture located in the given ZIP. The content is
+    unzipped to a directory (minus the .ZIP extension) and remains after the summary health report
+    is shown.
+
+    In this example, C:\Test would be created from C:\Test.ZIP. If the .ZIP path is specified and
+    the unzipped directory is present, the directory will be reused without re-unzipping the
+    content.
+
+.EXAMPLE
+    Show-SddcDiagnosticStorageLatencyReport -Path C:\Test.ZIP
+
+    Show all available reports available from this version of PrivateCloud.DiagnosticInfo, at standard
+    report level.
+
+.EXAMPLE
+    Show-SddcDiagnosticStorageLatencyReport -Path C:\Test.ZIP -ReportLevel Full
+
+    Show all avaliable reports, at full report level.
+#>
+
+function Show-SddcDiagnosticStorageLatencyReport
+{
+    # aliases usage in this module is idiomatic, only using defaults
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
+
+    [CmdletBinding()]
+    param(
+        [parameter(Position=0, Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $Path,
+
+        [parameter(Mandatory=$false)]
+        [ReportLevelType]
+        $ReportLevel = [ReportLevelType]::Standard,
+
+        [parameter(ParameterSetName="Days",Mandatory=$false)]
+        [ValidateRange(-1,365)]
+        [int]
+        $Days = 8,
+
+        [parameter(ParameterSetName="Hours",Mandatory=$true)]
+        [ValidateRange(-1,72)]
+        [int]
+        $Hours,
+
+        [ValidateRange(0,100000)]
+        [int]
+        $CutoffMs = 200
+    )
+
+    # Common header for path validation
+
+    $Path = (gi $Path).FullName
+
+    if (-not (Test-Path $Path)) {
+        Write-Error "Path is not accessible. Please check and try again: $Path"
+        return
+    }
+
+    # Extract ZIP if neccesary
+    $Path = Check-ExtractZip $Path
+
+    # get the timebase from the capture parameters
+    $Parameters = Import-Clixml (Join-Path $Path "GetParameters.XML")
+    $CaptureDate = $Parameters.TodayDate
+
+    if ($Hours -eq -1 -or $Days -eq -1) {
+        $HoursOfEvents = -1
+    } elseif ($Hours) {
+        $HoursOfEvents = $Hours
+    } else {
+        $HoursOfEvents = $Days * 24
+    }
+
+    Get-StorageLatencyReport -Path $Path -ReportLevel $ReportLevel -CutoffMs $CutoffMs -TimeBase $CaptureDate -HoursOfEvents $HoursOfEvents
+}
+
+<#
+.SYNOPSIS
     Show diagnostic reports based on information collected from Get-SddcDiagnosticInfo.
 
 .DESCRIPTION
@@ -4642,6 +4876,7 @@ New-Alias -Value Show-SddcDiagnosticReport -Name Get-PCStorageReport
 
 Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
     'Show-SddcDiagnosticReport',
+    'Show-SddcDiagnosticStorageLatencyReport',
     'Install-SddcDiagnosticModule',
     'Confirm-SddcDiagnosticModule',
     'Register-SddcDiagnosticArchiveJob',
