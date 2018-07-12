@@ -3666,6 +3666,23 @@ function Get-StorageLatencyReport
         $HoursOfEvents = -1
     )
 
+    # comment on limits/base
+    if ($CutoffMs) {
+        Write-Output "Latency Cutoff: report limited to IO of $($CutoffMs)ms and higher (as limited by distribution buckets)"
+    } else {
+        Write-Output "Latency Cutoff: none, report will show the complete IO latency distribution"
+    }
+    if ($HoursOfEvents -eq -1) {
+        Write-Output "Time Cutoff   : none, report will show the full available IO history"
+    } else {
+        Write-Output "Time Cutoff   : report will show IO history from $($TimeBase.ToString()) for the prior $HoursOfEvents hours"
+    }
+
+    # comment if neither limit is being used
+    if (-not $CutoffMs -or $HoursOfEvents -eq -1) {
+        write-output "NOTE: Show-SddcDiagnosticStorageLatencyReport provides access to time/latency cutoff limits which may significantly speed up reporting when focused on recent high latency events"
+    }
+
     $j = @()
 
     dir $Path\Node_*\Microsoft-Windows-Storage-Storport-Operational.EVTX | sort -Property FullName |% {
@@ -4158,7 +4175,7 @@ function Get-SmbConnectivityReport
                 'ComputerName' = $node
                 'RDMA Last5Min' = Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $last5    -DataAnd @{'ConnectionType'='=2'})
                 'RDMA LastHour' = Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lasthour -DataAnd @{'ConnectionType'='=2'})
-                'RDMA LastDay' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -Data @{'ConnectionType'='=2'})
+                'RDMA LastDay' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -DataAnd @{'ConnectionType'='=2'})
 
                 'TCP Last5Min' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $last5    -DataAnd @{'ConnectionType'='=1'})
                 'TCP LastHour' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lasthour -DataAnd @{'ConnectionType'='=1'})
