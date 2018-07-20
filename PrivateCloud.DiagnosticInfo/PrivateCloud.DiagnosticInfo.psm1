@@ -1935,11 +1935,14 @@ function Get-SddcDiagnosticInfo
 
     $ShareStatus | Export-Clixml ($Path + "ShareStatus.XML")
 
+    Show-Update "SMB Share Open Files"
+
     try {
         $o = Get-SmbOpenFile -CimSession $AccessNode
         $o | Export-Clixml ($Path + "GetSmbOpenFile.XML") }
     catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
     
+    Show-Update "SMB Share Witness"
 
     try {
         $o = Get-SmbWitnessClient -CimSession $AccessNode
