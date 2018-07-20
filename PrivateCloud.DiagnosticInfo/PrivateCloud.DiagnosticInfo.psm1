@@ -47,7 +47,7 @@ $CommonFuncBlock = {
             Write-Error $Message -ErrorAction Stop
         }
     }
- 
+
     #
     # Shows warning, script continues
     #
@@ -221,14 +221,14 @@ $CommonFuncBlock = {
     #
     # Count number of elements in an array, including checks for $null or single object
     #
-    function NCount { 
-        Param ([object] $Item) 
+    function NCount {
+        Param ([object] $Item)
         if ($null -eq $Item) {
             $Result = 0
         } else {
             if ($Item.GetType().BaseType.Name -eq "Array") {
                 $Result = ($Item).Count
-            } else { 
+            } else {
                 $Result = 1
             }
         }
@@ -259,6 +259,7 @@ $CommonFuncBlock = {
                         'Microsoft-Windows-NDIS',
                         'Microsoft-Windows-Network',
                         'Microsoft-Windows-NTFS',
+                        'Microsoft-Windows-Partition',
                         'Microsoft-Windows-REFS',
                         'Microsoft-Windows-ResumeKeyFilter',
                         'Microsoft-Windows-SMB',
@@ -624,7 +625,7 @@ function Start-CopyJob(
 #
 # Makes a list of cluster nodes or equivalent property-containing objects (Name/State)
 # Optionally filtered for if they are physically responding v. cluster visible state.
-#	
+#
 
 function Get-NodeList(
     [string] $Cluster,
@@ -634,7 +635,7 @@ function Get-NodeList(
 {
     $FilteredNodes = @()
     $NodesToPing = @()
-            
+
     if ($Nodes.Count) {
         $NodesToPing += $Nodes |% { New-Object -TypeName PSObject -Property @{ "Name" = $_; "State" = "Up" }}
     } else {
@@ -665,7 +666,7 @@ function Get-NodeList(
             }
 
             $null = Wait-Job $j
-            $FilteredNodes += $j | Receive-Job 
+            $FilteredNodes += $j | Receive-Job
             $j | Remove-Job
         }
     } else {
@@ -681,39 +682,39 @@ function Get-NodeList(
 #  End Helper functions                           #
 ##################################################>
 
-<# 
-.SYNOPSIS 
+<#
+.SYNOPSIS
     Get state and diagnostic information for all Software-Defined DataCenter (SDDC) features in a Windows Server 2016 cluster.
 
-.DESCRIPTION 
+.DESCRIPTION
     Get state and diagnostic information for all Software-Defined DataCenter (SDDC) features in a Windows Server 2016 cluster.
     Run from one of the nodes of the cluster or specify a cluster name, or specify a set of nodes directly. Results are saved
     to a ZIP archive for later review and analysis.
 
-.LINK 
+.LINK
     To provide feedback and contribute visit https://github.com/PowerShell/PrivateCloud.Health
 
-.EXAMPLE 
+.EXAMPLE
     Get-SddcDiagnosticInfo
- 
+
     Targets the cluster the local computer is a member of.
     Uses the default temporary working folder at $env:USERPROFILE\HealthTest
     Saves the zipped results at $env:USERPROFILE\HealthTest-<cluster>-<date>.ZIP
 
-.EXAMPLE 
+.EXAMPLE
     Get-SddcDiagnosticInfo -WriteToPath C:\Test
- 
+
     Uses the specified folder as the temporary working folder. This does not change the location of
     the zipped results.
 
-.EXAMPLE 
+.EXAMPLE
     Get-SddcDiagnosticInfo -ClusterName Cluster1
- 
+
     Targets the specified cluster, Cluster1.
 
-.EXAMPLE 
+.EXAMPLE
     Get-SddcDiagnosticInfo -ReadFromPath C:\Test.ZIP
- 
+
     Display the summary health report from the capture located in the given ZIP. The content is
     unzipped to a directory (minus the .ZIP extension) and remains after the summary health report
     is shown.
@@ -819,12 +820,12 @@ Include a performance counter capture.
 Include Storage Reliability counters. This may incur a short but observable latency cost on the
 physical disks due to varying overhead in their internal handling of SMART queries.
 
-#> 
+#>
 
 function Get-SddcDiagnosticInfo
 {
     # aliases usage in this module is idiomatic, only using defaults
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
 
     #
     # Parameter sets:
@@ -847,7 +848,7 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="WriteC", Position=1, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $ClusterName = ".",
-        
+
         [parameter(ParameterSetName="WriteN", Position=1, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
         [string[]] $Nodelist = @(),
@@ -855,7 +856,7 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="Read", Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
         [string] $ReadFromPath = "",
-        
+
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
@@ -869,7 +870,7 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [switch] $ProcessCounter,
-        
+
         [parameter(ParameterSetName="M", Mandatory=$true)]
         [switch] $MonitoringMode,
 
@@ -917,7 +918,7 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [ValidateRange(1,1000)]
         [int] $ExpectedPools,
-    
+
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [ValidateRange(1,10000)]
@@ -955,17 +956,17 @@ function Get-SddcDiagnosticInfo
     Set-StrictMode -Version Latest
 
     function VolumeToPath {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
             if ($_.VolumeID -eq $Volume) { $Result = $_.CSVPath }
              }
-        return $Result	
+        return $Result
     }
 
     function VolumeToCSV {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -973,9 +974,9 @@ function Get-SddcDiagnosticInfo
         }
         return $Result
     }
-    
+
     function VolumeToVD {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -985,7 +986,7 @@ function Get-SddcDiagnosticInfo
     }
 
     function VolumeToShare {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -995,13 +996,13 @@ function Get-SddcDiagnosticInfo
     }
 
     function VolumeToResiliency {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
-            if ($_.VolumeID -eq $Volume) { 
+            if ($_.VolumeID -eq $Volume) {
                 $Result = $_.VDResiliency+","+$_.VDCopies
-                if ($_.VDEAware) { 
+                if ($_.VDEAware) {
                     $Result += ",E"
                 } else {
                     $Result += ",NE"
@@ -1012,7 +1013,7 @@ function Get-SddcDiagnosticInfo
     }
 
     function VolumeToColumns {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -1022,7 +1023,7 @@ function Get-SddcDiagnosticInfo
     }
 
     function CSVToShare {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -1032,7 +1033,7 @@ function Get-SddcDiagnosticInfo
     }
 
     function VolumeToPool {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -1042,7 +1043,7 @@ function Get-SddcDiagnosticInfo
     }
 
     function CSVToVD {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -1052,7 +1053,7 @@ function Get-SddcDiagnosticInfo
     }
 
     function CSVToPool {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -1060,9 +1061,9 @@ function Get-SddcDiagnosticInfo
         }
         return $Result
     }
-    
+
     function CSVToNode {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -1072,7 +1073,7 @@ function Get-SddcDiagnosticInfo
     }
 
     function VolumeToCSVName {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -1080,9 +1081,9 @@ function Get-SddcDiagnosticInfo
         }
         return $Result
     }
-    
+
     function CSVStatus {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -1090,9 +1091,9 @@ function Get-SddcDiagnosticInfo
         }
         return $Result
     }
-                
+
     function PoolOperationalStatus {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -1102,7 +1103,7 @@ function Get-SddcDiagnosticInfo
     }
 
     function PoolHealthStatus {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -1125,7 +1126,7 @@ function Get-SddcDiagnosticInfo
     }
 
     function VDOperationalStatus {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
@@ -1135,13 +1136,13 @@ function Get-SddcDiagnosticInfo
     }
 
     function VDHealthStatus {
-        Param ([String] $Volume) 
+        Param ([String] $Volume)
         if ($null -eq $Associations) { Show-Error("No device associations present.") }
         $Result = ""
         $Associations |% {
             if ($_.VolumeId -eq $Volume) { $Result = $_.HealthStatus }
         }
-        return $Result    
+        return $Result
     }
 
     #
@@ -1151,23 +1152,23 @@ function Get-SddcDiagnosticInfo
     $OS = Get-CimInstance -ClassName Win32_OperatingSystem
     $S2DEnabled = $false
 
-    if ([uint64]$OS.BuildNumber -lt 14393) { 
+    if ([uint64]$OS.BuildNumber -lt 14393) {
         Show-Error("Wrong OS Version - Need at least Windows Server 2016. You are running - $($OS.Name) BuildNumber $($OS.BuildNumber)")
     }
- 
-    if (-not (Get-Command -Module FailoverClusters)) { 
-        Show-Error("Cluster PowerShell not available. Download the Windows Failover Clustering RSAT tools.") 
+
+    if (-not (Get-Command -Module FailoverClusters)) {
+        Show-Error("Cluster PowerShell not available. Download the Windows Failover Clustering RSAT tools.")
     }
 
     function StartMonitoring {
-        Show-Update "Entered continuous monitoring mode. Storage Infrastucture information will be refreshed every 3-6 minutes" -ForegroundColor Yellow    
+        Show-Update "Entered continuous monitoring mode. Storage Infrastucture information will be refreshed every 3-6 minutes" -ForegroundColor Yellow
         Show-Update "Press Ctrl + C to stop monitoring" -ForegroundColor Yellow
 
         try { $ClusterName = (Get-Cluster -Name $ClusterName).Name }
         catch { Show-Error("Cluster could not be contacted. `nError="+$_.Exception.Message) }
 
         $NodeList = Get-NodeList -Cluster $ClusterName -Filter
-        
+
         $AccessNode = $NodeList[0].Name + "." + (Get-Cluster -Name $ClusterName).Domain
 
         try { $Volumes = Get-Volume -CimSession $AccessNode  }
@@ -1180,7 +1181,7 @@ function Get-SddcDiagnosticInfo
             $SmbShares = Get-SmbShare -CimSession $AccessNode
             $Associations = Get-VirtualDisk -CimSession $AccessNode |% {
 
-                $o = $_ | Select-Object FriendlyName, CSVName, CSVNode, CSVPath, CSVVolume, 
+                $o = $_ | Select-Object FriendlyName, CSVName, CSVNode, CSVPath, CSVVolume,
                 ShareName, SharePath, VolumeID, PoolName, VDResiliency, VDCopies, VDColumns, VDEAware
 
                 $AssocCSV = $_ | Get-ClusterSharedVolume -Cluster $ClusterName
@@ -1191,9 +1192,9 @@ function Get-SddcDiagnosticInfo
                     $o.CSVPath = $AssocCSV.SharedVolumeInfo.FriendlyVolumeName
                     if ($o.CSVPath.Length -ne 0) {
                         $o.CSVVolume = $o.CSVPath.Split("\")[2]
-                    }     
+                    }
                     $AssocLike = $o.CSVPath+"\*"
-                    $AssocShares = $SmbShares |? Path -like $AssocLike 
+                    $AssocShares = $SmbShares |? Path -like $AssocLike
                     $AssocShare = $AssocShares | Select-Object -First 1
                     if ($AssocShare) {
                         $o.ShareName = $AssocShare.Name
@@ -1209,12 +1210,12 @@ function Get-SddcDiagnosticInfo
             $AssocPool = Get-StoragePool -CimSession $AccessNode -ErrorAction SilentlyContinue
             $AssocPool |% {
                 $AssocPName = $_.FriendlyName
-                Get-StoragePool -CimSession $AccessNode -FriendlyName $AssocPName | 
+                Get-StoragePool -CimSession $AccessNode -FriendlyName $AssocPName |
                 Get-VirtualDisk -CimSession $AccessNode |% {
                     $AssocVD = $_
                     $Associations |% {
-                        if ($_.FriendlyName -eq $AssocVD.FriendlyName) { 
-                            $_.PoolName = $AssocPName 
+                        if ($_.FriendlyName -eq $AssocVD.FriendlyName) {
+                            $_.PoolName = $AssocPName
                             $_.VDResiliency = $AssocVD.ResiliencySettingName
                             $_.VDCopies = $AssocVD.NumberofDataCopies
                             $_.VDColumns = $AssocVD.NumberofColumns
@@ -1232,23 +1233,23 @@ function Get-SddcDiagnosticInfo
 
         [System.Console]::Clear()
 
-        $Volumes |? FileSystem -eq CSVFS | Sort-Object SizeRemaining | 
-        Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.Path); "[$(PoolOperationalStatus($_.Path))/$(PoolHealthStatus($_.Path))] " + $poolName};Label="[OpStatus/Health] Pool"}, 
-        @{Expression={(PoolHealthyPDs(VolumeToPool($_.Path)))};Label="HealthyPhysicalDisks"; Align="Center"}, 
-        @{Expression={$vd = VolumeToVD($_.Path);  "[$(VDOperationalStatus($_.Path))/$(VDHealthStatus($_.Path))] "+$vd};Label="[OpStatus/Health] VirtualDisk"}, 
+        $Volumes |? FileSystem -eq CSVFS | Sort-Object SizeRemaining |
+        Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.Path); "[$(PoolOperationalStatus($_.Path))/$(PoolHealthStatus($_.Path))] " + $poolName};Label="[OpStatus/Health] Pool"},
+        @{Expression={(PoolHealthyPDs(VolumeToPool($_.Path)))};Label="HealthyPhysicalDisks"; Align="Center"},
+        @{Expression={$vd = VolumeToVD($_.Path);  "[$(VDOperationalStatus($_.Path))/$(VDHealthStatus($_.Path))] "+$vd};Label="[OpStatus/Health] VirtualDisk"},
         @{Expression={$csvVolume = VolumeToCSV($_.Path); "[" + $_.HealthStatus + "] " + $csvVolume};Label="[Health] CSV Volume"},
-        @{Expression={$csvName = VolumeToCSVName($_.Path); $csvStatus = CSVStatus($_.Path);  " [$csvStatus] " + $csvName};Label="[Status] CSV Name"}, 
-        @{Expression={CSVToNode(VolumeToCSV($_.Path))};Label="Volume Owner"},   
-        @{Expression={VolumeToShare($_.Path)};Label="Share Name"}, 
-        @{Expression={$VolResiliency = VolumeToResiliency($_.Path); $volColumns = VolumeToColumns($_.Path); "$VolResiliency,$volColumns" +"Col" };Label="Volume Configuration"},        
-        @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"},  
-        @{Expression={"{0:N2}" -f ($_.SizeRemaining/$_.Size*100)};Label="Avail%";Width=11;Align="Right"}         
-        
+        @{Expression={$csvName = VolumeToCSVName($_.Path); $csvStatus = CSVStatus($_.Path);  " [$csvStatus] " + $csvName};Label="[Status] CSV Name"},
+        @{Expression={CSVToNode(VolumeToCSV($_.Path))};Label="Volume Owner"},
+        @{Expression={VolumeToShare($_.Path)};Label="Share Name"},
+        @{Expression={$VolResiliency = VolumeToResiliency($_.Path); $volColumns = VolumeToColumns($_.Path); "$VolResiliency,$volColumns" +"Col" };Label="Volume Configuration"},
+        @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"},
+        @{Expression={"{0:N2}" -f ($_.SizeRemaining/$_.Size*100)};Label="Avail%";Width=11;Align="Right"}
+
         StartMonitoring
     }
 
     if ($MonitoringMode) {
-        StartMonitoring 
+        StartMonitoring
     }
 
     #
@@ -1317,13 +1318,13 @@ function Get-SddcDiagnosticInfo
     # XXX note expectedpools with S2D -> 1. Should we force/set?
     #
 
-    $Parameters = "" | Select-Object TodayDate, ExpectedNodes, ExpectedNetworks, ExpectedVolumes, 
+    $Parameters = "" | Select-Object TodayDate, ExpectedNodes, ExpectedNetworks, ExpectedVolumes,
     ExpectedPhysicalDisks, ExpectedPools, ExpectedEnclosures, ExpectedDedupVolumes, HoursOfEvents, Version
     $TodayDate = Get-Date
     $Parameters.TodayDate = $TodayDate
     $Parameters.ExpectedNodes = $ExpectedNodes
-    $Parameters.ExpectedNetworks = $ExpectedNetworks 
-    $Parameters.ExpectedVolumes = $ExpectedVolumes 
+    $Parameters.ExpectedNetworks = $ExpectedNetworks
+    $Parameters.ExpectedVolumes = $ExpectedVolumes
     $Parameters.ExpectedDedupVolumes = $ExpectedDedupVolumes
     $Parameters.ExpectedPhysicalDisks = $ExpectedPhysicalDisks
     $Parameters.ExpectedPools = $ExpectedPools
@@ -1360,7 +1361,7 @@ function Get-SddcDiagnosticInfo
     # Get-Cluster
     #
 
-    try { 
+    try {
         # discover name if called with default dot form and/or node list
         if ($ClusterName -eq ".") {
             foreach ($cn in $ClusterNodes)
@@ -1379,7 +1380,7 @@ function Get-SddcDiagnosticInfo
         $Cluster | Export-Clixml ($Path + "GetCluster.XML")
         $ClusterName = $Cluster.Name + "." + $Cluster.Domain
         $S2DEnabled = $Cluster.S2DEnabled
-        $ClusterDomain = $Cluster.Domain 
+        $ClusterDomain = $Cluster.Domain
 
         Write-Host "Cluster name               : $ClusterName"
     }
@@ -1389,7 +1390,7 @@ function Get-SddcDiagnosticInfo
         Write-Error "Cluster service was not running on any node, some information will be unavailable"
         $ClusterName = $null;
         $ClusterDomain = "";
-        
+
         Write-Host "Cluster name               : Unavailable, Cluster is not online on any node"
     }
     Write-Host "Access node                : $AccessNode`n"
@@ -1405,7 +1406,7 @@ function Get-SddcDiagnosticInfo
     #
 
     $DedupEnabled = $true
-    if ($(Invoke-Command -ComputerName $AccessNode {(-not (Get-Command -Module Deduplication))} )) { 
+    if ($(Invoke-Command -ComputerName $AccessNode {(-not (Get-Command -Module Deduplication))} )) {
         $DedupEnabled = $false
         if ($S2DEnabled -ne $true) {
             Show-Warning "Deduplication PowerShell not installed on cluster node."
@@ -1457,7 +1458,7 @@ function Get-SddcDiagnosticInfo
                     $Path = $null
                     Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
 
-                    # emit 
+                    # emit
                     & {
                         # filter archive?
                         if ($using:DaysOfArchive -ne -1) {
@@ -1485,15 +1486,15 @@ function Get-SddcDiagnosticInfo
                     }
                 }
             }
-        
+
             # since the archive directory is configurable, we always need to specify the
-            # destination within the capture - it may be \some\dir\foo, but we want it to be 
+            # destination within the capture - it may be \some\dir\foo, but we want it to be
             # node_xxx\SddcDiagnosticArchive in the capture.
             #
             # we add a member to the jobs to indicate this. also rename them to indicate the
             # activity in these jobs, so we report runtime in a more useful way.
             $j.ChildJobs |% {
-                $_ | Add-Member -NotePropertyName Destination -NotePropertyValue SddcDiagnosticArchive   
+                $_ | Add-Member -NotePropertyName Destination -NotePropertyValue SddcDiagnosticArchive
             }
 
             # and add to the copyout-nodelete set
@@ -1506,15 +1507,15 @@ function Get-SddcDiagnosticInfo
     Show-Update "Start gather of cluster configuration ..."
 
     $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterGroup {
-        try { 
-            $o = Get-ClusterGroup -Cluster $using:AccessNode 
+        try {
+            $o = Get-ClusterGroup -Cluster $using:AccessNode
             $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
         }
         catch { Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
     }
 
     $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterNetwork {
-        try { 
+        try {
             $o = Get-ClusterNetwork -Cluster $using:AccessNode
             $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
         }
@@ -1522,7 +1523,7 @@ function Get-SddcDiagnosticInfo
     }
 
     $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResource {
-        try {  
+        try {
             $o = Get-ClusterResource -Cluster $using:AccessNode
             $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
         }
@@ -1531,7 +1532,7 @@ function Get-SddcDiagnosticInfo
     }
 
     $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResourceParameter {
-        try {  
+        try {
             $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
             $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
         }
@@ -1539,7 +1540,7 @@ function Get-SddcDiagnosticInfo
     }
 
     $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterSharedVolume {
-        try {  
+        try {
             $o = Get-ClusterSharedVolume -Cluster $using:AccessNode
             $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
         }
@@ -1550,11 +1551,11 @@ function Get-SddcDiagnosticInfo
     Show-Update "Start gather of driver information ..."
 
     $ClusterNodes.Name |% {
-        
+
         $node = $_
 
         $JobStatic += Start-Job -InitializationScript $CommonFunc -Name "Driver Information: $node" {
-            try { $o = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node }       
+            try { $o = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node }
             catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
             $o | Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "GetDrivers.XML")
         }
@@ -1563,13 +1564,13 @@ function Get-SddcDiagnosticInfo
     # consider using this as the generic copyout job set
     # these are gathers which are not remotable, which we run remote and copy back results for
     # keep control of which gathers are fast and therefore for which serialization is not a major issue
-    
+
     Show-Update "Start gather of verifier ..."
-        
+
     $JobCopyOut += Invoke-Command -ComputerName $($ClusterNodes).Name -AsJob -JobName Verifier {
 
         # import common functions
-        . ([scriptblock]::Create($using:CommonFunc)) 
+        . ([scriptblock]::Create($using:CommonFunc))
 
         # Verifier
 
@@ -1591,7 +1592,7 @@ function Get-SddcDiagnosticInfo
             $JobCopyOut += Invoke-Command -ComputerName $_ -AsJob -JobName GetNetView {
 
                 # import common functions
-                . ([scriptblock]::Create($using:CommonFunc)) 
+                . ([scriptblock]::Create($using:CommonFunc))
 
                 $NodePath = [System.IO.Path]::GetTempPath()
 
@@ -1640,14 +1641,14 @@ function Get-SddcDiagnosticInfo
     }
 
     # Events, cmd, reports, et.al.
-    Show-Update "Start gather of system info, cluster/health logs, reports and dump files ..." 
+    Show-Update "Start gather of system info, cluster/health logs, reports and dump files ..."
 
-    $JobStatic += Start-Job -Name ClusterLogs { 
+    $JobStatic += Start-Job -Name ClusterLogs {
         $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime
     }
 
     if ($S2DEnabled) {
-        $JobStatic += Start-Job -Name ClusterHealthLogs { 
+        $JobStatic += Start-Job -Name ClusterHealthLogs {
             $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -Health -UseLocalTime
         }
     }
@@ -1690,7 +1691,7 @@ function Get-SddcDiagnosticInfo
                             "Get-NetAdapterRss -CimSession _C_",
                             "Get-NetAdapterRdma -CimSession _C_",
                             "Get-NetAdapterIPsecOffload -CimSession _C_",
-                            "Get-NetAdapterPacketDirect -CimSession _C_", 
+                            "Get-NetAdapterPacketDirect -CimSession _C_",
                             "Get-NetAdapterRsc -CimSession _C_",
                             "Get-NetLbfoTeam -CimSession _C_",
                             "Get-NetLbfoTeamNic -CimSession _C_",
@@ -1727,11 +1728,11 @@ function Get-SddcDiagnosticInfo
 
                 try {
                     $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Minidump\*.dmp"))
-                    $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
+                    $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
                 catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $Node" }
 
                 $DmpFiles |% {
-                    try { Copy-Item $_.FullName $LocalNodeDir } 
+                    try { Copy-Item $_.FullName $LocalNodeDir }
                     catch { Show-Warning("Could not copy minidump file $_.FullName") }
                 }
 
@@ -1739,13 +1740,13 @@ function Get-SddcDiagnosticInfo
                 # Live Kernel Reports
                 ##
 
-                try { 
+                try {
                     $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "LiveKernelReports\*.dmp"))
-                    $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }                       
+                    $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
                 catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $Node" }
 
                 $DmpFiles |% {
-                    try { Copy-Item $_.FullName $LocalNodeDir } 
+                    try { Copy-Item $_.FullName $LocalNodeDir }
                     catch { Show-Warning "Could not copy LiveKernelReports file $($_.FullName)" }
                 }
             }
@@ -1754,7 +1755,7 @@ function Get-SddcDiagnosticInfo
                 $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Cluster\Reports\*.*"))
                 $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
             catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $Node" }
-                
+
             $LocalReportDir = Join-Path $LocalNodeDir "ClusterReports"
             md $LocalReportDir | Out-Null
 
@@ -1768,14 +1769,14 @@ function Get-SddcDiagnosticInfo
         }
     }
 
-    Show-Update "Starting export of events ..." 
+    Show-Update "Starting export of events ..."
 
     $JobCopyOut += Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob -JobName Events {
 
         Param([int] $Hours)
 
         # import common functions
-        . ([scriptblock]::Create($using:CommonFunc)) 
+        . ([scriptblock]::Create($using:CommonFunc))
 
         $Node = $env:COMPUTERNAME
         $NodePath = [System.IO.Path]::GetTempPath()
@@ -1799,36 +1800,36 @@ function Get-SddcDiagnosticInfo
         $SNVJob = Start-Job -Name 'StorageNodePhysicalDiskView' -ArgumentList $clusterName {
         param ($clusterName)
             $clusterCimSession = New-CimSession -ComputerName $ClusterName
-            $snvInstances = Get-CimInstance -Namespace root\Microsoft\Windows\Storage -ClassName MSFT_StorageNodeToPhysicalDisk -CimSession $clusterCimSession            
-            $allPhysicalDisks  = Get-PhysicalDisk -CimSession $clusterCimSession               
-            $SNV = @()              
+            $snvInstances = Get-CimInstance -Namespace root\Microsoft\Windows\Storage -ClassName MSFT_StorageNodeToPhysicalDisk -CimSession $clusterCimSession
+            $allPhysicalDisks  = Get-PhysicalDisk -CimSession $clusterCimSession
+            $SNV = @()
 
             Foreach ($phyDisk in $snvInstances) {
-                $SNVObject = New-Object -TypeName System.Object                       
+                $SNVObject = New-Object -TypeName System.Object
                 $pdIndex = $phyDisk.PhysicalDiskObjectId.IndexOf("PD:")
                 $pdLength = $phyDisk.PhysicalDiskObjectId.Length
-                $pdID = $phyDisk.PhysicalDiskObjectId.Substring($pdIndex+3, $pdLength-($pdIndex+4))  
+                $pdID = $phyDisk.PhysicalDiskObjectId.Substring($pdIndex+3, $pdLength-($pdIndex+4))
                 $PDUID = ($allPhysicalDisks |? ObjectID -Match $pdID).UniqueID
                 $pd = $allPhysicalDisks |? UniqueID -eq $PDUID
                 $nodeIndex = $phyDisk.StorageNodeObjectId.IndexOf("SN:")
                 $nodeLength = $phyDisk.StorageNodeObjectId.Length
-                $storageNodeName = $phyDisk.StorageNodeObjectId.Substring($nodeIndex+3, $nodeLength-($nodeIndex+4))  
+                $storageNodeName = $phyDisk.StorageNodeObjectId.Substring($nodeIndex+3, $nodeLength-($nodeIndex+4))
                 $poolName = ($pd | Get-StoragePool -CimSession $clusterCimSession -ErrorAction SilentlyContinue |? IsPrimordial -eq $false).FriendlyName
                 if (-not $poolName) {
                     continue
                 }
 
-                $SNVObject | Add-Member -Type NoteProperty -Name PhysicalDiskUID -Value $PDUID                
+                $SNVObject | Add-Member -Type NoteProperty -Name PhysicalDiskUID -Value $PDUID
                 $SNVObject | Add-Member -Type NoteProperty -Name StorageNode -Value $storageNodeName
                 $SNVObject | Add-Member -Type NoteProperty -Name StoragePool -Value $poolName
                 $SNVObject | Add-Member -Type NoteProperty -Name MPIOPolicy -Value $phyDisk.LoadBalancePolicy
-                $SNVObject | Add-Member -Type NoteProperty -Name MPIOState -Value $phyDisk.IsMPIOEnabled            
+                $SNVObject | Add-Member -Type NoteProperty -Name MPIOState -Value $phyDisk.IsMPIOEnabled
                 $SNVObject | Add-Member -Type NoteProperty -Name StorageEnclosure -Value $pd.PhysicalLocation
                 $SNVObject | Add-Member -Type NoteProperty -Name PathID -Value $phyDisk.PathID
                 $SNVObject | Add-Member -Type NoteProperty -Name PathState -Value $phyDisk.PathState
 
                 $SNV += $SNVObject
-            }            
+            }
             Write-Output $SNV
         }
 
@@ -1840,7 +1841,7 @@ function Get-SddcDiagnosticInfo
             $SmbShares = Get-SmbShare -CimSession $AccessNode
             $Associations = Get-VirtualDisk -CimSession $AccessNode |% {
 
-                $o = $_ | Select-Object FriendlyName, OperationalStatus, HealthStatus, CSVName, CSVStatus, CSVNode, CSVPath, CSVVolume, 
+                $o = $_ | Select-Object FriendlyName, OperationalStatus, HealthStatus, CSVName, CSVStatus, CSVNode, CSVPath, CSVVolume,
                 ShareName, SharePath, VolumeID, PoolName, PoolOpStatus, PoolHealthStatus, VDResiliency, VDCopies, VDColumns, VDEAware
 
                 $AssocCSV = $_ | Get-ClusterSharedVolume -Cluster $ClusterName
@@ -1852,9 +1853,9 @@ function Get-SddcDiagnosticInfo
                     $o.CSVPath = $AssocCSV.SharedVolumeInfo.FriendlyVolumeName
                     if ($o.CSVPath.Length -ne 0) {
                         $o.CSVVolume = $o.CSVPath.Split("\")[2]
-                    }     
+                    }
                     $AssocLike = $o.CSVPath+"\*"
-                    $AssocShares = $SmbShares |? Path -like $AssocLike 
+                    $AssocShares = $SmbShares |? Path -like $AssocLike
                     $AssocShare = $AssocShares | Select-Object -First 1
                     if ($AssocShare) {
                         $o.ShareName = $AssocShare.Name
@@ -1872,12 +1873,12 @@ function Get-SddcDiagnosticInfo
                 $AssocPName = $_.FriendlyName
                 $AssocPOpStatus = $_.OperationalStatus
                 $AssocPHStatus = $_.HealthStatus
-                Get-StoragePool -CimSession $AccessNode -FriendlyName $AssocPName | 
+                Get-StoragePool -CimSession $AccessNode -FriendlyName $AssocPName |
                 Get-VirtualDisk -CimSession $AccessNode |% {
                     $AssocVD = $_
                     $Associations |% {
-                        if ($_.FriendlyName -eq $AssocVD.FriendlyName) { 
-                            $_.PoolName = $AssocPName 
+                        if ($_.FriendlyName -eq $AssocVD.FriendlyName) {
+                            $_.PoolName = $AssocPName
                             $_.PoolOpStatus = $AssocPOpStatus
                             $_.PoolHealthStatus = $AssocPHStatus
                             $_.VDResiliency = $AssocVD.ResiliencySettingName
@@ -1925,8 +1926,8 @@ function Get-SddcDiagnosticInfo
             try { if (Test-Path -Path $_.SharePath  -ErrorAction SilentlyContinue) {
                         $_.Health = "Accessible"
                     } else {
-                        $_.Health = "Inaccessible" 
-                } 
+                        $_.Health = "Inaccessible"
+                }
             }
             catch { $_.Health = "Accessible: "+$_.Exception.Message }
         }
@@ -1948,7 +1949,7 @@ function Get-SddcDiagnosticInfo
         $o = Get-SmbWitnessClient -CimSession $AccessNode
         $o | Export-Clixml ($Path + "GetSmbWitness.XML") }
     catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
-    
+
     Show-Update "Clustered Subsystem"
 
     # NOTE: $Subsystem is reused several times below
@@ -1970,21 +1971,21 @@ function Get-SddcDiagnosticInfo
 
     # Volume status
 
-    try { 
-        $Volumes = Get-Volume -CimSession $AccessNode -StorageSubSystem $Subsystem 
+    try {
+        $Volumes = Get-Volume -CimSession $AccessNode -StorageSubSystem $Subsystem
         $Volumes | Export-Clixml ($Path + "GetVolume.XML") }
     catch { Show-Error("Unable to get Volumes. `nError="+$_.Exception.Message) }
-    
+
 
     # Virtual disk health
     # Used in S2D-specific gather below
 
-    try { 
-        $VirtualDisk = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $Subsystem 
+    try {
+        $VirtualDisk = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $Subsystem
         $VirtualDisk | Export-Clixml ($Path + "GetVirtualDisk.XML")
     }
     catch { Show-Warning("Unable to get Virtual Disks.`nError="+$_.Exception.Message) }
-    
+
     # Deduplicated volume health
     # XXX the counts/healthy likely not needed once phase 2 shifted into summary report
 
@@ -2015,10 +2016,10 @@ function Get-SddcDiagnosticInfo
         Get-StorageTier -CimSession $AccessNode |
             Export-Clixml ($Path + "GetStorageTier.XML") }
     catch { Show-Warning("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
-    
+
     # Storage pool health
 
-    try { 
+    try {
         $StoragePools = @(Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $Subsystem -ErrorAction SilentlyContinue)
         $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML") }
     catch { Show-Error("Unable to get Storage Pools. `nError="+$_.Exception.Message) }
@@ -2072,7 +2073,7 @@ function Get-SddcDiagnosticInfo
     #
     # Generate SBL Connectivity report based on input clusport information
     #
-    
+
     if ($S2DEnabled) {
 
         Show-Update "Pooled Disks"
@@ -2174,7 +2175,7 @@ function Get-SddcDiagnosticInfo
                 if ($null -eq $SNVView) {
                     Show-Warning "Unable to get nodes storage view associations"
                 }
-                $SNVView | Export-Clixml ($Path + "GetStorageNodeView.XML")        
+                $SNVView | Export-Clixml ($Path + "GetStorageNodeView.XML")
             } catch {
                 Show-Warning "Not able to query associations.."
             }
@@ -2186,42 +2187,42 @@ function Get-SddcDiagnosticInfo
     #
 
     if ($IncludeHealthReport) {
-        "`n[Health Report]" 
-        "`nVolumes with status, total size and available size, sorted by Available Size" 
+        "`n[Health Report]"
+        "`nVolumes with status, total size and available size, sorted by Available Size"
         "Notes: Sizes shown in gigabytes (GB). * means multiple shares on that volume"
 
-        $Volumes |? FileSystem -eq CSVFS | Sort-Object SizeRemaining | 
-        Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.Path); "[$(PoolOperationalStatus($_.Path))/$(PoolHealthStatus($_.Path))] " + $poolName};Label="[OpStatus/Health] Pool"}, 
-        @{Expression={(PoolHealthyPDs(VolumeToPool($_.Path)))};Label="HealthyPhysicalDisks"; Align="Center"}, 
-        @{Expression={$vd = VolumeToVD($_.Path);  "[$(VDOperationalStatus($_.Path))/$(VDHealthStatus($_.Path))] "+$vd};Label="[OpStatus/Health] VirtualDisk"}, 
+        $Volumes |? FileSystem -eq CSVFS | Sort-Object SizeRemaining |
+        Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.Path); "[$(PoolOperationalStatus($_.Path))/$(PoolHealthStatus($_.Path))] " + $poolName};Label="[OpStatus/Health] Pool"},
+        @{Expression={(PoolHealthyPDs(VolumeToPool($_.Path)))};Label="HealthyPhysicalDisks"; Align="Center"},
+        @{Expression={$vd = VolumeToVD($_.Path);  "[$(VDOperationalStatus($_.Path))/$(VDHealthStatus($_.Path))] "+$vd};Label="[OpStatus/Health] VirtualDisk"},
         @{Expression={$csvVolume = VolumeToCSV($_.Path); "[" + $_.HealthStatus + "] " + $csvVolume};Label="[Health] CSV Volume"},
-        @{Expression={$csvName = VolumeToCSVName($_.Path); $csvStatus = CSVStatus($_.Path);  " [$csvStatus] " + $csvName};Label="[Status] CSV Name"}, 
-        @{Expression={CSVToNode(VolumeToCSV($_.Path))};Label="Volume Owner"},   
-        @{Expression={VolumeToShare($_.Path)};Label="Share Name"}, 
-        @{Expression={$VolResiliency = VolumeToResiliency($_.Path); $volColumns = VolumeToColumns($_.Path); "$VolResiliency,$volColumns" +"Col" };Label="Volume Configuration"},        
-        @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"},  
-        @{Expression={"{0:N2}" -f ($_.SizeRemaining/$_.Size*100)};Label="Avail%";Width=11;Align="Right"} 
+        @{Expression={$csvName = VolumeToCSVName($_.Path); $csvStatus = CSVStatus($_.Path);  " [$csvStatus] " + $csvName};Label="[Status] CSV Name"},
+        @{Expression={CSVToNode(VolumeToCSV($_.Path))};Label="Volume Owner"},
+        @{Expression={VolumeToShare($_.Path)};Label="Share Name"},
+        @{Expression={$VolResiliency = VolumeToResiliency($_.Path); $volColumns = VolumeToColumns($_.Path); "$VolResiliency,$volColumns" +"Col" };Label="Volume Configuration"},
+        @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"},
+        @{Expression={"{0:N2}" -f ($_.SizeRemaining/$_.Size*100)};Label="Avail%";Width=11;Align="Right"}
 
         if ($DedupEnabled -and ($DedupTotal -gt 0))
         {
-            "Dedup Volumes with status, total size and available size, sorted by Savings %" 
+            "Dedup Volumes with status, total size and available size, sorted by Savings %"
             "Notes: Sizes shown in gigabytes (GB). * means multiple shares on that volume"
 
-            $DedupVolumes | Sort-Object SavingsRate -Descending | 
-            Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.VolumeId); "[$(PoolOperationalStatus($_.VolumeId))/$(PoolHealthStatus($_.VolumeId))] " + $poolName};Label="[OpStatus/Health] Pool"},  
-            @{Expression={(PoolHealthyPDs(VolumeToPool($_.VolumeId)))};Label="HealthyPhysicalDisks"; Align="Center"}, 
-            @{Expression={$vd = VolumeToVD($_.VolumeId);  "[$(VDOperationalStatus($_.VolumeId))/$(VDHealthStatus($_.VolumeId))] "+$vd};Label="[OpStatus/Health] VirtualDisk"},  
+            $DedupVolumes | Sort-Object SavingsRate -Descending |
+            Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.VolumeId); "[$(PoolOperationalStatus($_.VolumeId))/$(PoolHealthStatus($_.VolumeId))] " + $poolName};Label="[OpStatus/Health] Pool"},
+            @{Expression={(PoolHealthyPDs(VolumeToPool($_.VolumeId)))};Label="HealthyPhysicalDisks"; Align="Center"},
+            @{Expression={$vd = VolumeToVD($_.VolumeId);  "[$(VDOperationalStatus($_.VolumeId))/$(VDHealthStatus($_.VolumeId))] "+$vd};Label="[OpStatus/Health] VirtualDisk"},
             @{Expression={VolumeToCSV($_.VolumeId)};Label="Volume "},
             @{Expression={VolumeToShare($_.VolumeId)};Label="Share"},
-            @{Expression={"{0:N2}" -f ($_.Capacity/1GB)};Label="Capacity";Width=11;Align="Left"}, 
-            @{Expression={"{0:N2}" -f ($_.UnoptimizedSize/1GB)};Label="Before";Width=11;Align="Right"}, 
-            @{Expression={"{0:N2}" -f ($_.UsedSpace/1GB)};Label="After";Width=11;Align="Right"}, 
-            @{Expression={"{0:N2}" -f ($_.SavingsRate)};Label="Savings%";Width=11;Align="Right"}, 
-            @{Expression={"{0:N2}" -f ($_.FreeSpace/1GB)};Label="Free";Width=11;Align="Right"}, 
+            @{Expression={"{0:N2}" -f ($_.Capacity/1GB)};Label="Capacity";Width=11;Align="Left"},
+            @{Expression={"{0:N2}" -f ($_.UnoptimizedSize/1GB)};Label="Before";Width=11;Align="Right"},
+            @{Expression={"{0:N2}" -f ($_.UsedSpace/1GB)};Label="After";Width=11;Align="Right"},
+            @{Expression={"{0:N2}" -f ($_.SavingsRate)};Label="Savings%";Width=11;Align="Right"},
+            @{Expression={"{0:N2}" -f ($_.FreeSpace/1GB)};Label="Free";Width=11;Align="Right"},
             @{Expression={"{0:N2}" -f ($_.FreeSpace/$_.Capacity*100)};Label="Free%";Width=11;Align="Right"},
             @{Expression={"{0:N0}" -f ($_.InPolicyFilesCount)};Label="Files";Width=11;Align="Right"}
         }
-    
+
         if ($SNVView) {
             "`n[Storage Node view]"
             $SNVView | sort StorageNode,StorageEnclosure | Format-Table -AutoSize @{Expression = {$_.StorageNode}; Label = "StorageNode"; Align = "Left"},
@@ -2231,17 +2232,17 @@ function Get-SddcDiagnosticInfo
             @{Expression = {$_.PathID}; Label = "PathID"; Align = "Left"},
             @{Expression = {$_.PathState}; Label = "PathState"; Align = "Left"},
             @{Expression = {$_.PhysicalDiskUID}; Label = "PhysicalDiskUID"; Align = "Left"},
-            @{Expression = {$_.StorageEnclosure}; Label = "StorageEnclosureLocation"; Align = "Left"} 
+            @{Expression = {$_.StorageEnclosure}; Label = "StorageEnclosureLocation"; Align = "Left"}
         }
 
         "`n[Capacity Report]"
-        "Physical disks by Enclosure, Media Type and Health Status, with total and unallocated space" 
+        "Physical disks by Enclosure, Media Type and Health Status, with total and unallocated space"
         "Note: Sizes shown in gigabytes (GB)"
 
-        $PDStatus = $PhysicalDisks |? EnclosureNumber -ne $null | 
-        Sort-Object EnclosureNumber, MediaType, HealthStatus |  
-        Group-Object EnclosureNumber, MediaType, HealthStatus | 
-        Select-Object Count, TotalSize, Unalloc, 
+        $PDStatus = $PhysicalDisks |? EnclosureNumber -ne $null |
+        Sort-Object EnclosureNumber, MediaType, HealthStatus |
+        Group-Object EnclosureNumber, MediaType, HealthStatus |
+        Select-Object Count, TotalSize, Unalloc,
         @{Expression={$_.Name.Split(",")[0].Trim().TrimEnd()}; Label="Enc"},
         @{Expression={$_.Name.Split(",")[1].Trim().TrimEnd()}; Label="Media"},
         @{Expression={$_.Name.Split(",")[2].Trim().TrimEnd()}; Label="Health"}
@@ -2255,26 +2256,26 @@ function Get-SddcDiagnosticInfo
                 $Unalloc += $_.Size - $_.AllocatedSize
                 $TotalSize +=$_.Size
             }
-        
+
             $Current.Unalloc = $Unalloc
             $Current.TotalSize = $TotalSize
         }
 
-        $PDStatus | Format-Table -AutoSize Enc, Media, Health, Count, 
-        @{Expression={"{0:N2}" -f ($_.TotalSize/$_.Count/1GB)};Label="Avg Size";Width=11;Align="Right"}, 
-        @{Expression={"{0:N2}" -f ($_.TotalSize/1GB)};Label="Total Size";Width=11;Align="Right"}, 
+        $PDStatus | Format-Table -AutoSize Enc, Media, Health, Count,
+        @{Expression={"{0:N2}" -f ($_.TotalSize/$_.Count/1GB)};Label="Avg Size";Width=11;Align="Right"},
+        @{Expression={"{0:N2}" -f ($_.TotalSize/1GB)};Label="Total Size";Width=11;Align="Right"},
         @{Expression={"{0:N2}" -f ($_.Unalloc/1GB)};Label="Unallocated";Width=11;Align="Right"},
-        @{Expression={"{0:N2}" -f ($_.Unalloc/$_.TotalSize*100)};Label="Unalloc %";Width=11;Align="Right"} 
+        @{Expression={"{0:N2}" -f ($_.Unalloc/$_.TotalSize*100)};Label="Unalloc %";Width=11;Align="Right"}
 
-        "Pools with health, total size and unallocated space" 
+        "Pools with health, total size and unallocated space"
         "Note: Sizes shown in gigabytes (GB)"
 
-        $StoragePools | Sort-Object FriendlyName | 
-        Format-Table -AutoSize @{Expression={$_.FriendlyName};Label="Name"}, 
-        @{Expression={$_.HealthStatus};Label="Health"}, 
-        @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"}, 
-        @{Expression={"{0:N2}" -f (($_.Size-$_.AllocatedSize)/1GB)};Label="Unallocated";Width=11;Align="Right"}, 
-        @{Expression={"{0:N2}" -f (($_.Size-$_.AllocatedSize)/$_.Size*100)};Label="Unalloc%";Width=11;Align="Right"} 
+        $StoragePools | Sort-Object FriendlyName |
+        Format-Table -AutoSize @{Expression={$_.FriendlyName};Label="Name"},
+        @{Expression={$_.HealthStatus};Label="Health"},
+        @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"},
+        @{Expression={"{0:N2}" -f (($_.Size-$_.AllocatedSize)/1GB)};Label="Unallocated";Width=11;Align="Right"},
+        @{Expression={"{0:N2}" -f (($_.Size-$_.AllocatedSize)/$_.Size*100)};Label="Unalloc%";Width=11;Align="Right"}
     }
 
     #
@@ -2290,7 +2291,7 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Get counter sets"
         $set = Get-Counter -ListSet "Cluster Storage*","Cluster CSV*","Storage Spaces*" -ComputerName $ClusterNodes.Name
-        Show-Update "Start monitoring ($($PerfSamples)s)"		
+        Show-Update "Start monitoring ($($PerfSamples)s)"
         $PerfRaw = Get-Counter -Counter $set.Paths -SampleInterval 1 -MaxSamples $PerfSamples -ErrorAction Ignore -WarningAction Ignore
         Show-Update "Exporting counters"
         $PerfRaw | Export-counter -Path ($Path + "GetCounters.blg") -Force -FileFormat BLG
@@ -2304,14 +2305,14 @@ function Get-SddcDiagnosticInfo
 
             if ($Total1 -gt 0) {
 
-                $PerfDetail = $PerfRaw |% { 
+                $PerfDetail = $PerfRaw |% {
                     $TimeStamp = $_.TimeStamp
-        
+
                     $Progress = $Count1 / $Total1 * 45
                     $Count1++
                     Write-Progress -Activity "Processing performance samples" -PercentComplete $Progress
 
-                    $_.CounterSamples |% { 
+                    $_.CounterSamples |% {
                         $DetailRow = "" | Select-Object Time, Pool, Owner, Node, Volume, Share, Counter, Value
                         $Split = $_.Path.Split("\")
                         $DetailRow.Time = $TimeStamp
@@ -2320,7 +2321,7 @@ function Get-SddcDiagnosticInfo
                         $DetailRow.Counter = $Split[4]
                         $DetailRow.Value = $_.CookedValue
                         $DetailRow
-                    } 
+                    }
                 }
 
                 Write-Progress -Activity "Processing performance samples" -PercentComplete 50
@@ -2328,7 +2329,7 @@ function Get-SddcDiagnosticInfo
 
                 $Last = $PerfDetail.Count - 1
                 $Volume = ""
-    
+
                 $PerfVolume = 0 .. $Last |% {
 
                     if ($Volume -ne $PerfDetail[$_].Volume) {
@@ -2361,13 +2362,13 @@ function Get-SddcDiagnosticInfo
                         default { Write-Warning "Invalid counter $_" }
                     }
 
-                    if ($_ -eq $Last) { 
-                        $EndofVolume = $true 
-                    } else { 
-                        if ($Volume -ne $PerfDetail[$_+1].Volume) { 
-                            $EndofVolume = $true 
-                        } else { 
-                            $EndofVolume = $false 
+                    if ($_ -eq $Last) {
+                        $EndofVolume = $true
+                    } else {
+                        if ($Volume -ne $PerfDetail[$_+1].Volume) {
+                            $EndofVolume = $true
+                        } else {
+                            $EndofVolume = $false
                         }
                     }
 
@@ -2380,7 +2381,7 @@ function Get-SddcDiagnosticInfo
                         $VolumeRow.WriteIOPS = [int] ($WriteIOPS / $PerfSamples * 10) / 10
                         $VolumeRow.TotalIOPS = $VolumeRow.ReadIOPS + $VolumeRow.WriteIOPS
                         if ($NonZeroRL -eq 0) {$NonZeroRL = 1}
-                        $VolumeRow.ReadLatency = [int] ($ReadLatency / $NonZeroRL * 1000000 ) / 1000 
+                        $VolumeRow.ReadLatency = [int] ($ReadLatency / $NonZeroRL * 1000000 ) / 1000
                         if ($NonZeroWL -eq 0) {$NonZeroWL = 1}
                         $VolumeRow.WriteLatency = [int] ($WriteLatency / $NonZeroWL * 1000000 ) / 1000
                         $VolumeRow.TotalLatency = [int] (($ReadLatency + $WriteLatency) / ($NonZeroRL + $NonZeroWL) * 1000000) / 1000
@@ -2398,8 +2399,8 @@ function Get-SddcDiagnosticInfo
             $PerfDetail | Export-Csv ($Path + "VolumePerformanceDetails.TXT")
         }
     }
-  
-    if ($S2DEnabled -ne $true) { 
+
+    if ($S2DEnabled -ne $true) {
         if ((([System.Environment]::OSVersion.Version).Major) -ge 10) {
             Show-Update "Gathering the storage diagnostic information"
             $deleteStorageSubsystem = $false
@@ -2421,12 +2422,12 @@ function Get-SddcDiagnosticInfo
             } else {
                 Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
             }
-            
+
             if ($deleteStorageSubsystem) {
                 Unregister-StorageSubsystem -StorageSubSystemUniqueId $storagesubsystemToDelete.UniqueId -ProviderName Windows*
             }
         }
-    }    
+    }
 
     Show-Update "GATHERS COMPLETE ($(((Get-Date) - $TodayDate).ToString("m'm's\.f's'")))" -ForegroundColor Green
 
@@ -2456,7 +2457,7 @@ function Get-SddcDiagnosticInfo
 
     $ZipSuffix = '-' + $Cluster.Name + '-' + (Format-SddcDateTime $TodayDate) + '.ZIP'
     $ZipPath = $ZipPrefix + $ZipSuffix
-    
+
     try {
         [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
         Show-Update "Zip File Name : $ZipPath"
@@ -2465,7 +2466,7 @@ function Get-SddcDiagnosticInfo
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
 
     } catch {
-        Show-Error("Error creating the ZIP file!`nContent remains available at $Path") 
+        Show-Error("Error creating the ZIP file!`nContent remains available at $Path")
     }
 
     Show-Update "Cleaning up CimSessions"
@@ -2604,8 +2605,8 @@ function Install-SddcDiagnosticModule
                 # place in the Install-Module default location
                 Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME (Join-Path "$env:ProgramFiles\WindowsPowerShell\Modules\$using:Module" $using:thisModule.Version))
 
-            } else { 
-        
+            } else {
+
                 $null = Import-Module $using:Module -Force
                 $m = Get-Module $using:module -ErrorAction Stop
 
@@ -2855,7 +2856,7 @@ function Update-SddcDiagnosticArchive
 
     $ZipFile = 'SddcDiagnosticArchive-' + $env:COMPUTERNAME + '-' + (Format-SddcDateTime ($TimeStamp)) + '.ZIP'
     $ZipPath = (join-path $ArchivePath $ZipFile)
-    
+
     try {
         [System.IO.Compression.ZipFile]::CreateFromDirectory($CapturePath, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
         Show-Update "Zip File Name : $ZipPath"
@@ -2998,7 +2999,7 @@ function Set-SddcDiagnosticArchiveJobParameters
         [parameter(Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $Cluster = '.',
-        
+
         [parameter(Mandatory=$false)]
         [ValidateRange(1,365)]
         [int] $Days,
@@ -3006,7 +3007,7 @@ function Set-SddcDiagnosticArchiveJobParameters
         [parameter(Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $Path,
-        
+
         [parameter(Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [uint64] $Size
@@ -3100,7 +3101,7 @@ function Show-SddcDiagnosticArchiveJob
 
                 dir $Path\*.ZIP -ErrorAction SilentlyContinue | measure -Sum Length
             }
-        }   
+        }
     }
 
     $null = $j | Wait-Job
@@ -3197,7 +3198,7 @@ function Register-SddcDiagnosticArchiveJob
         [parameter(Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $Cluster = '.',
-        
+
         [parameter(Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [datetime] $At = '3AM'
@@ -3301,7 +3302,7 @@ enum ReportType
 function Get-ClusterLogDataSource
 {
     # aliases usage in this module is idiomatic, only using defaults
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
     param(
         [string] $logname
     )
@@ -3319,7 +3320,7 @@ function Get-ClusterLogDataSource
         #   immediately after the block header [=== name ===]
         #
         # Final line to parse is the System block, which is after all potential datasources.
-        ## 
+        ##
 
         $firstline = $false
         $in = $false
@@ -3328,7 +3329,7 @@ function Get-ClusterLogDataSource
         do {
 
             $l = $sr.ReadLine()
-        
+
             # Heuristic ...
             # SBL Disks comes before System
 
@@ -3343,7 +3344,7 @@ function Get-ClusterLogDataSource
                     if (($l -split ',').count -lt 4) {
                         $in = $false
                     } else {
-                        
+
                         # bug workaround
                         # the Resources section has a duplicate _embeddedFailureAction
                         # rename the first to an ignore per DaUpton
@@ -3359,7 +3360,7 @@ function Get-ClusterLogDataSource
                             $l = $matches[1]+",ignore$n,"+$matches[3]
                             $n += 1
                         }
-                                                                        
+
                         # place in csv temporary file
                         $l | out-file -Encoding ascii -Width 9999 $csvf
                     }
@@ -3385,18 +3386,18 @@ function Get-ClusterLogDataSource
 
                 # done at the start of the System block
                 if ($matches[1] -eq 'System') { break }
-                
+
                 # otherwise prepare to parse
                 $section = $matches[1]
                 $in = $true
                 $firstline = $true
             }
-        
+
         } while (-not $sr.EndOfStream)
     }
 
     END {
-        $datasource        
+        $datasource
         $sr.Close()
         del $csvf
     }
@@ -3413,7 +3414,7 @@ function Format-StorageBusCacheDiskState(
 function Get-StorageBusCacheReport
 {
     # aliases usage in this module is idiomatic, only using defaults
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -3473,7 +3474,7 @@ function Get-StorageBusCacheReport
 
         ##
         # Parse cluster log for the SBL Disk section
-        ## 
+        ##
 
         $data = Get-ClusterLogDataSource $_.FullName
 
@@ -3526,7 +3527,7 @@ function Get-StorageBusCacheReport
             $dcap = $d |? IsSblCacheDevice -ne 'true'
 
             Write-Output "Device counts: cache $($dcache.count) capacity $($dcap.count)"
-        
+
             ##
             # Test cache bindings if we do have cache present
             ##
@@ -3602,7 +3603,7 @@ function Get-StorageBusCacheReport
 function Get-StorageBusConnectivityReport
 {
     # aliases usage in this module is idiomatic, only using defaults
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -3648,7 +3649,7 @@ function Get-StorageBusConnectivityReport
 function Get-StorageLatencyReport
 {
     # aliases usage in this module is idiomatic, only using defaults
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -3661,7 +3662,7 @@ function Get-StorageLatencyReport
 
         [int]
         $CutoffMs = 0,
-        
+
         [datetime]
         $TimeBase,
 
@@ -3739,7 +3740,7 @@ function Get-StorageLatencyReport
             # note: getting fields by position is not ideal, but getting them by name would
             # appear to require pushing through an XML rendering and hashing. this would be
             # less efficient and this is already somewhat time consuming.
-        
+
             # the erroraction handles (potentially) disabled logs, which have no events
 
             # get single event from the log (if present)
@@ -3954,7 +3955,7 @@ function Get-StorageLatencyReport
                 @{ Label = 'SerialNumber'; Expression = { $PhysicalDisksTable[$_.Device].SerialNumber }},
                 @{ Label = 'Media'; Expression = { $PhysicalDisksTable[$_.Device].MediaType }},
                 @{ Label = 'Usage'; Expression = { $PhysicalDisksTable[$_.Device].Usage }}
-            
+
     # now wait for the event processing jobs and emit the per-node reports
     $j | Wait-Job| sort name |% {
 
@@ -3978,7 +3979,7 @@ function Get-StorageLatencyReport
             # note: these reports are filtered to only show devices in the pd table
             # this leaves boot device and others unreported until we have a datasource
             # to inject them.
-    
+
             # output the table of device latency bucket counts
             $buckhash.Keys |? { $PhysicalDisksTable.ContainsKey($_) } |% {
 
@@ -3988,7 +3989,7 @@ function Get-StorageLatencyReport
                 # and use to make an object for table rendering
                 $vprop = @{}
                 $weight = 0
-                foreach ($i in 0..($bucklabels.count - 1)) { 
+                foreach ($i in 0..($bucklabels.count - 1)) {
                     $v = $buckhash[$_][$i]
                     if ($v) {
                         $weight = $i
@@ -4028,7 +4029,7 @@ function Get-StorageLatencyReport
 function Get-StorageFirmwareReport
 {
     # aliases usage in this module is idiomatic, only using defaults
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -4095,7 +4096,7 @@ function Get-StorageFirmwareReport
 function Get-LsiEventReport
 {
     # aliases usage in this module is idiomatic, only using defaults
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -4136,7 +4137,7 @@ function Get-LsiEventReport
             Write-Output "No LSI events present"
         } else {
             Write-Output "Summary of LSI Event 11 error codes"
-        
+
             $ev | group -Property 'LSI Error' -NoElement | sort -Property Name | ft -AutoSize Count,@{ Label = 'LSI Error'; Expression = { $_.Name }}
 
             if ($ReportLevel -eq [ReportLevelType]::Full) {
@@ -4152,7 +4153,7 @@ function Get-LsiEventReport
 function Get-SmbConnectivityReport
 {
     # aliases usage in this module is idiomatic, only using defaults
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -4174,7 +4175,7 @@ function Get-SmbConnectivityReport
             )
 
         $r = $paths |% {
-            
+
             $node = "<unknown>"
             if ($_ -match "Node_([^\\]+)\\") {
                 $node = $matches[1]
@@ -4193,7 +4194,7 @@ function Get-SmbConnectivityReport
 
                 'TCP Last5Min' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $last5    -DataAnd @{'ConnectionType'='=1'})
                 'TCP LastHour' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lasthour -DataAnd @{'ConnectionType'='=1'})
-                'TCP LastDay' =   Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -DataAnd @{'ConnectionType'='=1'}) 
+                'TCP LastDay' =   Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -DataAnd @{'ConnectionType'='=1'})
             }
         }
 
@@ -4233,7 +4234,7 @@ WARNING: the SMB Client is receiving RDMA connect errors. This is an error whose
 `t network fabric. Please inspect especially if in the Last5 bucket.
 "@
 
-    $j += Start-Job -name 'SMB Connectivity Error Check - Connect Failures (Event 30803)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30803,$CaptureDate,([ConsoleColor]'Yellow'),$w 
+    $j += Start-Job -name 'SMB Connectivity Error Check - Connect Failures (Event 30803)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30803,$CaptureDate,([ConsoleColor]'Yellow'),$w
 
     $null = $j | Wait-Job
     $j | sort Name |% {
@@ -4247,7 +4248,7 @@ WARNING: the SMB Client is receiving RDMA connect errors. This is an error whose
 function Get-SummaryReport
 {
     # aliases usage in this module is idiomatic, only using defaults
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
     param(
         [parameter(Position=0, Mandatory=$true)]
         [ValidateNotNullOrEmpty()]
@@ -4285,7 +4286,7 @@ function Get-SummaryReport
     try
     {
         $Cluster = Import-Clixml (Join-Path $Path "GetCluster.XML")
-    
+
         $ClusterName = $Cluster.Name + "." + $Cluster.Domain
         $S2DEnabled = $Cluster.S2DEnabled
         $ClusterDomain = $Cluster.Domain;
@@ -4293,7 +4294,7 @@ function Get-SummaryReport
         Write-Host "Cluster Name                  : $ClusterName"
         Write-Host "S2D Enabled                   : $S2DEnabled"
     }
-    catch 
+    catch
     {
         Write-Host "Cluster Name                  : Cluster was unavailable"
         Write-Host "S2D Enabled                   : Cluster was unavailable"
@@ -4319,7 +4320,7 @@ function Get-SummaryReport
     $ClusterGroups = Import-Clixml (Join-Path $Path "GetClusterGroup.XML")
 
     $ScaleOutServers = $ClusterGroups |? GroupType -like "ScaleOut*"
-    if ($null -eq $ScaleOutServers) { 
+    if ($null -eq $ScaleOutServers) {
         if ($S2DEnabled -ne $true) {
             Show-Warning "No Scale-Out File Server cluster roles found"
         }
@@ -4388,19 +4389,19 @@ function Get-SummaryReport
         $f = Join-Path (Get-NodePath $Path $node) "verifier-query.txt"
         $o = @(gc $f)
 
-        # single line 
+        # single line
         if (-not ($o.Count -eq 1 -and $o[0] -eq 'No drivers are currently verified.')) {
             $VerifiedNodes += $node
         }
     }
-    
+
     if ($VerifiedNodes.Count -ne 0) {
         Show-Warning "The following $($VerifiedNodes.Count) node(s) have system verification (verifier.exe) active. This may carry significant performance cost.`nEnsure this is expected, for instance during Microsoft-directed triage."
         $VerifiedNodes |% { Write-Host "`t$_" }
     } else {
         Write-Host "No nodes currently under the system verifier."
     }
-    
+
     # Storage jobs
     $StorageJobs = Import-Clixml (Join-Path $Path "GetStorageJob.XML")
 
@@ -4424,7 +4425,7 @@ function Get-SummaryReport
     $ShHealthy = NCount($ShareStatus |? Health -like "Accessible")
     "SMB CA Shares Accessible      : $ShHealthy / $ShTotal"
     if ($ShHealthy -lt $ShTotal) { Show-Warning "Inaccessible CA shares detected" }
-    
+
     # SMB Open Files
 
     $SmbOpenFiles = Import-Clixml (Join-Path $Path "GetSmbOpenFile.XML")
@@ -4461,7 +4462,7 @@ function Get-SummaryReport
     #
     # Deduplicated volume health - if the volume XML exists, it was present (may still be empty)
     #
-    
+
     $DedupEnabled = $false
 
     if (Test-Path (Join-Path $Path "GetDedupVolume.XML")) {
@@ -4552,19 +4553,19 @@ function Get-SummaryReport
 
     $Failed = $False
 
-    if ($NodesTotal -ne $NodesHealthy) { 
+    if ($NodesTotal -ne $NodesHealthy) {
         $Failed = $true
         Write-Host "Cluster Nodes:"
-        $ClusterNodes |? State -ne "Up" | Format-Table -AutoSize 
+        $ClusterNodes |? State -ne "Up" | Format-Table -AutoSize
     }
 
-    if ($NetsTotal -ne $NetsHealthy) { 
+    if ($NetsTotal -ne $NetsHealthy) {
         $Failed = $true
         Write-Host "Cluster Networks:"
-        $ClusterNetworks |? State -ne "Up" | Format-Table -AutoSize 
+        $ClusterNetworks |? State -ne "Up" | Format-Table -AutoSize
     }
 
-    if ($ResTotal -ne $ResHealthy) { 
+    if ($ResTotal -ne $ResHealthy) {
         $Failed = $true
         Write-Host "Cluster Resources:"
         $ClusterResources |? State -notlike "Online" |
@@ -4579,62 +4580,62 @@ function Get-SummaryReport
         Import-Clixml (Join-Path $Path "DebugStorageSubsystem.XML") | ft -AutoSize
     }
 
-    if ($CSVTotal -ne $CSVHealthy) { 
+    if ($CSVTotal -ne $CSVHealthy) {
         $Failed = $true
         Write-Host "Cluster Shared Volumes not Online:"
-        $CSV |? State -ne "Online" | Format-Table -AutoSize 
+        $CSV |? State -ne "Online" | Format-Table -AutoSize
     }
 
-    if ($VolsTotal -ne $VolsHealthy) { 
+    if ($VolsTotal -ne $VolsHealthy) {
         $Failed = $true
         Write-Host "Cluster Shared Volumes not Healthy:"
-        $Volumes |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
+        $Volumes |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } |
         Format-Table Path,HealthStatus -AutoSize
     }
 
-    if ($DedupEnabled -and $DedupTotal -ne $DedupHealthy) { 
+    if ($DedupEnabled -and $DedupTotal -ne $DedupHealthy) {
         $Failed = $true
         Write-Host "Volumes:"
-        $DedupVolumes |? LastOptimizationResult -eq 0 | 
+        $DedupVolumes |? LastOptimizationResult -eq 0 |
         Format-Table Volume,Capacity,SavingsRate,LastOptimizationResultMessage -AutoSize
     }
 
-    if ($VDsTotal -ne $VDsHealthy) { 
+    if ($VDsTotal -ne $VDsHealthy) {
         $Failed = $true
         Write-Host "Virtual Disks:"
-        $VirtualDisks |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
-        Format-Table FriendlyName,HealthStatus,OperationalStatus,ResiliencySettingName,IsManualAttach  -AutoSize 
+        $VirtualDisks |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } |
+        Format-Table FriendlyName,HealthStatus,OperationalStatus,ResiliencySettingName,IsManualAttach  -AutoSize
     }
 
-    if ($PoolsTotal -ne $PoolsHealthy) { 
+    if ($PoolsTotal -ne $PoolsHealthy) {
         $Failed = $true
         Write-Host "Storage Pools:"
-        $StoragePools |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
-        Format-Table FriendlyName,HealthStatus,OperationalStatus,IsReadOnly -AutoSize 
+        $StoragePools |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } |
+        Format-Table FriendlyName,HealthStatus,OperationalStatus,IsReadOnly -AutoSize
     }
 
-    if ($PDsTotal -ne $PDsHealthy) { 
+    if ($PDsTotal -ne $PDsHealthy) {
         $Failed = $true
         Write-Host "Physical Disks:"
-        $PhysicalDisks |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
+        $PhysicalDisks |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } |
         Format-Table FriendlyName,EnclosureNumber,SlotNumber,HealthStatus,OperationalStatus,Usage -AutoSize
     }
 
-    if ($EncsTotal -ne $EncsHealthy) { 
+    if ($EncsTotal -ne $EncsHealthy) {
         $Failed = $true;
         Write-Host "Enclosures:"
-        $StorageEnclosures |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } | 
-        Format-Table FriendlyName,HealthStatus,ElementTypesInError -AutoSize 
+        $StorageEnclosures |? { ($_.HealthStatus -notlike "Healthy") -and ($_.HealthStatus -ne 0) } |
+        Format-Table FriendlyName,HealthStatus,ElementTypesInError -AutoSize
     }
 
-    if ($ShTotal -ne $ShHealthy) { 
+    if ($ShTotal -ne $ShHealthy) {
         $Failed = $true
         Write-Host "CA Shares:"
         $ShareStatus |? Health -notlike "Healthy" | Format-Table -AutoSize
     }
 
-    if (-not $Failed) { 
-        "No unhealthy components`n" 
+    if (-not $Failed) {
+        "No unhealthy components`n"
     }
 
     #####
@@ -4655,14 +4656,14 @@ function Get-SummaryReport
                 @{ Expression = { $_.Group[0].DriverDate }; Label = "DriverDate" }
     }
 
-    Write-Host "`nPhysical disks by Media Type, Model and Firmware Version" 
+    Write-Host "`nPhysical disks by Media Type, Model and Firmware Version"
     $PhysicalDisks | Group-Object MediaType,Model,FirmwareVersion |
         ft -AutoSize Count,
             @{ Expression = { $_.Group[0].Model }; Label="Model" },
             @{ Expression = { $_.Group[0].FirmwareVersion }; Label="FirmwareVersion" },
             @{ Expression = { $_.Group[0].MediaType }; Label="MediaType" }
 
- 
+
     Write-Host "Storage Enclosures by Model and Firmware Version"
     $StorageEnclosures | Group-Object Model,FirmwareVersion |
         ft -AutoSize Count,
@@ -4831,7 +4832,7 @@ function Show-SddcDiagnosticStorageLatencyReport
 function Show-SddcDiagnosticReport
 {
     # aliases usage in this module is idiomatic, only using defaults
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")] 
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
 
     [CmdletBinding()]
     param(
