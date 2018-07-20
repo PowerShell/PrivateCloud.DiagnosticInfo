@@ -1936,11 +1936,14 @@ function Get-SddcDiagnosticInfo
 
     $ShareStatus | Export-Clixml ($Path + "ShareStatus.XML")
 
+    Show-Update "SMB Share Open Files"
+
     try {
         $o = Get-SmbOpenFile -CimSession $AccessNode
         $o | Export-Clixml ($Path + "GetSmbOpenFile.XML") }
     catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
-
+    
+    Show-Update "SMB Share Witness"
 
     try {
         $o = Get-SmbWitnessClient -CimSession $AccessNode
@@ -3680,7 +3683,7 @@ function Get-StorageLatencyReport
     }
 
     # comment if neither limit is being used
-    if (-not $CutoffMs -or $HoursOfEvents -eq -1) {
+    if (-not $CutoffMs -and $HoursOfEvents -eq -1) {
         write-output "NOTE: Show-SddcDiagnosticStorageLatencyReport provides access to time/latency cutoff limits which may significantly speed up reporting when focused on recent high latency events"
     }
 
@@ -3834,6 +3837,17 @@ function Get-StorageLatencyReport
                     $xpath = Get-FilterXpath -Event 505 -DataOr $DataOr
                 }
 
+<#
+                # block for timing the queries
+                $t0 = Get-Date
+
+                $e = Get-WinEvent -Path $using:file -FilterXPath $xpath
+
+                $td = (Get-Date) - $t0
+                Write-Host -ForegroundColor Red ("Query $($using:file) took {0:N2} seconds" -f $td.TotalSeconds)
+                
+                $e |% {
+#>
                 # now, with schema, process all events
                 Get-WinEvent -Path $using:file -FilterXPath $xpath |% {
 
