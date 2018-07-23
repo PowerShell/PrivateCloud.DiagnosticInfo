@@ -76,7 +76,7 @@ FunctionsToExport = 'Get-SddcDiagnosticInfo',
                     'Show-SddcDiagnosticArchiveJob',
                     'Set-SddcDiagnosticArchiveJobParameters',
                     'Get-SddcDiagnosticArchiveJobParameters'
-                    
+
 # Cmdlets to export from this module
 # CmdletsToExport = @()
 
