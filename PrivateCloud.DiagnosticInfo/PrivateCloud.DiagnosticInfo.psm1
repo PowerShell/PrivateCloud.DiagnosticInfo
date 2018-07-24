@@ -1611,6 +1611,7 @@ function Get-SddcDiagnosticInfo
     # consider using this as the generic copyout job set
     # these are gathers which are not remotable, which we run remote and copy back results for
     # keep control of which gathers are fast and therefore for which serialization is not a major issue
+    # however, dividing these into distinct jobs helps when triaging hangs or sources of error - its a tradeoff
 
     Show-Update "Start gather of verifier ..."
 
@@ -1627,6 +1628,24 @@ function Get-SddcDiagnosticInfo
 
         $LocalFile = Join-Path $env:temp "verifier-querysettings.txt"
         verifier /querysettings > $LocalFile
+        Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+    }
+
+    Show-Update "Start gather of filesystem filter status ..."
+
+    $JobCopyOut += Invoke-Command -ComputerName $($ClusterNodes).Name -AsJob -JobName 'Filesystem Filter Manager' {
+
+        # import common functions
+        . ([scriptblock]::Create($using:CommonFunc))
+
+        # Filter Manager
+
+        $LocalFile = Join-Path $env:temp "fltmc.txt"
+        fltmc > $LocalFile
+        Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+
+        $LocalFile = Join-Path $env:temp "fltmc-instances.txt"
+        fltmc instances > $LocalFile
         Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
     }
 
@@ -1721,31 +1740,32 @@ function Get-SddcDiagnosticInfo
             # _A_ token will be replaced with the chosen cluster access node
             # _C_ token will be replaced with node fqdn for cimsession/computername callouts
             # _N_ token will be replaced with node non-fqdn
-            $CmdsToLog = "Get-NetAdapter -CimSession _C_",
+            $CmdsToLog = "Get-HotFix -ComputerName _C_",
+                            "Get-NetAdapter -CimSession _C_",
                             "Get-NetAdapterAdvancedProperty -CimSession _C_",
-                            "Get-NetIpAddress -CimSession _C_",
-                            "Get-NetRoute -CimSession _C_",
-                            "Get-NetQosPolicy -CimSession _C_",
-                            "Get-NetIPv4Protocol -CimSession _C_",
-                            "Get-NetIPv6Protocol -CimSession _C_",
-                            "Get-NetOffloadGlobalSetting -CimSession _C_",
-                            "Get-NetPrefixPolicy -CimSession _C_",
-                            "Get-NetTcpConnection -CimSession _C_",
-                            "Get-NetTcpSetting -CimSession _C_",
                             "Get-NetAdapterBinding -CimSession _C_",
                             "Get-NetAdapterChecksumOffload -CimSession _C_",
-                            "Get-NetAdapterLso -CimSession _C_",
-                            "Get-NetAdapterRss -CimSession _C_",
-                            "Get-NetAdapterRdma -CimSession _C_",
                             "Get-NetAdapterIPsecOffload -CimSession _C_",
+                            "Get-NetAdapterLso -CimSession _C_",
                             "Get-NetAdapterPacketDirect -CimSession _C_",
+                            "Get-NetAdapterRdma -CimSession _C_",
                             "Get-NetAdapterRsc -CimSession _C_",
+                            "Get-NetAdapterRss -CimSession _C_",
+                            "Get-NetAdapterVmq -CimSession _C_",
+                            "Get-NetIPv4Protocol -CimSession _C_",
+                            "Get-NetIPv6Protocol -CimSession _C_",
+                            "Get-NetIpAddress -CimSession _C_",
                             "Get-NetLbfoTeam -CimSession _C_",
-                            "Get-NetLbfoTeamNic -CimSession _C_",
                             "Get-NetLbfoTeamMember -CimSession _C_",
-                            "Get-SmbServerNetworkInterface -CimSession _C_",
-                            "Get-HotFix -ComputerName _C_",
+                            "Get-NetLbfoTeamNic -CimSession _C_",
+                            "Get-NetOffloadGlobalSetting -CimSession _C_",
+                            "Get-NetPrefixPolicy -CimSession _C_",
+                            "Get-NetQosPolicy -CimSession _C_",
+                            "Get-NetRoute -CimSession _C_",
+                            "Get-NetTcpConnection -CimSession _C_",
+                            "Get-NetTcpSetting -CimSession _C_",
                             "Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_",
+                            "Get-SmbServerNetworkInterface -CimSession _C_",
                             "Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_"
 
             foreach ($cmd in $CmdsToLog)
