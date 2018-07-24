@@ -13,6 +13,8 @@ $Module = 'PrivateCloud.DiagnosticInfo'
 $CommonFuncBlock = {
 
     # FailoverClusters is Server-only. We allow the module to run (Show) on client.
+    # DcbQos is only present if the Data-Center-Bridging feature is present (for RoCE)
+    # Hyper-V may be ommitted in SOFS-only configurations
     #
     # Handling of import failures in Start-Job initialization blocks is special - we
     # cannot control failure to load errors there, and need to use GM to check; neither
@@ -20,6 +22,14 @@ $CommonFuncBlock = {
 
     if (Get-Module -ListAvailable FailoverClusters) {
         Import-Module FailoverClusters
+    }
+
+    if (Get-Module -ListAvailable DcbQos) {
+        Import-Module DcbQos
+    }
+
+    if (Get-Module -ListAvailable Hyper-V) {
+        Import-Module Hyper-V
     }
 
     Import-Module CimCmdlets
@@ -1740,36 +1750,51 @@ function Get-SddcDiagnosticInfo
             # _A_ token will be replaced with the chosen cluster access node
             # _C_ token will be replaced with node fqdn for cimsession/computername callouts
             # _N_ token will be replaced with node non-fqdn
-            $CmdsToLog = "Get-HotFix -ComputerName _C_",
-                            "Get-NetAdapter -CimSession _C_",
-                            "Get-NetAdapterAdvancedProperty -CimSession _C_",
-                            "Get-NetAdapterBinding -CimSession _C_",
-                            "Get-NetAdapterChecksumOffload -CimSession _C_",
-                            "Get-NetAdapterIPsecOffload -CimSession _C_",
-                            "Get-NetAdapterLso -CimSession _C_",
-                            "Get-NetAdapterPacketDirect -CimSession _C_",
-                            "Get-NetAdapterRdma -CimSession _C_",
-                            "Get-NetAdapterRsc -CimSession _C_",
-                            "Get-NetAdapterRss -CimSession _C_",
-                            "Get-NetAdapterVmq -CimSession _C_",
-                            "Get-NetIPv4Protocol -CimSession _C_",
-                            "Get-NetIPv6Protocol -CimSession _C_",
-                            "Get-NetIpAddress -CimSession _C_",
-                            "Get-NetLbfoTeam -CimSession _C_",
-                            "Get-NetLbfoTeamMember -CimSession _C_",
-                            "Get-NetLbfoTeamNic -CimSession _C_",
-                            "Get-NetOffloadGlobalSetting -CimSession _C_",
-                            "Get-NetPrefixPolicy -CimSession _C_",
-                            "Get-NetQosPolicy -CimSession _C_",
-                            "Get-NetRoute -CimSession _C_",
-                            "Get-NetTcpConnection -CimSession _C_",
-                            "Get-NetTcpSetting -CimSession _C_",
-                            "Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_",
-                            "Get-SmbServerNetworkInterface -CimSession _C_",
-                            "Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_"
+            $CmdsToLog = 'Get-HotFix -ComputerName _C_',
+                            'Get-NetAdapter -CimSession _C_',
+                            'Get-NetAdapterAdvancedProperty -CimSession _C_',
+                            'Get-NetAdapterBinding -CimSession _C_',
+                            'Get-NetAdapterChecksumOffload -CimSession _C_',
+                            'Get-NetAdapterIPsecOffload -CimSession _C_',
+                            'Get-NetAdapterLso -CimSession _C_',
+                            'Get-NetAdapterPacketDirect -CimSession _C_',
+                            'Get-NetAdapterRdma -CimSession _C_',
+                            'Get-NetAdapterRsc -CimSession _C_',
+                            'Get-NetAdapterRss -CimSession _C_',
+                            'Get-NetAdapterVmq -CimSession _C_',
+                            'Get-NetIPv4Protocol -CimSession _C_',
+                            'Get-NetIPv6Protocol -CimSession _C_',
+                            'Get-NetIpAddress -CimSession _C_',
+                            'Get-NetLbfoTeam -CimSession _C_',
+                            'Get-NetLbfoTeamMember -CimSession _C_',
+                            'Get-NetLbfoTeamNic -CimSession _C_',
+                            'Get-NetOffloadGlobalSetting -CimSession _C_',
+                            'Get-NetPrefixPolicy -CimSession _C_',
+                            'Get-NetQosPolicy -CimSession _C_',
+                            'Get-NetRoute -CimSession _C_',
+                            'Get-NetTcpConnection -CimSession _C_',
+                            'Get-NetTcpSetting -CimSession _C_',
+                            'Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_',
+                            'Get-SmbServerNetworkInterface -CimSession _C_',
+                            'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'
 
-            foreach ($cmd in $CmdsToLog)
-            {
+            # These commands are specific to optional modules, add only if present
+            #   - DcbQos: RoCE environments primarily
+            #   - Hyper-V: may be ommitted in SOFS-only cases
+            if (Get-Module DcbQos -ErrorAction SilentlyContinue) {
+                $CmdsToLog += 'Get-NetQosDcbxSetting -CimSession _C_',
+                                'Get-NetQosFlowControl -CimSession _C_',
+                                'Get-NetQosTrafficClass -CimSession _C_'
+            }
+
+            if (Get-Module Hyper-V -ErrorAction SilentlyContinue) {
+                $CmdsToLog += 'Get-VM -CimSession _C_',
+                                'Get-VMNetworkAdapter -All -CimSession _C_',
+                                'Get-VMSwitch -CimSession _C_'
+            }
+
+            foreach ($cmd in $CmdsToLog) {
+
                 # truncate cmd string to the cmd itself
                 $LocalFile = (Join-Path $LocalNodeDir (($cmd.split(' '))[0] -replace "-",""))
                 try {
