@@ -532,7 +532,7 @@ function Test-PrefixFilePath(
     # unc is OK as long as we see at least 5 post-split elements (e.g., bad: \\foo, \\foo\bar, good: \\foo\bar\baz)
 
     $lastempty = $elements[-1] -notmatch '\S'
-    $islocabs = $elements[0][1] -eq ':'
+    $islocabs = $elements[0].Length -and $elements[0][1] -eq ':'
     $isunc = $path -like '\\*'
 
     if ($lastempty -or
