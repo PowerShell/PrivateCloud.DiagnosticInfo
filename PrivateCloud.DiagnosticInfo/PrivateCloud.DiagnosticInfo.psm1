@@ -543,7 +543,7 @@ function Test-PrefixFilePath(
 
     $lastempty = $elements[-1] -notmatch '\S'
     $islocabs = $elements[0].Length -and $elements[0][1] -eq ':'
-    $isunc = $path -like '\\*'
+    $isunc = $p -like '\\*'
 
     if ($lastempty -or
         ($islocabs -and $elements.Count -eq 1) -or
@@ -1364,1174 +1364,1186 @@ function Get-SddcDiagnosticInfo
     $transcriptFile = Join-Path $Path "0_CloudHealthGatherTranscript.log"
     try {
         Stop-Transcript | Out-Null
-    }
-    catch [System.InvalidOperationException]{}
-    Start-Transcript -Path $transcriptFile -Force
-
-    Show-Update "Temporary write path : $Path"
-
-    #
-    # Handle parameters to archive/pass into the summary report generator.
-    # XXX note expectedpools with S2D -> 1. Should we force/set?
-    #
-
-    $Parameters = "" | Select-Object TodayDate, ExpectedNodes, ExpectedNetworks, ExpectedVolumes,
-    ExpectedPhysicalDisks, ExpectedPools, ExpectedEnclosures, ExpectedDedupVolumes, HoursOfEvents, Version
-    $TodayDate = Get-Date
-    $Parameters.TodayDate = $TodayDate
-    $Parameters.ExpectedNodes = $ExpectedNodes
-    $Parameters.ExpectedNetworks = $ExpectedNetworks
-    $Parameters.ExpectedVolumes = $ExpectedVolumes
-    $Parameters.ExpectedDedupVolumes = $ExpectedDedupVolumes
-    $Parameters.ExpectedPhysicalDisks = $ExpectedPhysicalDisks
-    $Parameters.ExpectedPools = $ExpectedPools
-    $Parameters.ExpectedEnclosures = $ExpectedEnclosures
-    $Parameters.HoursOfEvents = $HoursOfEvents
-    $Parameters.Version = (Get-Module $Module).Version.ToString()
-    $Parameters | Export-Clixml ($Path + "GetParameters.XML")
-
-    Show-Update "$Module v $($Parameters.Version)"
-
-    #
-    # Phase 1
-    #
-
-    Show-Update "<<< Phase 1 - Data Gather >>>`n" -ForegroundColor Cyan
-
-    #
-    # Cluster Nodes
-    # Note: get unfiltered list for reporting, then filter for continued use during gather
-    # (i.e., only contact responsive nodes)
-    #
-
-    try { $ClusterNodes = Get-NodeList -Cluster $ClusterName -Nodes $Nodelist }
-    catch { Show-Error "Unable to get Cluster Nodes for reporting" $_ }
-    $ClusterNodes | Export-Clixml ($Path + "GetClusterNode.XML")
-
-    try { $ClusterNodes = Get-NodeList -Cluster $ClusterName -Nodes $Nodelist -Filter }
-    catch { Show-Error "Unable to get filtered Cluster Nodes for gathering" $_ }
-
-    # use a filtered node as the access node
-    $AccessNode = $ClusterNodes[0].Name
-
-    #
-    # Get-Cluster
-    #
+    } catch [System.InvalidOperationException]{}
 
     try {
-        # discover name if called with default dot form and/or node list
-        if ($ClusterName -eq ".") {
-            foreach ($cn in $ClusterNodes)
-            {
-                $Cluster = Get-Cluster -Name $cn.Name -ErrorAction SilentlyContinue
-                if ($Cluster -ne $null) { break }
+        Start-Transcript -Path $transcriptFile -Force
+    } catch {
+        # show error and rethrow to terminate
+        Show-Error "Unable to start transcript at $transcriptFile" $_
+        throw $_
+    }
+
+    try {
+
+        Show-Update "Temporary write path : $Path"
+
+        #
+        # Handle parameters to archive/pass into the summary report generator.
+        # XXX note expectedpools with S2D -> 1. Should we force/set?
+        #
+
+        $Parameters = "" | Select-Object TodayDate, ExpectedNodes, ExpectedNetworks, ExpectedVolumes,
+        ExpectedPhysicalDisks, ExpectedPools, ExpectedEnclosures, ExpectedDedupVolumes, HoursOfEvents, Version
+        $TodayDate = Get-Date
+        $Parameters.TodayDate = $TodayDate
+        $Parameters.ExpectedNodes = $ExpectedNodes
+        $Parameters.ExpectedNetworks = $ExpectedNetworks
+        $Parameters.ExpectedVolumes = $ExpectedVolumes
+        $Parameters.ExpectedDedupVolumes = $ExpectedDedupVolumes
+        $Parameters.ExpectedPhysicalDisks = $ExpectedPhysicalDisks
+        $Parameters.ExpectedPools = $ExpectedPools
+        $Parameters.ExpectedEnclosures = $ExpectedEnclosures
+        $Parameters.HoursOfEvents = $HoursOfEvents
+        $Parameters.Version = (Get-Module $Module).Version.ToString()
+        $Parameters | Export-Clixml ($Path + "GetParameters.XML")
+
+        Show-Update "$Module v $($Parameters.Version)"
+
+        #
+        # Phase 1
+        #
+
+        Show-Update "<<< Phase 1 - Data Gather >>>`n" -ForegroundColor Cyan
+
+        #
+        # Cluster Nodes
+        # Note: get unfiltered list for reporting, then filter for continued use during gather
+        # (i.e., only contact responsive nodes)
+        #
+
+        try { $ClusterNodes = Get-NodeList -Cluster $ClusterName -Nodes $Nodelist }
+        catch { Show-Error "Unable to get Cluster Nodes for reporting" $_ }
+        $ClusterNodes | Export-Clixml ($Path + "GetClusterNode.XML")
+
+        try { $ClusterNodes = Get-NodeList -Cluster $ClusterName -Nodes $Nodelist -Filter }
+        catch { Show-Error "Unable to get filtered Cluster Nodes for gathering" $_ }
+
+        # use a filtered node as the access node
+        $AccessNode = $ClusterNodes[0].Name
+
+        #
+        # Get-Cluster
+        #
+
+        try {
+            # discover name if called with default dot form and/or node list
+            if ($ClusterName -eq ".") {
+                foreach ($cn in $ClusterNodes)
+                {
+                    $Cluster = Get-Cluster -Name $cn.Name -ErrorAction SilentlyContinue
+                    if ($Cluster -ne $null) { break }
+                }
+            } else {
+                $Cluster = Get-Cluster -Name $ClusterName
             }
-        } else {
-            $Cluster = Get-Cluster -Name $ClusterName
         }
-    }
-    catch { Show-Error("Cluster could not be contacted. `nError="+$_.Exception.Message) }
+        catch { Show-Error("Cluster could not be contacted. `nError="+$_.Exception.Message) }
 
-    if ($Cluster -ne $null)
-    {
-        $Cluster | Export-Clixml ($Path + "GetCluster.XML")
-        $ClusterName = $Cluster.Name + "." + $Cluster.Domain
-        $S2DEnabled = $Cluster.S2DEnabled
-        $ClusterDomain = $Cluster.Domain
+        if ($Cluster -ne $null)
+        {
+            $Cluster | Export-Clixml ($Path + "GetCluster.XML")
+            $ClusterName = $Cluster.Name + "." + $Cluster.Domain
+            $S2DEnabled = $Cluster.S2DEnabled
+            $ClusterDomain = $Cluster.Domain
 
-        Write-Host "Cluster name               : $ClusterName"
-    }
-    else
-    {
-        # We can only get here if -Nodelist was used, but cluster service isn't running
-        Write-Error "Cluster service was not running on any node, some information will be unavailable"
-        $ClusterName = $null;
-        $ClusterDomain = "";
-
-        Write-Host "Cluster name               : Unavailable, Cluster is not online on any node"
-    }
-    Write-Host "Access node                : $AccessNode`n"
-
-    # Create node-specific directories for content
-
-    $ClusterNodes.Name |% {
-        md (Get-NodePath $Path $_) | Out-Null
-    }
-
-    #
-    # Verify deduplication prerequisites on access node.
-    #
-
-    $DedupEnabled = $true
-    if ($(Invoke-Command -ComputerName $AccessNode {(-not (Get-Command -Module Deduplication))} )) {
-        $DedupEnabled = $false
-        if ($S2DEnabled -ne $true) {
-            Show-Warning "Deduplication PowerShell not installed on cluster node."
+            Write-Host "Cluster name               : $ClusterName"
         }
-    }
+        else
+        {
+            # We can only get here if -Nodelist was used, but cluster service isn't running
+            Write-Error "Cluster service was not running on any node, some information will be unavailable"
+            $ClusterName = $null;
+            $ClusterDomain = "";
 
-    ####
-    # Begin paralellized captures.
-    # Start accumulating static jobs which self-contain their gather.
-    # These are pulled in close to the end. Consider how to regularize this down the line.
-    ####
-    $JobStatic = @()
-    $JobCopyOut = @()
-    $JobCopyOutNoDelete = @()
+            Write-Host "Cluster name               : Unavailable, Cluster is not online on any node"
+        }
+        Write-Host "Access node                : $AccessNode`n"
 
-    # capture Sddc Diagnostic Archive if requested and active on the target cluster
-    if ($Cluster -and
-        (Get-ClusteredScheduledTask -Cluster $Cluster -TaskName SddcDiagnosticArchive)) {
+        # Create node-specific directories for content
 
-        if ($DaysOfArchive -gt 0) {
+        $ClusterNodes.Name |% {
+            md (Get-NodePath $Path $_) | Out-Null
+        }
 
-            Show-Update "Start gather of Sddc Diagnostic Archives ..."
+        #
+        # Verify deduplication prerequisites on access node.
+        #
 
-            $JobStatic += Start-Job -Name 'Sddc Diagnostic Archive Report' {
-
-                Import-Module $using:Module -ErrorAction SilentlyContinue
-
-                # capture state of the job regardless of archive capture
-                $o = (Join-Path $using:Path SddcDiagnosticArchiveJob.txt)
-                Show-SddcDiagnosticArchiveJob -Cluster $using:Cluster > $o
-
-                # use confirm to capture the version validation warnings for replay - note that
-                # we self-document the version producing the report, so we only need to look for/capture
-                # warnings to highlight variance
-                $o = (Join-Path $using:Path SddcDiagnosticArchiveJobWarn.txt)
-                $null = Confirm-SddcDiagnosticModule -Cluster $using:Cluster 3> $o
+        $DedupEnabled = $true
+        if ($(Invoke-Command -ComputerName $AccessNode {(-not (Get-Command -Module Deduplication))} )) {
+            $DedupEnabled = $false
+            if ($S2DEnabled -ne $true) {
+                Show-Warning "Deduplication PowerShell not installed on cluster node."
             }
+        }
 
-            $j = icm $ClusterNodes.Name -AsJob -JobName SddcDiagnosticArchive {
+        ####
+        # Begin paralellized captures.
+        # Start accumulating static jobs which self-contain their gather.
+        # These are pulled in close to the end. Consider how to regularize this down the line.
+        ####
+        $JobStatic = @()
+        $JobCopyOut = @()
+        $JobCopyOutNoDelete = @()
 
-                Import-Module $using:Module -ErrorAction SilentlyContinue
+        # capture Sddc Diagnostic Archive if requested and active on the target cluster
+        if ($Cluster -and
+            (Get-ClusteredScheduledTask -Cluster $Cluster -TaskName SddcDiagnosticArchive)) {
 
-                # note we only receive module exports from the import, must ...
-                # import common functions
-                . ([scriptblock]::Create($using:CommonFunc))
+            if ($DaysOfArchive -gt 0) {
 
-                if (Test-SddcModulePresence) {
+                Show-Update "Start gather of Sddc Diagnostic Archives ..."
 
-                    $Path = $null
-                    Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
+                $JobStatic += Start-Job -Name 'Sddc Diagnostic Archive Report' {
 
-                    # emit
-                    & {
-                        # filter archive?
-                        if ($using:DaysOfArchive -ne -1) {
+                    Import-Module $using:Module -ErrorAction SilentlyContinue
 
-                            # get archive in increasing order of time (our timestamp is lexically sortable)
-                            $Archive = dir $Path\*.ZIP | sort -Descending
-                            if ($Archive.Count -gt $using:DaysOfArchive) {
-                                $Archive = $Archive[0..$($using:DaysOfArchive - 1)]
+                    # capture state of the job regardless of archive capture
+                    $o = (Join-Path $using:Path SddcDiagnosticArchiveJob.txt)
+                    Show-SddcDiagnosticArchiveJob -Cluster $using:Cluster > $o
+
+                    # use confirm to capture the version validation warnings for replay - note that
+                    # we self-document the version producing the report, so we only need to look for/capture
+                    # warnings to highlight variance
+                    $o = (Join-Path $using:Path SddcDiagnosticArchiveJobWarn.txt)
+                    $null = Confirm-SddcDiagnosticModule -Cluster $using:Cluster 3> $o
+                }
+
+                $j = icm $ClusterNodes.Name -AsJob -JobName SddcDiagnosticArchive {
+
+                    Import-Module $using:Module -ErrorAction SilentlyContinue
+
+                    # note we only receive module exports from the import, must ...
+                    # import common functions
+                    . ([scriptblock]::Create($using:CommonFunc))
+
+                    if (Test-SddcModulePresence) {
+
+                        $Path = $null
+                        Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
+
+                        # emit
+                        & {
+                            # filter archive?
+                            if ($using:DaysOfArchive -ne -1) {
+
+                                # get archive in increasing order of time (our timestamp is lexically sortable)
+                                $Archive = dir $Path\*.ZIP | sort -Descending
+                                if ($Archive.Count -gt $using:DaysOfArchive) {
+                                    $Archive = $Archive[0..$($using:DaysOfArchive - 1)]
+                                }
+
+                                $Archive.FullName
+                                (dir $Path\*.log).FullName
+
+                            } else {
+
+                                # get entire archive
+                                # note: we use the wildcard so that we copy the content of the directory
+                                # to the appropriate destination. the path itself is configurable.
+                                # see comment below.
+                                Join-Path (gi $Path).FullName "*"
                             }
+                        } |% {
 
-                            $Archive.FullName
-                            (dir $Path\*.log).FullName
-
-                        } else {
-
-                            # get entire archive
-                            # note: we use the wildcard so that we copy the content of the directory
-                            # to the appropriate destination. the path itself is configurable.
-                            # see comment below.
-                            Join-Path (gi $Path).FullName "*"
+                            Get-AdminSharePathFromLocal $env:COMPUTERNAME $_
                         }
-                    } |% {
-
-                        Get-AdminSharePathFromLocal $env:COMPUTERNAME $_
                     }
                 }
+
+                # since the archive directory is configurable, we always need to specify the
+                # destination within the capture - it may be \some\dir\foo, but we want it to be
+                # node_xxx\SddcDiagnosticArchive in the capture.
+                #
+                # we add a member to the jobs to indicate this. also rename them to indicate the
+                # activity in these jobs, so we report runtime in a more useful way.
+                $j.ChildJobs |% {
+                    $_ | Add-Member -NotePropertyName Destination -NotePropertyValue SddcDiagnosticArchive
+                }
+
+                # and add to the copyout-nodelete set
+                # we do not want to scrub away the archive, unlike content we generate on the target node
+                # and then do want to delete after capture.
+                $JobCopyOutNoDelete += $j
             }
+        }
 
-            # since the archive directory is configurable, we always need to specify the
-            # destination within the capture - it may be \some\dir\foo, but we want it to be
-            # node_xxx\SddcDiagnosticArchive in the capture.
-            #
-            # we add a member to the jobs to indicate this. also rename them to indicate the
-            # activity in these jobs, so we report runtime in a more useful way.
-            $j.ChildJobs |% {
-                $_ | Add-Member -NotePropertyName Destination -NotePropertyValue SddcDiagnosticArchive
+        Show-Update "Start gather of cluster configuration ..."
+
+        $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterGroup {
+            try {
+                $o = Get-ClusterGroup -Cluster $using:AccessNode
+                $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
             }
-
-            # and add to the copyout-nodelete set
-            # we do not want to scrub away the archive, unlike content we generate on the target node
-            # and then do want to delete after capture.
-            $JobCopyOutNoDelete += $j
+            catch { Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
         }
-    }
 
-    Show-Update "Start gather of cluster configuration ..."
-
-    $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterGroup {
-        try {
-            $o = Get-ClusterGroup -Cluster $using:AccessNode
-            $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
+        $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterNetwork {
+            try {
+                $o = Get-ClusterNetwork -Cluster $using:AccessNode
+                $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
+            }
+            catch { Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
         }
-        catch { Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
-    }
 
-    $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterNetwork {
-        try {
-            $o = Get-ClusterNetwork -Cluster $using:AccessNode
-            $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
+        $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResource {
+            try {
+                $o = Get-ClusterResource -Cluster $using:AccessNode
+                $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
+            }
+            catch { Show-Warning("Unable to get Cluster Resources.  `nError="+$_.Exception.Message) }
+
         }
-        catch { Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
-    }
 
-    $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResource {
-        try {
-            $o = Get-ClusterResource -Cluster $using:AccessNode
-            $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
+        $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResourceParameter {
+            try {
+                $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
+                $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
+            }
+            catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
         }
-        catch { Show-Warning("Unable to get Cluster Resources.  `nError="+$_.Exception.Message) }
 
-    }
+        $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterSharedVolume {
+            try {
+                $o = Get-ClusterSharedVolume -Cluster $using:AccessNode
+                $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
+            }
+            catch { Show-Warning("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
 
-    $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResourceParameter {
-        try {
-            $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
-            $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
         }
-        catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
-    }
 
-    $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterSharedVolume {
-        try {
-            $o = Get-ClusterSharedVolume -Cluster $using:AccessNode
-            $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
-        }
-        catch { Show-Warning("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
-
-    }
-
-    Show-Update "Start gather of driver information ..."
-
-    $ClusterNodes.Name |% {
-
-        $node = $_
-
-        $JobStatic += Start-Job -InitializationScript $CommonFunc -Name "Driver Information: $node" {
-            try { $o = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node }
-            catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
-            $o | Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "GetDrivers.XML")
-        }
-    }
-
-    # consider using this as the generic copyout job set
-    # these are gathers which are not remotable, which we run remote and copy back results for
-    # keep control of which gathers are fast and therefore for which serialization is not a major issue
-    # however, dividing these into distinct jobs helps when triaging hangs or sources of error - its a tradeoff
-
-    Show-Update "Start gather of verifier ..."
-
-    $JobCopyOut += Invoke-Command -ComputerName $($ClusterNodes).Name -AsJob -JobName Verifier {
-
-        # import common functions
-        . ([scriptblock]::Create($using:CommonFunc))
-
-        # Verifier
-
-        $LocalFile = Join-Path $env:temp "verifier-query.txt"
-        verifier /query > $LocalFile
-        Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
-
-        $LocalFile = Join-Path $env:temp "verifier-querysettings.txt"
-        verifier /querysettings > $LocalFile
-        Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
-    }
-
-    Show-Update "Start gather of filesystem filter status ..."
-
-    $JobCopyOut += Invoke-Command -ComputerName $($ClusterNodes).Name -AsJob -JobName 'Filesystem Filter Manager' {
-
-        # import common functions
-        . ([scriptblock]::Create($using:CommonFunc))
-
-        # Filter Manager
-
-        $LocalFile = Join-Path $env:temp "fltmc.txt"
-        fltmc > $LocalFile
-        Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
-
-        $LocalFile = Join-Path $env:temp "fltmc-instances.txt"
-        fltmc instances > $LocalFile
-        Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
-    }
-
-    if ($IncludeGetNetView) {
-
-        Show-Update "Start gather of Get-NetView ..."
+        Show-Update "Start gather of driver information ..."
 
         $ClusterNodes.Name |% {
 
-            $JobCopyOut += Invoke-Command -ComputerName $_ -AsJob -JobName GetNetView {
+            $node = $_
 
-                # import common functions
-                . ([scriptblock]::Create($using:CommonFunc))
+            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name "Driver Information: $node" {
+                try { $o = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node }
+                catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
+                $o | Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "GetDrivers.XML")
+            }
+        }
 
-                $NodePath = [System.IO.Path]::GetTempPath()
+        # consider using this as the generic copyout job set
+        # these are gathers which are not remotable, which we run remote and copy back results for
+        # keep control of which gathers are fast and therefore for which serialization is not a major issue
+        # however, dividing these into distinct jobs helps when triaging hangs or sources of error - its a tradeoff
 
-                # create a directory to capture GNV
+        Show-Update "Start gather of verifier ..."
 
-                $gnvDir = Join-Path $NodePath 'GetNetView'
-                Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
-                md $gnvDir -Force -ErrorAction SilentlyContinue
+        $JobCopyOut += Invoke-Command -ComputerName $($ClusterNodes).Name -AsJob -JobName Verifier {
 
-                # run inside a child session so we can sink output to the transcript
-                # we must pass the GNV dir since $using is statically evaluated in the
-                # outermost scope and $gnvDir is inside the Invoke call.
+            # import common functions
+            . ([scriptblock]::Create($using:CommonFunc))
 
-                $j = Start-Job -ArgumentList $gnvDir {
+            # Verifier
 
-                    param($gnvDir)
+            $LocalFile = Join-Path $env:temp "verifier-query.txt"
+            verifier /query > $LocalFile
+            Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
 
-                    # start gather transcript to the GNV directory
+            $LocalFile = Join-Path $env:temp "verifier-querysettings.txt"
+            verifier /querysettings > $LocalFile
+            Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+        }
 
-                    $transcriptFile = Join-Path $gnvDir "0_GetNetViewGatherTranscript.log"
-                    Start-Transcript -Path $transcriptFile -Force
+        Show-Update "Start gather of filesystem filter status ..."
 
-                    if (Get-Command Get-NetView -ErrorAction SilentlyContinue) {
-                        Get-NetView -OutputDirectory $gnvDir
-                    } else {
-                        Write-Host "Get-NetView command not available"
+        $JobCopyOut += Invoke-Command -ComputerName $($ClusterNodes).Name -AsJob -JobName 'Filesystem Filter Manager' {
+
+            # import common functions
+            . ([scriptblock]::Create($using:CommonFunc))
+
+            # Filter Manager
+
+            $LocalFile = Join-Path $env:temp "fltmc.txt"
+            fltmc > $LocalFile
+            Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+
+            $LocalFile = Join-Path $env:temp "fltmc-instances.txt"
+            fltmc instances > $LocalFile
+            Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+        }
+
+        if ($IncludeGetNetView) {
+
+            Show-Update "Start gather of Get-NetView ..."
+
+            $ClusterNodes.Name |% {
+
+                $JobCopyOut += Invoke-Command -ComputerName $_ -AsJob -JobName GetNetView {
+
+                    # import common functions
+                    . ([scriptblock]::Create($using:CommonFunc))
+
+                    $NodePath = [System.IO.Path]::GetTempPath()
+
+                    # create a directory to capture GNV
+
+                    $gnvDir = Join-Path $NodePath 'GetNetView'
+                    Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
+                    md $gnvDir -Force -ErrorAction SilentlyContinue
+
+                    # run inside a child session so we can sink output to the transcript
+                    # we must pass the GNV dir since $using is statically evaluated in the
+                    # outermost scope and $gnvDir is inside the Invoke call.
+
+                    $j = Start-Job -ArgumentList $gnvDir {
+
+                        param($gnvDir)
+
+                        # start gather transcript to the GNV directory
+
+                        $transcriptFile = Join-Path $gnvDir "0_GetNetViewGatherTranscript.log"
+                        Start-Transcript -Path $transcriptFile -Force
+
+                        if (Get-Command Get-NetView -ErrorAction SilentlyContinue) {
+                            Get-NetView -OutputDirectory $gnvDir
+                        } else {
+                            Write-Host "Get-NetView command not available"
+                        }
+
+                        Stop-Transcript
                     }
 
-                    Stop-Transcript
-                }
+                    # do not receive job - sunk to transcript for offline analysis
+                    # gnv produces a very large quantity of host output
+                    $null = $j | Wait-Job
+                    $j | Remove-Job
 
-                # do not receive job - sunk to transcript for offline analysis
-                # gnv produces a very large quantity of host output
-                $null = $j | Wait-Job
-                $j | Remove-Job
-
-                # wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
-                dir $gnvDir -Directory |% {
-                    Remove-Item -Recurse -Force $_.FullName
-                }
-
-                # gather all remaining content (will be the zip + transcript) in GNV directory
-                Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $gnvDir)
-            }
-        }
-    }
-
-    # Events, cmd, reports, et.al.
-    Show-Update "Start gather of system info, cluster/health logs, reports and dump files ..."
-
-    $JobStatic += Start-Job -Name ClusterLogs {
-        $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime
-    }
-
-    if ($S2DEnabled) {
-        $JobStatic += Start-Job -Name ClusterHealthLogs {
-            $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -Health -UseLocalTime
-        }
-    }
-
-    $JobStatic += $($ClusterNodes).Name |% {
-
-        Start-Job -Name "System Info: $_" -ArgumentList $_,$ClusterDomain,$AccessNode -InitializationScript $CommonFunc {
-
-            param($NodeName,$DomainName,$AccessNode)
-
-            $Node = "$NodeName.$DomainName"
-            $LocalNodeDir = Get-NodePath $using:Path $NodeName
-
-            # Text-only conventional commands
-            #
-            # Gather SYSTEMINFO.EXE output for a given node
-            SystemInfo.exe /S $Node > (Join-Path (Get-NodePath $using:Path $NodeName) "SystemInfo.TXT")
-
-            # Cmdlets to drop in TXT and XML forms
-            #
-            # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
-            # will be trimmed to "cmd" for logging
-            # _A_ token will be replaced with the chosen cluster access node
-            # _C_ token will be replaced with node fqdn for cimsession/computername callouts
-            # _N_ token will be replaced with node non-fqdn
-            $CmdsToLog = 'Get-HotFix -ComputerName _C_',
-                            'Get-NetAdapter -CimSession _C_',
-                            'Get-NetAdapterAdvancedProperty -CimSession _C_',
-                            'Get-NetAdapterBinding -CimSession _C_',
-                            'Get-NetAdapterChecksumOffload -CimSession _C_',
-                            'Get-NetAdapterIPsecOffload -CimSession _C_',
-                            'Get-NetAdapterLso -CimSession _C_',
-                            'Get-NetAdapterPacketDirect -CimSession _C_',
-                            'Get-NetAdapterRdma -CimSession _C_',
-                            'Get-NetAdapterRsc -CimSession _C_',
-                            'Get-NetAdapterRss -CimSession _C_',
-                            'Get-NetAdapterVmq -CimSession _C_',
-                            'Get-NetIPv4Protocol -CimSession _C_',
-                            'Get-NetIPv6Protocol -CimSession _C_',
-                            'Get-NetIpAddress -CimSession _C_',
-                            'Get-NetLbfoTeam -CimSession _C_',
-                            'Get-NetLbfoTeamMember -CimSession _C_',
-                            'Get-NetLbfoTeamNic -CimSession _C_',
-                            'Get-NetOffloadGlobalSetting -CimSession _C_',
-                            'Get-NetPrefixPolicy -CimSession _C_',
-                            'Get-NetQosPolicy -CimSession _C_',
-                            'Get-NetRoute -CimSession _C_',
-                            'Get-NetTcpConnection -CimSession _C_',
-                            'Get-NetTcpSetting -CimSession _C_',
-                            'Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_',
-                            'Get-SmbServerNetworkInterface -CimSession _C_',
-                            'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'
-
-            # These commands are specific to optional modules, add only if present
-            #   - DcbQos: RoCE environments primarily
-            #   - Hyper-V: may be ommitted in SOFS-only cases
-            if (Get-Module DcbQos -ErrorAction SilentlyContinue) {
-                $CmdsToLog += 'Get-NetQosDcbxSetting -CimSession _C_',
-                                'Get-NetQosFlowControl -CimSession _C_',
-                                'Get-NetQosTrafficClass -CimSession _C_'
-            }
-
-            if (Get-Module Hyper-V -ErrorAction SilentlyContinue) {
-                $CmdsToLog += 'Get-VM -CimSession _C_',
-                                'Get-VMNetworkAdapter -All -CimSession _C_',
-                                'Get-VMSwitch -CimSession _C_'
-            }
-
-            foreach ($cmd in $CmdsToLog) {
-
-                # truncate cmd string to the cmd itself
-                $LocalFile = (Join-Path $LocalNodeDir (($cmd.split(' '))[0] -replace "-",""))
-                try {
-
-                    $out = iex ($cmd -replace '_C_',$Node -replace '_N_',$NodeName -replace '_A_',$AccessNode)
-
-                    # capture as txt and xml for quick analysis according to taste
-                    $out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
-                    $out | Export-Clixml -Path "$LocalFile.xml"
-
-                } catch {
-                    Show-Warning "'$cmd $node' failed for node $Node"
-                }
-            }
-
-            $NodeSystemRootPath = Invoke-Command -ComputerName $Node { $env:SystemRoot }
-
-            if ($using:IncludeDumps -eq $true) {
-
-                ##
-                # Minidumps
-                ##
-
-                try {
-                    $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Minidump\*.dmp"))
-                    $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-                catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $Node" }
-
-                $DmpFiles |% {
-                    try { Copy-Item $_.FullName $LocalNodeDir }
-                    catch { Show-Warning("Could not copy minidump file $_.FullName") }
-                }
-
-                ##
-                # Live Kernel Reports
-                ##
-
-                try {
-                    $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "LiveKernelReports\*.dmp"))
-                    $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-                catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $Node" }
-
-                $DmpFiles |% {
-                    try { Copy-Item $_.FullName $LocalNodeDir }
-                    catch { Show-Warning "Could not copy LiveKernelReports file $($_.FullName)" }
-                }
-            }
-
-            try {
-                $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Cluster\Reports\*.*"))
-                $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-            catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $Node" }
-
-            $LocalReportDir = Join-Path $LocalNodeDir "ClusterReports"
-            md $LocalReportDir | Out-Null
-
-            # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
-            $RepFiles |% {
-                if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
-                    try { Copy-Item $_.FullName $LocalReportDir }
-                    catch { Show-Warning "Could not copy report file $($_.FullName)" }
-                }
-            }
-        }
-    }
-
-    Show-Update "Starting export of events ..."
-
-    $JobCopyOut += Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob -JobName Events {
-
-        Param([int] $Hours)
-
-        # import common functions
-        . ([scriptblock]::Create($using:CommonFunc))
-
-        $Node = $env:COMPUTERNAME
-        $NodePath = [System.IO.Path]::GetTempPath()
-
-        Get-SddcCapturedEvents $NodePath $Hours |% {
-
-            Write-Output (Get-AdminSharePathFromLocal $Node $_)
-        }
-
-        # Also export locale metadata for off-system rendering (one-shot, we'll recursively copy)
-        Write-Output (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
-    }
-
-    if ($IncludeAssociations -and $ClusterName -ne $null) {
-
-        # This is used at Phase 2 and is run asynchronously since
-        # it can take some time to gather for large numbers of devices.
-
-        # Gather nodes view of storage and build all the associations
-
-        $SNVJob = Start-Job -Name 'StorageNodePhysicalDiskView' -ArgumentList $clusterName {
-        param ($clusterName)
-            $clusterCimSession = New-CimSession -ComputerName $ClusterName
-            $snvInstances = Get-CimInstance -Namespace root\Microsoft\Windows\Storage -ClassName MSFT_StorageNodeToPhysicalDisk -CimSession $clusterCimSession
-            $allPhysicalDisks  = Get-PhysicalDisk -CimSession $clusterCimSession
-            $SNV = @()
-
-            Foreach ($phyDisk in $snvInstances) {
-                $SNVObject = New-Object -TypeName System.Object
-                $pdIndex = $phyDisk.PhysicalDiskObjectId.IndexOf("PD:")
-                $pdLength = $phyDisk.PhysicalDiskObjectId.Length
-                $pdID = $phyDisk.PhysicalDiskObjectId.Substring($pdIndex+3, $pdLength-($pdIndex+4))
-                $PDUID = ($allPhysicalDisks |? ObjectID -Match $pdID).UniqueID
-                $pd = $allPhysicalDisks |? UniqueID -eq $PDUID
-                $nodeIndex = $phyDisk.StorageNodeObjectId.IndexOf("SN:")
-                $nodeLength = $phyDisk.StorageNodeObjectId.Length
-                $storageNodeName = $phyDisk.StorageNodeObjectId.Substring($nodeIndex+3, $nodeLength-($nodeIndex+4))
-                $poolName = ($pd | Get-StoragePool -CimSession $clusterCimSession -ErrorAction SilentlyContinue |? IsPrimordial -eq $false).FriendlyName
-                if (-not $poolName) {
-                    continue
-                }
-
-                $SNVObject | Add-Member -Type NoteProperty -Name PhysicalDiskUID -Value $PDUID
-                $SNVObject | Add-Member -Type NoteProperty -Name StorageNode -Value $storageNodeName
-                $SNVObject | Add-Member -Type NoteProperty -Name StoragePool -Value $poolName
-                $SNVObject | Add-Member -Type NoteProperty -Name MPIOPolicy -Value $phyDisk.LoadBalancePolicy
-                $SNVObject | Add-Member -Type NoteProperty -Name MPIOState -Value $phyDisk.IsMPIOEnabled
-                $SNVObject | Add-Member -Type NoteProperty -Name StorageEnclosure -Value $pd.PhysicalLocation
-                $SNVObject | Add-Member -Type NoteProperty -Name PathID -Value $phyDisk.PathID
-                $SNVObject | Add-Member -Type NoteProperty -Name PathState -Value $phyDisk.PathState
-
-                $SNV += $SNVObject
-            }
-            Write-Output $SNV
-        }
-
-        # Gather association between pool, virtualdisk, volume, share.
-
-        $AssocJob = Start-Job -Name 'StorageComponentAssociations' -ArgumentList $AccessNode,$ClusterName {
-            param($AccessNode,$ClusterName)
-
-            $SmbShares = Get-SmbShare -CimSession $AccessNode
-            $Associations = Get-VirtualDisk -CimSession $AccessNode |% {
-
-                $o = $_ | Select-Object FriendlyName, OperationalStatus, HealthStatus, CSVName, CSVStatus, CSVNode, CSVPath, CSVVolume,
-                ShareName, SharePath, VolumeID, PoolName, PoolOpStatus, PoolHealthStatus, VDResiliency, VDCopies, VDColumns, VDEAware
-
-                $AssocCSV = $_ | Get-ClusterSharedVolume -Cluster $ClusterName
-
-                if ($AssocCSV) {
-                    $o.CSVName = $AssocCSV.Name
-                    $o.CSVStatus = $AssocCSV.State
-                    $o.CSVNode = $AssocCSV.OwnerNode.Name
-                    $o.CSVPath = $AssocCSV.SharedVolumeInfo.FriendlyVolumeName
-                    if ($o.CSVPath.Length -ne 0) {
-                        $o.CSVVolume = $o.CSVPath.Split("\")[2]
+                    # wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
+                    dir $gnvDir -Directory |% {
+                        Remove-Item -Recurse -Force $_.FullName
                     }
-                    $AssocLike = $o.CSVPath+"\*"
-                    $AssocShares = $SmbShares |? Path -like $AssocLike
-                    $AssocShare = $AssocShares | Select-Object -First 1
-                    if ($AssocShare) {
-                        $o.ShareName = $AssocShare.Name
-                        $o.SharePath = $AssocShare.Path
-                        $o.VolumeID = $AssocShare.Volume
-                        if ($AssocShares.Count -gt 1) { $o.ShareName += "*" }
+
+                    # gather all remaining content (will be the zip + transcript) in GNV directory
+                    Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $gnvDir)
+                }
+            }
+        }
+
+        # Events, cmd, reports, et.al.
+        Show-Update "Start gather of system info, cluster/health logs, reports and dump files ..."
+
+        $JobStatic += Start-Job -Name ClusterLogs {
+            $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime
+        }
+
+        if ($S2DEnabled) {
+            $JobStatic += Start-Job -Name ClusterHealthLogs {
+                $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -Health -UseLocalTime
+            }
+        }
+
+        $JobStatic += $($ClusterNodes).Name |% {
+
+            Start-Job -Name "System Info: $_" -ArgumentList $_,$ClusterDomain,$AccessNode -InitializationScript $CommonFunc {
+
+                param($NodeName,$DomainName,$AccessNode)
+
+                $Node = "$NodeName.$DomainName"
+                $LocalNodeDir = Get-NodePath $using:Path $NodeName
+
+                # Text-only conventional commands
+                #
+                # Gather SYSTEMINFO.EXE output for a given node
+                SystemInfo.exe /S $Node > (Join-Path (Get-NodePath $using:Path $NodeName) "SystemInfo.TXT")
+
+                # Cmdlets to drop in TXT and XML forms
+                #
+                # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
+                # will be trimmed to "cmd" for logging
+                # _A_ token will be replaced with the chosen cluster access node
+                # _C_ token will be replaced with node fqdn for cimsession/computername callouts
+                # _N_ token will be replaced with node non-fqdn
+                $CmdsToLog = 'Get-HotFix -ComputerName _C_',
+                                'Get-NetAdapter -CimSession _C_',
+                                'Get-NetAdapterAdvancedProperty -CimSession _C_',
+                                'Get-NetAdapterBinding -CimSession _C_',
+                                'Get-NetAdapterChecksumOffload -CimSession _C_',
+                                'Get-NetAdapterIPsecOffload -CimSession _C_',
+                                'Get-NetAdapterLso -CimSession _C_',
+                                'Get-NetAdapterPacketDirect -CimSession _C_',
+                                'Get-NetAdapterRdma -CimSession _C_',
+                                'Get-NetAdapterRsc -CimSession _C_',
+                                'Get-NetAdapterRss -CimSession _C_',
+                                'Get-NetAdapterVmq -CimSession _C_',
+                                'Get-NetIPv4Protocol -CimSession _C_',
+                                'Get-NetIPv6Protocol -CimSession _C_',
+                                'Get-NetIpAddress -CimSession _C_',
+                                'Get-NetLbfoTeam -CimSession _C_',
+                                'Get-NetLbfoTeamMember -CimSession _C_',
+                                'Get-NetLbfoTeamNic -CimSession _C_',
+                                'Get-NetOffloadGlobalSetting -CimSession _C_',
+                                'Get-NetPrefixPolicy -CimSession _C_',
+                                'Get-NetQosPolicy -CimSession _C_',
+                                'Get-NetRoute -CimSession _C_',
+                                'Get-NetTcpConnection -CimSession _C_',
+                                'Get-NetTcpSetting -CimSession _C_',
+                                'Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_',
+                                'Get-SmbServerNetworkInterface -CimSession _C_',
+                                'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'
+
+                # These commands are specific to optional modules, add only if present
+                #   - DcbQos: RoCE environments primarily
+                #   - Hyper-V: may be ommitted in SOFS-only cases
+                if (Get-Module DcbQos -ErrorAction SilentlyContinue) {
+                    $CmdsToLog += 'Get-NetQosDcbxSetting -CimSession _C_',
+                                    'Get-NetQosFlowControl -CimSession _C_',
+                                    'Get-NetQosTrafficClass -CimSession _C_'
+                }
+
+                if (Get-Module Hyper-V -ErrorAction SilentlyContinue) {
+                    $CmdsToLog += 'Get-VM -CimSession _C_',
+                                    'Get-VMNetworkAdapter -All -CimSession _C_',
+                                    'Get-VMSwitch -CimSession _C_'
+                }
+
+                foreach ($cmd in $CmdsToLog) {
+
+                    # truncate cmd string to the cmd itself
+                    $LocalFile = (Join-Path $LocalNodeDir (($cmd.split(' '))[0] -replace "-",""))
+                    try {
+
+                        $out = iex ($cmd -replace '_C_',$Node -replace '_N_',$NodeName -replace '_A_',$AccessNode)
+
+                        # capture as txt and xml for quick analysis according to taste
+                        $out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
+                        $out | Export-Clixml -Path "$LocalFile.xml"
+
+                    } catch {
+                        Show-Warning "'$cmd $node' failed for node $Node"
                     }
                 }
 
-                Write-Output $o
+                $NodeSystemRootPath = Invoke-Command -ComputerName $Node { $env:SystemRoot }
+
+                if ($using:IncludeDumps -eq $true) {
+
+                    ##
+                    # Minidumps
+                    ##
+
+                    try {
+                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Minidump\*.dmp"))
+                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
+                    catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $Node" }
+
+                    $DmpFiles |% {
+                        try { Copy-Item $_.FullName $LocalNodeDir }
+                        catch { Show-Warning("Could not copy minidump file $_.FullName") }
+                    }
+
+                    ##
+                    # Live Kernel Reports
+                    ##
+
+                    try {
+                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "LiveKernelReports\*.dmp"))
+                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
+                    catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $Node" }
+
+                    $DmpFiles |% {
+                        try { Copy-Item $_.FullName $LocalNodeDir }
+                        catch { Show-Warning "Could not copy LiveKernelReports file $($_.FullName)" }
+                    }
+                }
+
+                try {
+                    $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Cluster\Reports\*.*"))
+                    $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
+                catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $Node" }
+
+                $LocalReportDir = Join-Path $LocalNodeDir "ClusterReports"
+                md $LocalReportDir | Out-Null
+
+                # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
+                $RepFiles |% {
+                    if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
+                        try { Copy-Item $_.FullName $LocalReportDir }
+                        catch { Show-Warning "Could not copy report file $($_.FullName)" }
+                    }
+                }
+            }
+        }
+
+        Show-Update "Starting export of events ..."
+
+        $JobCopyOut += Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob -JobName Events {
+
+            Param([int] $Hours)
+
+            # import common functions
+            . ([scriptblock]::Create($using:CommonFunc))
+
+            $Node = $env:COMPUTERNAME
+            $NodePath = [System.IO.Path]::GetTempPath()
+
+            Get-SddcCapturedEvents $NodePath $Hours |% {
+
+                Write-Output (Get-AdminSharePathFromLocal $Node $_)
             }
 
-            $AssocPool = Get-StoragePool -CimSession $AccessNode -ErrorAction SilentlyContinue
-            $AssocPool |% {
-                $AssocPName = $_.FriendlyName
-                $AssocPOpStatus = $_.OperationalStatus
-                $AssocPHStatus = $_.HealthStatus
-                Get-StoragePool -CimSession $AccessNode -FriendlyName $AssocPName |
-                Get-VirtualDisk -CimSession $AccessNode |% {
-                    $AssocVD = $_
-                    $Associations |% {
-                        if ($_.FriendlyName -eq $AssocVD.FriendlyName) {
-                            $_.PoolName = $AssocPName
-                            $_.PoolOpStatus = $AssocPOpStatus
-                            $_.PoolHealthStatus = $AssocPHStatus
-                            $_.VDResiliency = $AssocVD.ResiliencySettingName
-                            $_.VDCopies = $AssocVD.NumberofDataCopies
-                            $_.VDColumns = $AssocVD.NumberofColumns
-                            $_.VDEAware = $AssocVD.IsEnclosureAware
+            # Also export locale metadata for off-system rendering (one-shot, we'll recursively copy)
+            Write-Output (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
+        }
+
+        if ($IncludeAssociations -and $ClusterName -ne $null) {
+
+            # This is used at Phase 2 and is run asynchronously since
+            # it can take some time to gather for large numbers of devices.
+
+            # Gather nodes view of storage and build all the associations
+
+            $SNVJob = Start-Job -Name 'StorageNodePhysicalDiskView' -ArgumentList $clusterName {
+            param ($clusterName)
+                $clusterCimSession = New-CimSession -ComputerName $ClusterName
+                $snvInstances = Get-CimInstance -Namespace root\Microsoft\Windows\Storage -ClassName MSFT_StorageNodeToPhysicalDisk -CimSession $clusterCimSession
+                $allPhysicalDisks  = Get-PhysicalDisk -CimSession $clusterCimSession
+                $SNV = @()
+
+                Foreach ($phyDisk in $snvInstances) {
+                    $SNVObject = New-Object -TypeName System.Object
+                    $pdIndex = $phyDisk.PhysicalDiskObjectId.IndexOf("PD:")
+                    $pdLength = $phyDisk.PhysicalDiskObjectId.Length
+                    $pdID = $phyDisk.PhysicalDiskObjectId.Substring($pdIndex+3, $pdLength-($pdIndex+4))
+                    $PDUID = ($allPhysicalDisks |? ObjectID -Match $pdID).UniqueID
+                    $pd = $allPhysicalDisks |? UniqueID -eq $PDUID
+                    $nodeIndex = $phyDisk.StorageNodeObjectId.IndexOf("SN:")
+                    $nodeLength = $phyDisk.StorageNodeObjectId.Length
+                    $storageNodeName = $phyDisk.StorageNodeObjectId.Substring($nodeIndex+3, $nodeLength-($nodeIndex+4))
+                    $poolName = ($pd | Get-StoragePool -CimSession $clusterCimSession -ErrorAction SilentlyContinue |? IsPrimordial -eq $false).FriendlyName
+                    if (-not $poolName) {
+                        continue
+                    }
+
+                    $SNVObject | Add-Member -Type NoteProperty -Name PhysicalDiskUID -Value $PDUID
+                    $SNVObject | Add-Member -Type NoteProperty -Name StorageNode -Value $storageNodeName
+                    $SNVObject | Add-Member -Type NoteProperty -Name StoragePool -Value $poolName
+                    $SNVObject | Add-Member -Type NoteProperty -Name MPIOPolicy -Value $phyDisk.LoadBalancePolicy
+                    $SNVObject | Add-Member -Type NoteProperty -Name MPIOState -Value $phyDisk.IsMPIOEnabled
+                    $SNVObject | Add-Member -Type NoteProperty -Name StorageEnclosure -Value $pd.PhysicalLocation
+                    $SNVObject | Add-Member -Type NoteProperty -Name PathID -Value $phyDisk.PathID
+                    $SNVObject | Add-Member -Type NoteProperty -Name PathState -Value $phyDisk.PathState
+
+                    $SNV += $SNVObject
+                }
+                Write-Output $SNV
+            }
+
+            # Gather association between pool, virtualdisk, volume, share.
+
+            $AssocJob = Start-Job -Name 'StorageComponentAssociations' -ArgumentList $AccessNode,$ClusterName {
+                param($AccessNode,$ClusterName)
+
+                $SmbShares = Get-SmbShare -CimSession $AccessNode
+                $Associations = Get-VirtualDisk -CimSession $AccessNode |% {
+
+                    $o = $_ | Select-Object FriendlyName, OperationalStatus, HealthStatus, CSVName, CSVStatus, CSVNode, CSVPath, CSVVolume,
+                    ShareName, SharePath, VolumeID, PoolName, PoolOpStatus, PoolHealthStatus, VDResiliency, VDCopies, VDColumns, VDEAware
+
+                    $AssocCSV = $_ | Get-ClusterSharedVolume -Cluster $ClusterName
+
+                    if ($AssocCSV) {
+                        $o.CSVName = $AssocCSV.Name
+                        $o.CSVStatus = $AssocCSV.State
+                        $o.CSVNode = $AssocCSV.OwnerNode.Name
+                        $o.CSVPath = $AssocCSV.SharedVolumeInfo.FriendlyVolumeName
+                        if ($o.CSVPath.Length -ne 0) {
+                            $o.CSVVolume = $o.CSVPath.Split("\")[2]
+                        }
+                        $AssocLike = $o.CSVPath+"\*"
+                        $AssocShares = $SmbShares |? Path -like $AssocLike
+                        $AssocShare = $AssocShares | Select-Object -First 1
+                        if ($AssocShare) {
+                            $o.ShareName = $AssocShare.Name
+                            $o.SharePath = $AssocShare.Path
+                            $o.VolumeID = $AssocShare.Volume
+                            if ($AssocShares.Count -gt 1) { $o.ShareName += "*" }
+                        }
+                    }
+
+                    Write-Output $o
+                }
+
+                $AssocPool = Get-StoragePool -CimSession $AccessNode -ErrorAction SilentlyContinue
+                $AssocPool |% {
+                    $AssocPName = $_.FriendlyName
+                    $AssocPOpStatus = $_.OperationalStatus
+                    $AssocPHStatus = $_.HealthStatus
+                    Get-StoragePool -CimSession $AccessNode -FriendlyName $AssocPName |
+                    Get-VirtualDisk -CimSession $AccessNode |% {
+                        $AssocVD = $_
+                        $Associations |% {
+                            if ($_.FriendlyName -eq $AssocVD.FriendlyName) {
+                                $_.PoolName = $AssocPName
+                                $_.PoolOpStatus = $AssocPOpStatus
+                                $_.PoolHealthStatus = $AssocPHStatus
+                                $_.VDResiliency = $AssocVD.ResiliencySettingName
+                                $_.VDCopies = $AssocVD.NumberofDataCopies
+                                $_.VDColumns = $AssocVD.NumberofColumns
+                                $_.VDEAware = $AssocVD.IsEnclosureAware
+                            }
                         }
                     }
                 }
-            }
 
-            Write-Output $Associations
-        }
-    }
-
-    #
-    # SMB share health/status
-    #
-
-    Show-Update "SMB Shares"
-
-    try { $SmbShares = Get-SmbShare -CimSession $AccessNode }
-    catch { Show-Error("Unable to get SMB Shares. `nError="+$_.Exception.Message) }
-
-    # XXX only sharepath and health are added in, why are we selecting down to just these four as opposed to add-member?
-    $ShareStatus = $SmbShares |? ContinuouslyAvailable | Select-Object ScopeName, Name, SharePath, Health
-    $Count1 = 0
-    $Total1 = NCount($ShareStatus)
-
-    if ($Total1 -gt 0)
-    {
-        $ShareStatus |% {
-            $Progress = $Count1 / $Total1 * 100
-            $Count1++
-            Write-Progress -Activity "Testing file share access" -PercentComplete $Progress
-
-            if ($ClusterDomain -ne "")
-            {
-                $_.SharePath = "\\" + $_.ScopeName + "." + $ClusterDomain + "\" + $_.Name
-            }
-            else
-            {
-                $_.SharePath = "\\" + $_.ScopeName + "\" + $_.Name
-            }
-            try { if (Test-Path -Path $_.SharePath  -ErrorAction SilentlyContinue) {
-                        $_.Health = "Accessible"
-                    } else {
-                        $_.Health = "Inaccessible"
-                }
-            }
-            catch { $_.Health = "Accessible: "+$_.Exception.Message }
-        }
-        Write-Progress -Activity "Testing file share access" -Completed
-    }
-
-    $ShareStatus | Export-Clixml ($Path + "ShareStatus.XML")
-
-    Show-Update "SMB Share Open Files"
-
-    try {
-        $o = Get-SmbOpenFile -CimSession $AccessNode
-        $o | Export-Clixml ($Path + "GetSmbOpenFile.XML") }
-    catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
-
-    Show-Update "SMB Share Witness"
-
-    try {
-        $o = Get-SmbWitnessClient -CimSession $AccessNode
-        $o | Export-Clixml ($Path + "GetSmbWitness.XML") }
-    catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
-
-    Show-Update "Clustered Subsystem"
-
-    # NOTE: $Subsystem is reused several times below
-    try {
-        $Subsystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-        $Subsystem | Export-Clixml ($Path + "GetStorageSubsystem.XML")
-    }
-    catch { Show-Warning("Unable to get Clustered Subsystem.`nError="+$_.Exception.Message) }
-
-    if ($Subsystem.HealthStatus -notlike "Healthy") {
-        try {
-            $Subsystem | Debug-StorageSubsystem -CimSession $AccessNode |
-                Export-Clixml (Join-Path $Path "DebugStorageSubsystem.XML")
-        }
-        catch { Show-Error "Unable to get Debug-StorageSubsystem for unhealthy StorageSubsystem.`nError=" $_ }
-    }
-
-    Show-Update "Volumes & Virtual Disks"
-
-    # Volume status
-
-    try {
-        $Volumes = Get-Volume -CimSession $AccessNode -StorageSubSystem $Subsystem
-        $Volumes | Export-Clixml ($Path + "GetVolume.XML") }
-    catch { Show-Error("Unable to get Volumes. `nError="+$_.Exception.Message) }
-
-
-    # Virtual disk health
-    # Used in S2D-specific gather below
-
-    try {
-        $VirtualDisk = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $Subsystem
-        $VirtualDisk | Export-Clixml ($Path + "GetVirtualDisk.XML")
-    }
-    catch { Show-Warning("Unable to get Virtual Disks.`nError="+$_.Exception.Message) }
-
-    # Deduplicated volume health
-    # XXX the counts/healthy likely not needed once phase 2 shifted into summary report
-
-    if ($DedupEnabled)
-    {
-        Show-Update "Dedup Volume Status"
-
-        try {
-            $DedupVolumes = Invoke-Command -ComputerName $AccessNode { Get-DedupStatus }
-            $DedupVolumes | Export-Clixml ($Path + "GetDedupVolume.XML") }
-        catch { Show-Error("Unable to get Dedup Volumes.`nError="+$_.Exception.Message) }
-
-        $DedupTotal = NCount($DedupVolumes)
-        $DedupHealthy = NCount($DedupVolumes |? LastOptimizationResult -eq 0 )
-
-    } else {
-
-        $DedupVolumes = @()
-        $DedupTotal = 0
-        $DedupHealthy = 0
-    }
-
-    Show-Update "Storage Pool & Tiers"
-
-    # Storage tier information
-
-    try {
-        Get-StorageTier -CimSession $AccessNode |
-            Export-Clixml ($Path + "GetStorageTier.XML") }
-    catch { Show-Warning("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
-
-    # Storage pool health
-
-    try {
-        $StoragePools = @(Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $Subsystem -ErrorAction SilentlyContinue)
-        $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML") }
-    catch { Show-Error("Unable to get Storage Pools. `nError="+$_.Exception.Message) }
-
-    Show-Update "Storage Jobs"
-
-    try {
-        # cannot subsystem scope Get-StorageJob at this time
-        icm $AccessNode { Get-StorageJob } |
-            Export-Clixml ($Path + "GetStorageJob.XML") }
-    catch { Show-Warning("Unable to get Storage Jobs. `nError="+$_.Exception.Message) }
-
-    Show-Update "Clustered PhysicalDisks and SNV"
-
-    # Physical disk health
-
-    try {
-        $PhysicalDisks = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $Subsystem
-        $PhysicalDisks | Export-Clixml ($Path + "GetPhysicalDisk.XML") }
-    catch { Show-Error("Unable to get Physical Disks. `nError="+$_.Exception.Message) }
-
-    try {
-        $PhysicalDiskSNV = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $Subsystem | Get-PhysicalDiskSNV -CimSession $AccessNode |
-            Export-Clixml ($Path + "GetPhysicalDiskSNV.XML") }
-    catch { Show-Error("Unable to get Physical Disk Storage Node View. `nError="+$_.Exception.Message) }
-
-    # Reliability counters
-    # These may cause a latency burst on some devices due to device-specific requirements for lifting/generating
-    # the SMART data which underlies them. Decline to do this by default.
-
-    if ($IncludeReliabilityCounters -eq $true) {
-
-        Show-Update "Storage Reliability Counters"
-
-        try {
-            $PhysicalDisks | Get-StorageReliabilityCounter -CimSession $AccessNode |
-                Export-Clixml ($Path + "GetReliabilityCounter.XML") }
-        catch { Show-Error("Unable to get Storage Reliability Counters. `nError="+$_.Exception.Message) }
-
-    }
-
-    # Storage enclosure health
-
-    Show-Update "Storage Enclosures"
-
-    try {
-        Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $Subsystem |
-            Export-Clixml ($Path + "GetStorageEnclosure.XML") }
-    catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
-
-    #
-    # Generate SBL Connectivity report based on input clusport information
-    #
-
-    if ($S2DEnabled) {
-
-        Show-Update "Pooled Disks"
-
-        try {
-            if ($StoragePools.Count -eq 1) {
-                $StoragePools | Get-PhysicalDisk -CimSession $AccessNode |
-                    Export-Clixml (Join-Path $Path ("GetPhysicalDisk_Pool.xml"))
-            }
-        } catch {
-            Show-Error "Not able to query pooled disks" $_
-        }
-
-        Show-Update "Storage Scale Units"
-
-        try {
-            $Subsystem | Get-StorageFaultDomain -CimSession $AccessNode -Type StorageScaleUnit |
-                Export-Clixml (Join-Path $Path ("GetStorageFaultDomain_SSU.xml"))
-        } catch {
-            Show-Error "Not able to query Storage Scale Units" $_
-        }
-
-        Show-Update "S2D Connectivity"
-
-        try {
-            $JobStatic += $ClusterNodes |% {
-                $node = $_.Name
-                Start-Job -Name "S2D Connectivity: $node" -InitializationScript $CommonFunc {
-                    Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $using:node |
-                        Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusPort.xml")
-                    Get-CimInstance -Namespace root\wmi -ClassName ClusBfltDeviceInformation -ComputerName $using:node |
-                        Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusBflt.xml")
-                }
-            }
-        } catch {
-            Show-Warning "Gathering SBL connectivity failed"
-        }
-    }
-
-    ####
-    # Now receive the jobs requiring remote copyout
-    ####
-
-    if ($JobCopyOut.Count -or $JobCopyOutNoDelete.Count) {
-        Show-Update "Completing jobs with remote copyout ..." -ForegroundColor Green
-        Show-WaitChildJob ($JobCopyOut + $JobCopyOutNoDelete) 120
-        Show-Update "Starting remote copyout ..."
-
-        # keep parallelizing on receive at the individual node/child job level
-        $JobCopy = @()
-        if ($JobCopyOut.Count) { $JobCopy += Start-CopyJob $Path -Delete $JobCopyOut }
-        if ($JobCopyOutNoDelete.Count) { $JobCopy += Start-CopyJob $Path $JobCopyOutNoDelete }
-        Show-WaitChildJob $JobCopy 30
-
-        # receive any copyout errors for logging/triage
-        Receive-Job $JobCopy
-        Remove-Job ($JobCopyOut + $JobCopyOutNoDelete)
-        Remove-Job $JobCopy
-    }
-
-    Show-Update "All remote copyout complete" -ForegroundColor Green
-
-    ####
-    # Now receive the static jobs
-    ####
-
-    Show-Update "Completing background gathers ..." -ForegroundColor Green
-    Show-WaitChildJob $JobStatic 30
-    Receive-Job $JobStatic
-    Remove-Job $JobStatic
-
-    # wipe variables to catch reuse
-    Remove-Variable JobCopyOut
-    Remove-Variable JobStatic
-
-    #
-    # Phase 2 Prep
-    #
-    Show-Update "<<< Phase 2 - Pool, Physical Disk and Volume Details >>>" -ForegroundColor Cyan
-
-    if ($IncludeAssociations) {
-
-        if ($Read) {
-            $Associations = Import-Clixml ($Path + "GetAssociations.XML")
-            $SNVView = Import-Clixml ($Path + "GetStorageNodeView.XML")
-        } else {
-            "`nCollecting device associations..."
-            try {
-                $Associations = $AssocJob | Wait-Job | Receive-Job
-                $AssocJob | Remove-Job
-                if ($null -eq $Associations) {
-                    Show-Warning "Unable to get object associations"
-                }
-                $Associations | Export-Clixml ($Path + "GetAssociations.XML")
-
-                "`nCollecting storage view associations..."
-                $SNVView = $SNVJob | Wait-Job | Receive-Job
-                $SNVJob | Remove-Job
-                if ($null -eq $SNVView) {
-                    Show-Warning "Unable to get nodes storage view associations"
-                }
-                $SNVView | Export-Clixml ($Path + "GetStorageNodeView.XML")
-            } catch {
-                Show-Warning "Not able to query associations.."
+                Write-Output $Associations
             }
         }
-    }
 
-    #
-    # Phase 2
-    #
+        #
+        # SMB share health/status
+        #
 
-    if ($IncludeHealthReport) {
-        "`n[Health Report]"
-        "`nVolumes with status, total size and available size, sorted by Available Size"
-        "Notes: Sizes shown in gigabytes (GB). * means multiple shares on that volume"
+        Show-Update "SMB Shares"
 
-        $Volumes |? FileSystem -eq CSVFS | Sort-Object SizeRemaining |
-        Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.Path); "[$(PoolOperationalStatus($_.Path))/$(PoolHealthStatus($_.Path))] " + $poolName};Label="[OpStatus/Health] Pool"},
-        @{Expression={(PoolHealthyPDs(VolumeToPool($_.Path)))};Label="HealthyPhysicalDisks"; Align="Center"},
-        @{Expression={$vd = VolumeToVD($_.Path);  "[$(VDOperationalStatus($_.Path))/$(VDHealthStatus($_.Path))] "+$vd};Label="[OpStatus/Health] VirtualDisk"},
-        @{Expression={$csvVolume = VolumeToCSV($_.Path); "[" + $_.HealthStatus + "] " + $csvVolume};Label="[Health] CSV Volume"},
-        @{Expression={$csvName = VolumeToCSVName($_.Path); $csvStatus = CSVStatus($_.Path);  " [$csvStatus] " + $csvName};Label="[Status] CSV Name"},
-        @{Expression={CSVToNode(VolumeToCSV($_.Path))};Label="Volume Owner"},
-        @{Expression={VolumeToShare($_.Path)};Label="Share Name"},
-        @{Expression={$VolResiliency = VolumeToResiliency($_.Path); $volColumns = VolumeToColumns($_.Path); "$VolResiliency,$volColumns" +"Col" };Label="Volume Configuration"},
-        @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"},
-        @{Expression={"{0:N2}" -f ($_.SizeRemaining/$_.Size*100)};Label="Avail%";Width=11;Align="Right"}
+        try { $SmbShares = Get-SmbShare -CimSession $AccessNode }
+        catch { Show-Error("Unable to get SMB Shares. `nError="+$_.Exception.Message) }
 
-        if ($DedupEnabled -and ($DedupTotal -gt 0))
+        # XXX only sharepath and health are added in, why are we selecting down to just these four as opposed to add-member?
+        $ShareStatus = $SmbShares |? ContinuouslyAvailable | Select-Object ScopeName, Name, SharePath, Health
+        $Count1 = 0
+        $Total1 = NCount($ShareStatus)
+
+        if ($Total1 -gt 0)
         {
-            "Dedup Volumes with status, total size and available size, sorted by Savings %"
+            $ShareStatus |% {
+                $Progress = $Count1 / $Total1 * 100
+                $Count1++
+                Write-Progress -Activity "Testing file share access" -PercentComplete $Progress
+
+                if ($ClusterDomain -ne "")
+                {
+                    $_.SharePath = "\\" + $_.ScopeName + "." + $ClusterDomain + "\" + $_.Name
+                }
+                else
+                {
+                    $_.SharePath = "\\" + $_.ScopeName + "\" + $_.Name
+                }
+                try { if (Test-Path -Path $_.SharePath  -ErrorAction SilentlyContinue) {
+                            $_.Health = "Accessible"
+                        } else {
+                            $_.Health = "Inaccessible"
+                    }
+                }
+                catch { $_.Health = "Accessible: "+$_.Exception.Message }
+            }
+            Write-Progress -Activity "Testing file share access" -Completed
+        }
+
+        $ShareStatus | Export-Clixml ($Path + "ShareStatus.XML")
+
+        Show-Update "SMB Share Open Files"
+
+        try {
+            $o = Get-SmbOpenFile -CimSession $AccessNode
+            $o | Export-Clixml ($Path + "GetSmbOpenFile.XML") }
+        catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
+
+        Show-Update "SMB Share Witness"
+
+        try {
+            $o = Get-SmbWitnessClient -CimSession $AccessNode
+            $o | Export-Clixml ($Path + "GetSmbWitness.XML") }
+        catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
+
+        Show-Update "Clustered Subsystem"
+
+        # NOTE: $Subsystem is reused several times below
+        try {
+            $Subsystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+            $Subsystem | Export-Clixml ($Path + "GetStorageSubsystem.XML")
+        }
+        catch { Show-Warning("Unable to get Clustered Subsystem.`nError="+$_.Exception.Message) }
+
+        if ($Subsystem.HealthStatus -notlike "Healthy") {
+            try {
+                $Subsystem | Debug-StorageSubsystem -CimSession $AccessNode |
+                    Export-Clixml (Join-Path $Path "DebugStorageSubsystem.XML")
+            }
+            catch { Show-Error "Unable to get Debug-StorageSubsystem for unhealthy StorageSubsystem.`nError=" $_ }
+        }
+
+        Show-Update "Volumes & Virtual Disks"
+
+        # Volume status
+
+        try {
+            $Volumes = Get-Volume -CimSession $AccessNode -StorageSubSystem $Subsystem
+            $Volumes | Export-Clixml ($Path + "GetVolume.XML") }
+        catch { Show-Error("Unable to get Volumes. `nError="+$_.Exception.Message) }
+
+
+        # Virtual disk health
+        # Used in S2D-specific gather below
+
+        try {
+            $VirtualDisk = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $Subsystem
+            $VirtualDisk | Export-Clixml ($Path + "GetVirtualDisk.XML")
+        }
+        catch { Show-Warning("Unable to get Virtual Disks.`nError="+$_.Exception.Message) }
+
+        # Deduplicated volume health
+        # XXX the counts/healthy likely not needed once phase 2 shifted into summary report
+
+        if ($DedupEnabled)
+        {
+            Show-Update "Dedup Volume Status"
+
+            try {
+                $DedupVolumes = Invoke-Command -ComputerName $AccessNode { Get-DedupStatus }
+                $DedupVolumes | Export-Clixml ($Path + "GetDedupVolume.XML") }
+            catch { Show-Error("Unable to get Dedup Volumes.`nError="+$_.Exception.Message) }
+
+            $DedupTotal = NCount($DedupVolumes)
+            $DedupHealthy = NCount($DedupVolumes |? LastOptimizationResult -eq 0 )
+
+        } else {
+
+            $DedupVolumes = @()
+            $DedupTotal = 0
+            $DedupHealthy = 0
+        }
+
+        Show-Update "Storage Pool & Tiers"
+
+        # Storage tier information
+
+        try {
+            Get-StorageTier -CimSession $AccessNode |
+                Export-Clixml ($Path + "GetStorageTier.XML") }
+        catch { Show-Warning("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
+
+        # Storage pool health
+
+        try {
+            $StoragePools = @(Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $Subsystem -ErrorAction SilentlyContinue)
+            $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML") }
+        catch { Show-Error("Unable to get Storage Pools. `nError="+$_.Exception.Message) }
+
+        Show-Update "Storage Jobs"
+
+        try {
+            # cannot subsystem scope Get-StorageJob at this time
+            icm $AccessNode { Get-StorageJob } |
+                Export-Clixml ($Path + "GetStorageJob.XML") }
+        catch { Show-Warning("Unable to get Storage Jobs. `nError="+$_.Exception.Message) }
+
+        Show-Update "Clustered PhysicalDisks and SNV"
+
+        # Physical disk health
+
+        try {
+            $PhysicalDisks = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $Subsystem
+            $PhysicalDisks | Export-Clixml ($Path + "GetPhysicalDisk.XML") }
+        catch { Show-Error("Unable to get Physical Disks. `nError="+$_.Exception.Message) }
+
+        try {
+            $PhysicalDiskSNV = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $Subsystem | Get-PhysicalDiskSNV -CimSession $AccessNode |
+                Export-Clixml ($Path + "GetPhysicalDiskSNV.XML") }
+        catch { Show-Error("Unable to get Physical Disk Storage Node View. `nError="+$_.Exception.Message) }
+
+        # Reliability counters
+        # These may cause a latency burst on some devices due to device-specific requirements for lifting/generating
+        # the SMART data which underlies them. Decline to do this by default.
+
+        if ($IncludeReliabilityCounters -eq $true) {
+
+            Show-Update "Storage Reliability Counters"
+
+            try {
+                $PhysicalDisks | Get-StorageReliabilityCounter -CimSession $AccessNode |
+                    Export-Clixml ($Path + "GetReliabilityCounter.XML") }
+            catch { Show-Error("Unable to get Storage Reliability Counters. `nError="+$_.Exception.Message) }
+
+        }
+
+        # Storage enclosure health
+
+        Show-Update "Storage Enclosures"
+
+        try {
+            Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $Subsystem |
+                Export-Clixml ($Path + "GetStorageEnclosure.XML") }
+        catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
+
+        #
+        # Generate SBL Connectivity report based on input clusport information
+        #
+
+        if ($S2DEnabled) {
+
+            Show-Update "Pooled Disks"
+
+            try {
+                if ($StoragePools.Count -eq 1) {
+                    $StoragePools | Get-PhysicalDisk -CimSession $AccessNode |
+                        Export-Clixml (Join-Path $Path ("GetPhysicalDisk_Pool.xml"))
+                }
+            } catch {
+                Show-Error "Not able to query pooled disks" $_
+            }
+
+            Show-Update "Storage Scale Units"
+
+            try {
+                $Subsystem | Get-StorageFaultDomain -CimSession $AccessNode -Type StorageScaleUnit |
+                    Export-Clixml (Join-Path $Path ("GetStorageFaultDomain_SSU.xml"))
+            } catch {
+                Show-Error "Not able to query Storage Scale Units" $_
+            }
+
+            Show-Update "S2D Connectivity"
+
+            try {
+                $JobStatic += $ClusterNodes |% {
+                    $node = $_.Name
+                    Start-Job -Name "S2D Connectivity: $node" -InitializationScript $CommonFunc {
+                        Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $using:node |
+                            Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusPort.xml")
+                        Get-CimInstance -Namespace root\wmi -ClassName ClusBfltDeviceInformation -ComputerName $using:node |
+                            Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusBflt.xml")
+                    }
+                }
+            } catch {
+                Show-Warning "Gathering SBL connectivity failed"
+            }
+        }
+
+        ####
+        # Now receive the jobs requiring remote copyout
+        ####
+
+        if ($JobCopyOut.Count -or $JobCopyOutNoDelete.Count) {
+            Show-Update "Completing jobs with remote copyout ..." -ForegroundColor Green
+            Show-WaitChildJob ($JobCopyOut + $JobCopyOutNoDelete) 120
+            Show-Update "Starting remote copyout ..."
+
+            # keep parallelizing on receive at the individual node/child job level
+            $JobCopy = @()
+            if ($JobCopyOut.Count) { $JobCopy += Start-CopyJob $Path -Delete $JobCopyOut }
+            if ($JobCopyOutNoDelete.Count) { $JobCopy += Start-CopyJob $Path $JobCopyOutNoDelete }
+            Show-WaitChildJob $JobCopy 30
+
+            # receive any copyout errors for logging/triage
+            Receive-Job $JobCopy
+            Remove-Job ($JobCopyOut + $JobCopyOutNoDelete)
+            Remove-Job $JobCopy
+        }
+
+        Show-Update "All remote copyout complete" -ForegroundColor Green
+
+        ####
+        # Now receive the static jobs
+        ####
+
+        Show-Update "Completing background gathers ..." -ForegroundColor Green
+        Show-WaitChildJob $JobStatic 30
+        Receive-Job $JobStatic
+        Remove-Job $JobStatic
+
+        # wipe variables to catch reuse
+        Remove-Variable JobCopyOut
+        Remove-Variable JobStatic
+
+        #
+        # Phase 2 Prep
+        #
+        Show-Update "<<< Phase 2 - Pool, Physical Disk and Volume Details >>>" -ForegroundColor Cyan
+
+        if ($IncludeAssociations) {
+
+            if ($Read) {
+                $Associations = Import-Clixml ($Path + "GetAssociations.XML")
+                $SNVView = Import-Clixml ($Path + "GetStorageNodeView.XML")
+            } else {
+                "`nCollecting device associations..."
+                try {
+                    $Associations = $AssocJob | Wait-Job | Receive-Job
+                    $AssocJob | Remove-Job
+                    if ($null -eq $Associations) {
+                        Show-Warning "Unable to get object associations"
+                    }
+                    $Associations | Export-Clixml ($Path + "GetAssociations.XML")
+
+                    "`nCollecting storage view associations..."
+                    $SNVView = $SNVJob | Wait-Job | Receive-Job
+                    $SNVJob | Remove-Job
+                    if ($null -eq $SNVView) {
+                        Show-Warning "Unable to get nodes storage view associations"
+                    }
+                    $SNVView | Export-Clixml ($Path + "GetStorageNodeView.XML")
+                } catch {
+                    Show-Warning "Not able to query associations.."
+                }
+            }
+        }
+
+        #
+        # Phase 2
+        #
+
+        if ($IncludeHealthReport) {
+            "`n[Health Report]"
+            "`nVolumes with status, total size and available size, sorted by Available Size"
             "Notes: Sizes shown in gigabytes (GB). * means multiple shares on that volume"
 
-            $DedupVolumes | Sort-Object SavingsRate -Descending |
-            Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.VolumeId); "[$(PoolOperationalStatus($_.VolumeId))/$(PoolHealthStatus($_.VolumeId))] " + $poolName};Label="[OpStatus/Health] Pool"},
-            @{Expression={(PoolHealthyPDs(VolumeToPool($_.VolumeId)))};Label="HealthyPhysicalDisks"; Align="Center"},
-            @{Expression={$vd = VolumeToVD($_.VolumeId);  "[$(VDOperationalStatus($_.VolumeId))/$(VDHealthStatus($_.VolumeId))] "+$vd};Label="[OpStatus/Health] VirtualDisk"},
-            @{Expression={VolumeToCSV($_.VolumeId)};Label="Volume "},
-            @{Expression={VolumeToShare($_.VolumeId)};Label="Share"},
-            @{Expression={"{0:N2}" -f ($_.Capacity/1GB)};Label="Capacity";Width=11;Align="Left"},
-            @{Expression={"{0:N2}" -f ($_.UnoptimizedSize/1GB)};Label="Before";Width=11;Align="Right"},
-            @{Expression={"{0:N2}" -f ($_.UsedSpace/1GB)};Label="After";Width=11;Align="Right"},
-            @{Expression={"{0:N2}" -f ($_.SavingsRate)};Label="Savings%";Width=11;Align="Right"},
-            @{Expression={"{0:N2}" -f ($_.FreeSpace/1GB)};Label="Free";Width=11;Align="Right"},
-            @{Expression={"{0:N2}" -f ($_.FreeSpace/$_.Capacity*100)};Label="Free%";Width=11;Align="Right"},
-            @{Expression={"{0:N0}" -f ($_.InPolicyFilesCount)};Label="Files";Width=11;Align="Right"}
-        }
+            $Volumes |? FileSystem -eq CSVFS | Sort-Object SizeRemaining |
+            Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.Path); "[$(PoolOperationalStatus($_.Path))/$(PoolHealthStatus($_.Path))] " + $poolName};Label="[OpStatus/Health] Pool"},
+            @{Expression={(PoolHealthyPDs(VolumeToPool($_.Path)))};Label="HealthyPhysicalDisks"; Align="Center"},
+            @{Expression={$vd = VolumeToVD($_.Path);  "[$(VDOperationalStatus($_.Path))/$(VDHealthStatus($_.Path))] "+$vd};Label="[OpStatus/Health] VirtualDisk"},
+            @{Expression={$csvVolume = VolumeToCSV($_.Path); "[" + $_.HealthStatus + "] " + $csvVolume};Label="[Health] CSV Volume"},
+            @{Expression={$csvName = VolumeToCSVName($_.Path); $csvStatus = CSVStatus($_.Path);  " [$csvStatus] " + $csvName};Label="[Status] CSV Name"},
+            @{Expression={CSVToNode(VolumeToCSV($_.Path))};Label="Volume Owner"},
+            @{Expression={VolumeToShare($_.Path)};Label="Share Name"},
+            @{Expression={$VolResiliency = VolumeToResiliency($_.Path); $volColumns = VolumeToColumns($_.Path); "$VolResiliency,$volColumns" +"Col" };Label="Volume Configuration"},
+            @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"},
+            @{Expression={"{0:N2}" -f ($_.SizeRemaining/$_.Size*100)};Label="Avail%";Width=11;Align="Right"}
 
-        if ($SNVView) {
-            "`n[Storage Node view]"
-            $SNVView | sort StorageNode,StorageEnclosure | Format-Table -AutoSize @{Expression = {$_.StorageNode}; Label = "StorageNode"; Align = "Left"},
-            @{Expression = {$_.StoragePool}; Label = "StoragePool"; Align = "Left"},
-            @{Expression = {$_.MPIOPolicy}; Label = "MPIOPolicy"; Align = "Left"},
-            @{Expression = {$_.MPIOState}; Label = "MPIOState"; Align = "Left"},
-            @{Expression = {$_.PathID}; Label = "PathID"; Align = "Left"},
-            @{Expression = {$_.PathState}; Label = "PathState"; Align = "Left"},
-            @{Expression = {$_.PhysicalDiskUID}; Label = "PhysicalDiskUID"; Align = "Left"},
-            @{Expression = {$_.StorageEnclosure}; Label = "StorageEnclosureLocation"; Align = "Left"}
-        }
+            if ($DedupEnabled -and ($DedupTotal -gt 0))
+            {
+                "Dedup Volumes with status, total size and available size, sorted by Savings %"
+                "Notes: Sizes shown in gigabytes (GB). * means multiple shares on that volume"
 
-        "`n[Capacity Report]"
-        "Physical disks by Enclosure, Media Type and Health Status, with total and unallocated space"
-        "Note: Sizes shown in gigabytes (GB)"
-
-        $PDStatus = $PhysicalDisks |? EnclosureNumber -ne $null |
-        Sort-Object EnclosureNumber, MediaType, HealthStatus |
-        Group-Object EnclosureNumber, MediaType, HealthStatus |
-        Select-Object Count, TotalSize, Unalloc,
-        @{Expression={$_.Name.Split(",")[0].Trim().TrimEnd()}; Label="Enc"},
-        @{Expression={$_.Name.Split(",")[1].Trim().TrimEnd()}; Label="Media"},
-        @{Expression={$_.Name.Split(",")[2].Trim().TrimEnd()}; Label="Health"}
-
-        $PDStatus |% {
-            $Current = $_
-            $TotalSize = 0
-            $Unalloc = 0
-            $PDCurrent = $PhysicalDisks |? { ($_.EnclosureNumber -eq $Current.Enc) -and ($_.MediaType -eq $Current.Media) -and ($_.HealthStatus -eq $Current.Health) }
-            $PDCurrent |% {
-                $Unalloc += $_.Size - $_.AllocatedSize
-                $TotalSize +=$_.Size
+                $DedupVolumes | Sort-Object SavingsRate -Descending |
+                Format-Table -AutoSize @{Expression={$poolName = VolumeToPool($_.VolumeId); "[$(PoolOperationalStatus($_.VolumeId))/$(PoolHealthStatus($_.VolumeId))] " + $poolName};Label="[OpStatus/Health] Pool"},
+                @{Expression={(PoolHealthyPDs(VolumeToPool($_.VolumeId)))};Label="HealthyPhysicalDisks"; Align="Center"},
+                @{Expression={$vd = VolumeToVD($_.VolumeId);  "[$(VDOperationalStatus($_.VolumeId))/$(VDHealthStatus($_.VolumeId))] "+$vd};Label="[OpStatus/Health] VirtualDisk"},
+                @{Expression={VolumeToCSV($_.VolumeId)};Label="Volume "},
+                @{Expression={VolumeToShare($_.VolumeId)};Label="Share"},
+                @{Expression={"{0:N2}" -f ($_.Capacity/1GB)};Label="Capacity";Width=11;Align="Left"},
+                @{Expression={"{0:N2}" -f ($_.UnoptimizedSize/1GB)};Label="Before";Width=11;Align="Right"},
+                @{Expression={"{0:N2}" -f ($_.UsedSpace/1GB)};Label="After";Width=11;Align="Right"},
+                @{Expression={"{0:N2}" -f ($_.SavingsRate)};Label="Savings%";Width=11;Align="Right"},
+                @{Expression={"{0:N2}" -f ($_.FreeSpace/1GB)};Label="Free";Width=11;Align="Right"},
+                @{Expression={"{0:N2}" -f ($_.FreeSpace/$_.Capacity*100)};Label="Free%";Width=11;Align="Right"},
+                @{Expression={"{0:N0}" -f ($_.InPolicyFilesCount)};Label="Files";Width=11;Align="Right"}
             }
 
-            $Current.Unalloc = $Unalloc
-            $Current.TotalSize = $TotalSize
-        }
+            if ($SNVView) {
+                "`n[Storage Node view]"
+                $SNVView | sort StorageNode,StorageEnclosure | Format-Table -AutoSize @{Expression = {$_.StorageNode}; Label = "StorageNode"; Align = "Left"},
+                @{Expression = {$_.StoragePool}; Label = "StoragePool"; Align = "Left"},
+                @{Expression = {$_.MPIOPolicy}; Label = "MPIOPolicy"; Align = "Left"},
+                @{Expression = {$_.MPIOState}; Label = "MPIOState"; Align = "Left"},
+                @{Expression = {$_.PathID}; Label = "PathID"; Align = "Left"},
+                @{Expression = {$_.PathState}; Label = "PathState"; Align = "Left"},
+                @{Expression = {$_.PhysicalDiskUID}; Label = "PhysicalDiskUID"; Align = "Left"},
+                @{Expression = {$_.StorageEnclosure}; Label = "StorageEnclosureLocation"; Align = "Left"}
+            }
 
-        $PDStatus | Format-Table -AutoSize Enc, Media, Health, Count,
-        @{Expression={"{0:N2}" -f ($_.TotalSize/$_.Count/1GB)};Label="Avg Size";Width=11;Align="Right"},
-        @{Expression={"{0:N2}" -f ($_.TotalSize/1GB)};Label="Total Size";Width=11;Align="Right"},
-        @{Expression={"{0:N2}" -f ($_.Unalloc/1GB)};Label="Unallocated";Width=11;Align="Right"},
-        @{Expression={"{0:N2}" -f ($_.Unalloc/$_.TotalSize*100)};Label="Unalloc %";Width=11;Align="Right"}
+            "`n[Capacity Report]"
+            "Physical disks by Enclosure, Media Type and Health Status, with total and unallocated space"
+            "Note: Sizes shown in gigabytes (GB)"
 
-        "Pools with health, total size and unallocated space"
-        "Note: Sizes shown in gigabytes (GB)"
+            $PDStatus = $PhysicalDisks |? EnclosureNumber -ne $null |
+            Sort-Object EnclosureNumber, MediaType, HealthStatus |
+            Group-Object EnclosureNumber, MediaType, HealthStatus |
+            Select-Object Count, TotalSize, Unalloc,
+            @{Expression={$_.Name.Split(",")[0].Trim().TrimEnd()}; Label="Enc"},
+            @{Expression={$_.Name.Split(",")[1].Trim().TrimEnd()}; Label="Media"},
+            @{Expression={$_.Name.Split(",")[2].Trim().TrimEnd()}; Label="Health"}
 
-        $StoragePools | Sort-Object FriendlyName |
-        Format-Table -AutoSize @{Expression={$_.FriendlyName};Label="Name"},
-        @{Expression={$_.HealthStatus};Label="Health"},
-        @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"},
-        @{Expression={"{0:N2}" -f (($_.Size-$_.AllocatedSize)/1GB)};Label="Unallocated";Width=11;Align="Right"},
-        @{Expression={"{0:N2}" -f (($_.Size-$_.AllocatedSize)/$_.Size*100)};Label="Unalloc%";Width=11;Align="Right"}
-    }
-
-    #
-    # Phase 3
-    #
-    Show-Update "<<< Phase 3 - Storage Performance >>>" -ForegroundColor Cyan
-
-    if (-not $IncludePerformance) {
-
-       "Performance was excluded by a parameter`n"
-
-    } else {
-
-        Show-Update "Get counter sets"
-        $set = Get-Counter -ListSet "Cluster Storage*","Cluster CSV*","Storage Spaces*" -ComputerName $ClusterNodes.Name
-        Show-Update "Start monitoring ($($PerfSamples)s)"
-        $PerfRaw = Get-Counter -Counter $set.Paths -SampleInterval 1 -MaxSamples $PerfSamples -ErrorAction Ignore -WarningAction Ignore
-        Show-Update "Exporting counters"
-        $PerfRaw | Export-counter -Path ($Path + "GetCounters.blg") -Force -FileFormat BLG
-        Show-Update "Completed"
-
-        if ($ProcessCounter) {
-
-            "Collected $PerfSamples seconds of raw performance counters. Processing...`n"
-            $Count1 = 0
-            $Total1 = $PerfRaw.Count
-
-            if ($Total1 -gt 0) {
-
-                $PerfDetail = $PerfRaw |% {
-                    $TimeStamp = $_.TimeStamp
-
-                    $Progress = $Count1 / $Total1 * 45
-                    $Count1++
-                    Write-Progress -Activity "Processing performance samples" -PercentComplete $Progress
-
-                    $_.CounterSamples |% {
-                        $DetailRow = "" | Select-Object Time, Pool, Owner, Node, Volume, Share, Counter, Value
-                        $Split = $_.Path.Split("\")
-                        $DetailRow.Time = $TimeStamp
-                        $DetailRow.Node = $Split[2]
-                        $DetailRow.Volume = $_.InstanceName
-                        $DetailRow.Counter = $Split[4]
-                        $DetailRow.Value = $_.CookedValue
-                        $DetailRow
-                    }
+            $PDStatus |% {
+                $Current = $_
+                $TotalSize = 0
+                $Unalloc = 0
+                $PDCurrent = $PhysicalDisks |? { ($_.EnclosureNumber -eq $Current.Enc) -and ($_.MediaType -eq $Current.Media) -and ($_.HealthStatus -eq $Current.Health) }
+                $PDCurrent |% {
+                    $Unalloc += $_.Size - $_.AllocatedSize
+                    $TotalSize +=$_.Size
                 }
 
-                Write-Progress -Activity "Processing performance samples" -PercentComplete 50
-                $PerfDetail = $PerfDetail | Sort-Object Volume
+                $Current.Unalloc = $Unalloc
+                $Current.TotalSize = $TotalSize
+            }
 
-                $Last = $PerfDetail.Count - 1
-                $Volume = ""
+            $PDStatus | Format-Table -AutoSize Enc, Media, Health, Count,
+            @{Expression={"{0:N2}" -f ($_.TotalSize/$_.Count/1GB)};Label="Avg Size";Width=11;Align="Right"},
+            @{Expression={"{0:N2}" -f ($_.TotalSize/1GB)};Label="Total Size";Width=11;Align="Right"},
+            @{Expression={"{0:N2}" -f ($_.Unalloc/1GB)};Label="Unallocated";Width=11;Align="Right"},
+            @{Expression={"{0:N2}" -f ($_.Unalloc/$_.TotalSize*100)};Label="Unalloc %";Width=11;Align="Right"}
 
-                $PerfVolume = 0 .. $Last |% {
+            "Pools with health, total size and unallocated space"
+            "Note: Sizes shown in gigabytes (GB)"
 
-                    if ($Volume -ne $PerfDetail[$_].Volume) {
-                        $Volume = $PerfDetail[$_].Volume
-                        $Pool = CSVToPool ($Volume)
-                        $Owner = CSVToNode ($Volume)
-                        $Share = CSVToShare ($Volume)
-                        $ReadIOPS = 0
-                        $WriteIOPS = 0
-                        $ReadLatency = 0
-                        $WriteLatency = 0
-                        $NonZeroRL = 0
-                        $NonZeroWL = 0
+            $StoragePools | Sort-Object FriendlyName |
+            Format-Table -AutoSize @{Expression={$_.FriendlyName};Label="Name"},
+            @{Expression={$_.HealthStatus};Label="Health"},
+            @{Expression={"{0:N2}" -f ($_.Size/1GB)};Label="Total Size";Width=11;Align="Right"},
+            @{Expression={"{0:N2}" -f (($_.Size-$_.AllocatedSize)/1GB)};Label="Unallocated";Width=11;Align="Right"},
+            @{Expression={"{0:N2}" -f (($_.Size-$_.AllocatedSize)/$_.Size*100)};Label="Unalloc%";Width=11;Align="Right"}
+        }
 
-                        $Progress = 55 + ($_ / $Last * 45 )
+        #
+        # Phase 3
+        #
+        Show-Update "<<< Phase 3 - Storage Performance >>>" -ForegroundColor Cyan
+
+        if (-not $IncludePerformance) {
+
+        "Performance was excluded by a parameter`n"
+
+        } else {
+
+            Show-Update "Get counter sets"
+            $set = Get-Counter -ListSet "Cluster Storage*","Cluster CSV*","Storage Spaces*" -ComputerName $ClusterNodes.Name
+            Show-Update "Start monitoring ($($PerfSamples)s)"
+            $PerfRaw = Get-Counter -Counter $set.Paths -SampleInterval 1 -MaxSamples $PerfSamples -ErrorAction Ignore -WarningAction Ignore
+            Show-Update "Exporting counters"
+            $PerfRaw | Export-counter -Path ($Path + "GetCounters.blg") -Force -FileFormat BLG
+            Show-Update "Completed"
+
+            if ($ProcessCounter) {
+
+                "Collected $PerfSamples seconds of raw performance counters. Processing...`n"
+                $Count1 = 0
+                $Total1 = $PerfRaw.Count
+
+                if ($Total1 -gt 0) {
+
+                    $PerfDetail = $PerfRaw |% {
+                        $TimeStamp = $_.TimeStamp
+
+                        $Progress = $Count1 / $Total1 * 45
+                        $Count1++
                         Write-Progress -Activity "Processing performance samples" -PercentComplete $Progress
-                    }
 
-                    $PerfDetail[$_].Pool = $Pool
-                    $PerfDetail[$_].Owner = $Owner
-                    $PerfDetail[$_].Share = $Share
-
-                    $Value = $PerfDetail[$_].Value
-
-                    Switch ($PerfDetail[$_].Counter) {
-                        "reads/sec" { $ReadIOPS += $Value }
-                        "writes/sec" { $WriteIOPS += $Value }
-                        "read latency" { $ReadLatency += $Value; if ($Value -gt 0) {$NonZeroRL++} }
-                        "write latency" { $WriteLatency += $Value; if ($Value -gt 0) {$NonZeroWL++} }
-                        default { Write-Warning "Invalid counter $_" }
-                    }
-
-                    if ($_ -eq $Last) {
-                        $EndofVolume = $true
-                    } else {
-                        if ($Volume -ne $PerfDetail[$_+1].Volume) {
-                            $EndofVolume = $true
-                        } else {
-                            $EndofVolume = $false
+                        $_.CounterSamples |% {
+                            $DetailRow = "" | Select-Object Time, Pool, Owner, Node, Volume, Share, Counter, Value
+                            $Split = $_.Path.Split("\")
+                            $DetailRow.Time = $TimeStamp
+                            $DetailRow.Node = $Split[2]
+                            $DetailRow.Volume = $_.InstanceName
+                            $DetailRow.Counter = $Split[4]
+                            $DetailRow.Value = $_.CookedValue
+                            $DetailRow
                         }
                     }
 
-                    if ($EndofVolume) {
-                        $VolumeRow = "" | Select-Object Pool, Volume, Share, ReadIOPS, WriteIOPS, TotalIOPS, ReadLatency, WriteLatency, TotalLatency
-                        $VolumeRow.Pool = $Pool
-                        $VolumeRow.Volume = $Volume
-                        $VolumeRow.Share = $Share
-                        $VolumeRow.ReadIOPS = [int] ($ReadIOPS / $PerfSamples *  10) / 10
-                        $VolumeRow.WriteIOPS = [int] ($WriteIOPS / $PerfSamples * 10) / 10
-                        $VolumeRow.TotalIOPS = $VolumeRow.ReadIOPS + $VolumeRow.WriteIOPS
-                        if ($NonZeroRL -eq 0) {$NonZeroRL = 1}
-                        $VolumeRow.ReadLatency = [int] ($ReadLatency / $NonZeroRL * 1000000 ) / 1000
-                        if ($NonZeroWL -eq 0) {$NonZeroWL = 1}
-                        $VolumeRow.WriteLatency = [int] ($WriteLatency / $NonZeroWL * 1000000 ) / 1000
-                        $VolumeRow.TotalLatency = [int] (($ReadLatency + $WriteLatency) / ($NonZeroRL + $NonZeroWL) * 1000000) / 1000
-                        $VolumeRow
-                     }
+                    Write-Progress -Activity "Processing performance samples" -PercentComplete 50
+                    $PerfDetail = $PerfDetail | Sort-Object Volume
+
+                    $Last = $PerfDetail.Count - 1
+                    $Volume = ""
+
+                    $PerfVolume = 0 .. $Last |% {
+
+                        if ($Volume -ne $PerfDetail[$_].Volume) {
+                            $Volume = $PerfDetail[$_].Volume
+                            $Pool = CSVToPool ($Volume)
+                            $Owner = CSVToNode ($Volume)
+                            $Share = CSVToShare ($Volume)
+                            $ReadIOPS = 0
+                            $WriteIOPS = 0
+                            $ReadLatency = 0
+                            $WriteLatency = 0
+                            $NonZeroRL = 0
+                            $NonZeroWL = 0
+
+                            $Progress = 55 + ($_ / $Last * 45 )
+                            Write-Progress -Activity "Processing performance samples" -PercentComplete $Progress
+                        }
+
+                        $PerfDetail[$_].Pool = $Pool
+                        $PerfDetail[$_].Owner = $Owner
+                        $PerfDetail[$_].Share = $Share
+
+                        $Value = $PerfDetail[$_].Value
+
+                        Switch ($PerfDetail[$_].Counter) {
+                            "reads/sec" { $ReadIOPS += $Value }
+                            "writes/sec" { $WriteIOPS += $Value }
+                            "read latency" { $ReadLatency += $Value; if ($Value -gt 0) {$NonZeroRL++} }
+                            "write latency" { $WriteLatency += $Value; if ($Value -gt 0) {$NonZeroWL++} }
+                            default { Write-Warning "Invalid counter $_" }
+                        }
+
+                        if ($_ -eq $Last) {
+                            $EndofVolume = $true
+                        } else {
+                            if ($Volume -ne $PerfDetail[$_+1].Volume) {
+                                $EndofVolume = $true
+                            } else {
+                                $EndofVolume = $false
+                            }
+                        }
+
+                        if ($EndofVolume) {
+                            $VolumeRow = "" | Select-Object Pool, Volume, Share, ReadIOPS, WriteIOPS, TotalIOPS, ReadLatency, WriteLatency, TotalLatency
+                            $VolumeRow.Pool = $Pool
+                            $VolumeRow.Volume = $Volume
+                            $VolumeRow.Share = $Share
+                            $VolumeRow.ReadIOPS = [int] ($ReadIOPS / $PerfSamples *  10) / 10
+                            $VolumeRow.WriteIOPS = [int] ($WriteIOPS / $PerfSamples * 10) / 10
+                            $VolumeRow.TotalIOPS = $VolumeRow.ReadIOPS + $VolumeRow.WriteIOPS
+                            if ($NonZeroRL -eq 0) {$NonZeroRL = 1}
+                            $VolumeRow.ReadLatency = [int] ($ReadLatency / $NonZeroRL * 1000000 ) / 1000
+                            if ($NonZeroWL -eq 0) {$NonZeroWL = 1}
+                            $VolumeRow.WriteLatency = [int] ($WriteLatency / $NonZeroWL * 1000000 ) / 1000
+                            $VolumeRow.TotalLatency = [int] (($ReadLatency + $WriteLatency) / ($NonZeroRL + $NonZeroWL) * 1000000) / 1000
+                            $VolumeRow
+                        }
+                    }
+
+                } else {
+                    Show-Warning "Unable to collect performance information"
+                    $PerfVolume = @()
+                    $PerfDetail = @()
                 }
 
-            } else {
-                Show-Warning "Unable to collect performance information"
-                $PerfVolume = @()
-                $PerfDetail = @()
-            }
-
-            $PerfVolume | Export-Clixml ($Path + "GetVolumePerf.XML")
-            $PerfDetail | Export-Csv ($Path + "VolumePerformanceDetails.TXT")
-        }
-    }
-
-    if ($S2DEnabled -ne $true) {
-        if ((([System.Environment]::OSVersion.Version).Major) -ge 10) {
-            Show-Update "Gathering the storage diagnostic information"
-            $deleteStorageSubsystem = $false
-            if (-not (Get-StorageSubsystem -FriendlyName Clustered*)) {
-                $storageProviderName = (Get-StorageProvider -CimSession $ClusterName |? Manufacturer -match 'Microsoft').Name
-                $null = Register-StorageSubsystem -ProviderName $storageProviderName -ComputerName $ClusterName -ErrorAction SilentlyContinue
-                $deleteStorageSubsystem = $true
-                $storagesubsystemToDelete = Get-StorageSubsystem -FriendlyName Clustered*
-            }
-            $destinationPath = Join-Path -Path $Path -ChildPath 'StorageDiagnosticInfo'
-            if (Test-Path -Path $destinationPath) {
-                Remove-Item -Path $destinationPath -Recurse -Force
-            }
-            New-Item -Path $destinationPath -ItemType Directory
-            $clusterSubsystem = (Get-StorageSubSystem |? Model -eq 'Clustered Windows Storage').FriendlyName
-            Stop-StorageDiagnosticLog -StorageSubSystemFriendlyName $clusterSubsystem -ErrorAction SilentlyContinue
-            if ($IncludeLiveDump) {
-                Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
-            } else {
-                Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
-            }
-
-            if ($deleteStorageSubsystem) {
-                Unregister-StorageSubsystem -StorageSubSystemUniqueId $storagesubsystemToDelete.UniqueId -ProviderName Windows*
+                $PerfVolume | Export-Clixml ($Path + "GetVolumePerf.XML")
+                $PerfDetail | Export-Csv ($Path + "VolumePerformanceDetails.TXT")
             }
         }
+
+        if ($S2DEnabled -ne $true) {
+            if ((([System.Environment]::OSVersion.Version).Major) -ge 10) {
+                Show-Update "Gathering the storage diagnostic information"
+                $deleteStorageSubsystem = $false
+                if (-not (Get-StorageSubsystem -FriendlyName Clustered*)) {
+                    $storageProviderName = (Get-StorageProvider -CimSession $ClusterName |? Manufacturer -match 'Microsoft').Name
+                    $null = Register-StorageSubsystem -ProviderName $storageProviderName -ComputerName $ClusterName -ErrorAction SilentlyContinue
+                    $deleteStorageSubsystem = $true
+                    $storagesubsystemToDelete = Get-StorageSubsystem -FriendlyName Clustered*
+                }
+                $destinationPath = Join-Path -Path $Path -ChildPath 'StorageDiagnosticInfo'
+                if (Test-Path -Path $destinationPath) {
+                    Remove-Item -Path $destinationPath -Recurse -Force
+                }
+                New-Item -Path $destinationPath -ItemType Directory
+                $clusterSubsystem = (Get-StorageSubSystem |? Model -eq 'Clustered Windows Storage').FriendlyName
+                Stop-StorageDiagnosticLog -StorageSubSystemFriendlyName $clusterSubsystem -ErrorAction SilentlyContinue
+                if ($IncludeLiveDump) {
+                    Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
+                } else {
+                    Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
+                }
+
+                if ($deleteStorageSubsystem) {
+                    Unregister-StorageSubsystem -StorageSubSystemUniqueId $storagesubsystemToDelete.UniqueId -ProviderName Windows*
+                }
+            }
+        }
+
+        Show-Update "GATHERS COMPLETE ($(((Get-Date) - $TodayDate).ToString("m'm's\.f's'")))" -ForegroundColor Green
+
+    } finally {
+        Stop-Transcript
     }
-
-    Show-Update "GATHERS COMPLETE ($(((Get-Date) - $TodayDate).ToString("m'm's\.f's'")))" -ForegroundColor Green
-
-    # Stop Transcript
-    Stop-Transcript
 
     # Generate Summary report for rapid consumption at analysis time
     Show-Update "<<< Generating Summary Report >>>" -ForegroundColor Cyan
     $transcriptFile = $Path + "0_CloudHealthSummary.log"
     Start-Transcript -Path $transcriptFile -Force
-    Show-SddcDiagnosticReport -Report Summary -ReportLevel Full $Path
-    Stop-Transcript
+    try {
+        Show-SddcDiagnosticReport -Report Summary -ReportLevel Full $Path
+    } finally {
+        Stop-Transcript
+    }
 
     #
     # Phase 4
