@@ -1363,10 +1363,6 @@ function Get-SddcDiagnosticInfo
     # Start Transcript
     $transcriptFile = Join-Path $Path "0_CloudHealthGatherTranscript.log"
     try {
-        Stop-Transcript | Out-Null
-    } catch [System.InvalidOperationException]{}
-
-    try {
         Start-Transcript -Path $transcriptFile -Force
     } catch {
         # show error and rethrow to terminate
