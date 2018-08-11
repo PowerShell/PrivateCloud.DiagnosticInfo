@@ -79,6 +79,24 @@ $CommonFuncBlock = {
         Write-Host -ForegroundColor $ForegroundColor "$(get-date -format 's') : $Message"
     }
 
+    # Wrapper for Import-Clixml which provides for basic feedback on missing/not-gathered elements
+    function Import-ClixmlIf(
+        [string] $Path,
+        [string] $MessageIf = $null
+    )
+    {
+        if (Test-Path $path) {
+            Import-Clixml $path
+        } else {
+            $m = "$Path not present"
+            if ($MessageIf) {
+                $m = "$MessageIf : " + $m
+            }
+            Show-Warning $m
+            $null
+        }
+    }
+
     function Show-JobRuntime(
         [object[]] $jobs,
         [hashtable] $namehash,
@@ -903,7 +921,6 @@ function Get-SddcDiagnosticInfo
 
         [parameter(ParameterSetName="M", Position=1, Mandatory=$false)]
         [parameter(ParameterSetName="WriteC", Position=1, Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
         [string] $ClusterName = ".",
 
         [parameter(ParameterSetName="WriteN", Position=1, Mandatory=$true)]
@@ -917,7 +934,7 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
-        [switch] $IncludePerformance = $true,
+        [bool] $IncludePerformance = $true,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
@@ -1448,9 +1465,9 @@ function Get-SddcDiagnosticInfo
         else
         {
             # We can only get here if -Nodelist was used, but cluster service isn't running
-            Write-Error "Cluster service was not running on any node, some information will be unavailable"
-            $ClusterName = $null;
-            $ClusterDomain = "";
+            Show-Warning "Cluster service was not running on any node, some information will be unavailable"
+            $ClusterName = ''
+            $ClusterDomain = ''
 
             Write-Host "Cluster name               : Unavailable, Cluster is not online on any node"
         }
@@ -1469,9 +1486,6 @@ function Get-SddcDiagnosticInfo
         $DedupEnabled = $true
         if ($(Invoke-Command -ComputerName $AccessNode {(-not (Get-Command -Module Deduplication))} )) {
             $DedupEnabled = $false
-            if ($S2DEnabled -ne $true) {
-                Show-Warning "Deduplication PowerShell not installed on cluster node."
-            }
         }
 
         ####
@@ -1565,48 +1579,53 @@ function Get-SddcDiagnosticInfo
             }
         }
 
-        Show-Update "Start gather of cluster configuration ..."
+        if ($ClusterName.Length) {
 
-        $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterGroup {
-            try {
-                $o = Get-ClusterGroup -Cluster $using:AccessNode
-                $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
+            Show-Update "Start gather of cluster configuration ..."
+
+            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterGroup {
+                try {
+                    $o = Get-ClusterGroup -Cluster $using:AccessNode
+                    $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
+                }
+                catch { Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
             }
-            catch { Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
-        }
 
-        $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterNetwork {
-            try {
-                $o = Get-ClusterNetwork -Cluster $using:AccessNode
-                $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
+            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterNetwork {
+                try {
+                    $o = Get-ClusterNetwork -Cluster $using:AccessNode
+                    $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
+                }
+                catch { Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
             }
-            catch { Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
-        }
 
-        $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResource {
-            try {
-                $o = Get-ClusterResource -Cluster $using:AccessNode
-                $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
+            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResource {
+                try {
+                    $o = Get-ClusterResource -Cluster $using:AccessNode
+                    $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
+                }
+                catch { Show-Warning("Unable to get Cluster Resources.  `nError="+$_.Exception.Message) }
+
             }
-            catch { Show-Warning("Unable to get Cluster Resources.  `nError="+$_.Exception.Message) }
 
-        }
-
-        $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResourceParameter {
-            try {
-                $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
-                $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
+            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResourceParameter {
+                try {
+                    $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
+                    $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
+                }
+                catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
             }
-            catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
-        }
 
-        $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterSharedVolume {
-            try {
-                $o = Get-ClusterSharedVolume -Cluster $using:AccessNode
-                $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
+            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterSharedVolume {
+                try {
+                    $o = Get-ClusterSharedVolume -Cluster $using:AccessNode
+                    $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
+                }
+                catch { Show-Warning("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
+
             }
-            catch { Show-Warning("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
-
+        } else {
+            Show-Update "... Skip gather of cluster configuration since cluster is not available"
         }
 
         Show-Update "Start gather of driver information ..."
@@ -1739,7 +1758,11 @@ function Get-SddcDiagnosticInfo
 
                 param($NodeName,$DomainName,$AccessNode)
 
-                $Node = "$NodeName.$DomainName"
+                $Node = "$NodeName"
+                if ($ClusterDomain.Length) {
+                    $Node += ".$DomainName"
+                }
+
                 $LocalNodeDir = Get-NodePath $using:Path $NodeName
 
                 # Text-only conventional commands
@@ -1803,14 +1826,15 @@ function Get-SddcDiagnosticInfo
                     $LocalFile = (Join-Path $LocalNodeDir (($cmd.split(' '))[0] -replace "-",""))
                     try {
 
-                        $out = iex ($cmd -replace '_C_',$Node -replace '_N_',$NodeName -replace '_A_',$AccessNode)
+                        $cmdex = $cmd -replace '_C_',$Node -replace '_N_',$NodeName -replace '_A_',$AccessNode
+                        $out = iex $cmdex
 
                         # capture as txt and xml for quick analysis according to taste
                         $out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
                         $out | Export-Clixml -Path "$LocalFile.xml"
 
                     } catch {
-                        Show-Warning "'$cmd $node' failed for node $Node"
+                        Show-Warning "'$cmdex' failed for node $Node ($($_.Exception.Message))"
                     }
                 }
 
@@ -1886,15 +1910,15 @@ function Get-SddcDiagnosticInfo
             Write-Output (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
         }
 
-        if ($IncludeAssociations -and $ClusterName -ne $null) {
+        if ($IncludeAssociations -and $ClusterName.Length) {
 
             # This is used at Phase 2 and is run asynchronously since
             # it can take some time to gather for large numbers of devices.
 
             # Gather nodes view of storage and build all the associations
 
-            $SNVJob = Start-Job -Name 'StorageNodePhysicalDiskView' -ArgumentList $clusterName {
-            param ($clusterName)
+            $SNVJob = Start-Job -Name 'StorageNodePhysicalDiskView' -ArgumentList $ClusterName {
+            param ($ClusterName)
                 $clusterCimSession = New-CimSession -ComputerName $ClusterName
                 $snvInstances = Get-CimInstance -Namespace root\Microsoft\Windows\Storage -ClassName MSFT_StorageNodeToPhysicalDisk -CimSession $clusterCimSession
                 $allPhysicalDisks  = Get-PhysicalDisk -CimSession $clusterCimSession
@@ -2055,7 +2079,10 @@ function Get-SddcDiagnosticInfo
         }
         catch { Show-Warning("Unable to get Clustered Subsystem.`nError="+$_.Exception.Message) }
 
-        if ($Subsystem.HealthStatus -notlike "Healthy") {
+        # Automatic triage is dependent on the cluster (Health Resource), avoid spurious
+        # errors if not available
+        if ($Subsystem.HealthStatus -notlike "Healthy" -and $ClusterName.Length) {
+            Show-Update "Triage for Clustered Subsystem (HealthStatus = $($Subsystem.HealthStatus))"
             try {
                 $Subsystem | Debug-StorageSubsystem -CimSession $AccessNode |
                     Export-Clixml (Join-Path $Path "DebugStorageSubsystem.XML")
@@ -2253,8 +2280,8 @@ function Get-SddcDiagnosticInfo
         if ($IncludeAssociations) {
 
             if ($Read) {
-                $Associations = Import-Clixml ($Path + "GetAssociations.XML")
-                $SNVView = Import-Clixml ($Path + "GetStorageNodeView.XML")
+                $Associations = Import-ClixmlIf ($Path + "GetAssociations.XML")
+                $SNVView = Import-ClixmlIf ($Path + "GetStorageNodeView.XML")
             } else {
                 "`nCollecting device associations..."
                 try {
@@ -2497,31 +2524,37 @@ function Get-SddcDiagnosticInfo
         }
 
         if ($S2DEnabled -ne $true) {
-            if ((([System.Environment]::OSVersion.Version).Major) -ge 10) {
-                Show-Update "Gathering the storage diagnostic information"
-                $deleteStorageSubsystem = $false
-                if (-not (Get-StorageSubsystem -FriendlyName Clustered*)) {
-                    $storageProviderName = (Get-StorageProvider -CimSession $ClusterName |? Manufacturer -match 'Microsoft').Name
-                    $null = Register-StorageSubsystem -ProviderName $storageProviderName -ComputerName $ClusterName -ErrorAction SilentlyContinue
-                    $deleteStorageSubsystem = $true
-                    $storagesubsystemToDelete = Get-StorageSubsystem -FriendlyName Clustered*
-                }
-                $destinationPath = Join-Path -Path $Path -ChildPath 'StorageDiagnosticInfo'
-                if (Test-Path -Path $destinationPath) {
-                    Remove-Item -Path $destinationPath -Recurse -Force
-                }
-                New-Item -Path $destinationPath -ItemType Directory
-                $clusterSubsystem = (Get-StorageSubSystem |? Model -eq 'Clustered Windows Storage').FriendlyName
-                Stop-StorageDiagnosticLog -StorageSubSystemFriendlyName $clusterSubsystem -ErrorAction SilentlyContinue
-                if ($IncludeLiveDump) {
-                    Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
-                } else {
-                    Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
-                }
 
-                if ($deleteStorageSubsystem) {
-                    Unregister-StorageSubsystem -StorageSubSystemUniqueId $storagesubsystemToDelete.UniqueId -ProviderName Windows*
+            try {
+                if ((([System.Environment]::OSVersion.Version).Major) -ge 10) {
+                    Show-Update "Gathering Get-StorageDiagnosticInfo"
+                    $deleteStorageSubsystem = $false
+                    if (-not (Get-StorageSubsystem -FriendlyName Clustered*)) {
+                        $storageProviderName = (Get-StorageProvider -CimSession $ClusterName |? Manufacturer -match 'Microsoft').Name
+                        $null = Register-StorageSubsystem -ProviderName $storageProviderName -ComputerName $ClusterName -ErrorAction SilentlyContinue
+                        $deleteStorageSubsystem = $true
+                        $storagesubsystemToDelete = Get-StorageSubsystem -FriendlyName Clustered*
+                    }
+                    $destinationPath = Join-Path -Path $Path -ChildPath 'StorageDiagnosticInfo'
+                    if (Test-Path -Path $destinationPath) {
+                        Remove-Item -Path $destinationPath -Recurse -Force
+                    }
+                    $null = New-Item -Path $destinationPath -ItemType Directory
+                    $clusterSubsystem = (Get-StorageSubSystem |? Model -eq 'Clustered Windows Storage').FriendlyName
+                    Stop-StorageDiagnosticLog -StorageSubSystemFriendlyName $clusterSubsystem -ErrorAction SilentlyContinue
+                    if ($IncludeLiveDump) {
+                        Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
+                    } else {
+                        Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
+                    }
+
+                    if ($deleteStorageSubsystem) {
+                        Unregister-StorageSubsystem -StorageSubSystemUniqueId $storagesubsystemToDelete.UniqueId -ProviderName Windows*
+                    }
                 }
+            }
+            catch {
+                Show-Warning "Could not gather Get-StorageDiagnosticInfo (cluster down and/or shared storage)`nError = $($_)"
             }
         }
 
@@ -2555,7 +2588,13 @@ function Get-SddcDiagnosticInfo
 
     [System.GC]::Collect()
 
-    $ZipSuffix = '-' + $Cluster.Name + '-' + (Format-SddcDateTime $TodayDate) + '.ZIP'
+    $ZipSuffix = '-' + (Format-SddcDateTime $TodayDate) + '.ZIP'
+    if ($ClusterName.Length) {
+        $ZipSuffix = '-' + $ClusterName + $ZipSuffix
+    } else {
+        $ZipSuffix = '-OFFLINECLUSTER' + $ZipSuffix
+    }
+
     $ZipPath = $ZipPrefix + $ZipSuffix
 
     try {
@@ -3743,7 +3782,7 @@ function Get-StorageBusConnectivityReport
             $node = $matches[1]
         }
 
-        Import-Clixml $_ | Show-SSBConnectivity $node
+        Import-ClixmlIf $_ | Show-SSBConnectivity $node
     }
 }
 
@@ -4028,7 +4067,7 @@ function Get-StorageLatencyReport
     }
 
     # acquire the physicaldisks datasource
-    $PhysicalDisks = Import-Clixml (Join-Path $Path "GetPhysicalDisk.XML")
+    $PhysicalDisks = Import-ClixmlIf (Join-Path $Path "GetPhysicalDisk.XML")
 
     # hash by object id
     # this is an example where a formal datasource class/api could be useful
@@ -4144,7 +4183,7 @@ function Get-StorageFirmwareReport
 
     # acquire the physicaldisks datasource for non-retired disks
     # retired disks may not show fw and in any case are not of interest for live operation
-    $PhysicalDisks = Import-Clixml (Join-Path $Path "GetPhysicalDisk.XML") |? Usage -ne Retired
+    $PhysicalDisks = Import-ClixmlIf (Join-Path $Path "GetPhysicalDisk.XML") |? Usage -ne Retired
 
     # basic report
     Write-Output "Total Firmware Report"
@@ -4310,7 +4349,7 @@ function Get-SmbConnectivityReport
     }
 
     # get the timebase from the capture parameters
-    $Parameters = Import-Clixml (Join-Path $Path "GetParameters.XML")
+    $Parameters = Import-ClixmlIf (Join-Path $Path "GetParameters.XML")
     $CaptureDate = $Parameters.TodayDate
 
     Write-Host "This report is relative to the time of data capture: $($CaptureDate)"
@@ -4361,7 +4400,7 @@ function Get-SummaryReport
         $ReportLevel
     )
 
-    $Parameters = Import-Clixml (Join-Path $Path "GetParameters.XML")
+    $Parameters = Import-ClixmlIf (Join-Path $Path "GetParameters.XML")
     $TodayDate = $Parameters.TodayDate
     $ExpectedNodes = $Parameters.ExpectedNodes
     $ExpectedNetworks = $Parameters.ExpectedNetworks
@@ -4382,11 +4421,11 @@ function Get-SummaryReport
     Show-Update "<<< Phase 1 - Health Overview >>>`n" -ForegroundColor Cyan
 
     Write-Host ("Date of capture : " + $TodayDate)
-    $ClusterNodes = Import-Clixml (Join-Path $Path "GetClusterNode.XML")
+    $ClusterNodes = Import-ClixmlIf (Join-Path $Path "GetClusterNode.XML")
 
-    try
-    {
-        $Cluster = Import-Clixml (Join-Path $Path "GetCluster.XML")
+    $Cluster = Import-ClixmlIf (Join-Path $Path "GetCluster.XML")
+
+    if ($Cluster) {
 
         $ClusterName = $Cluster.Name + "." + $Cluster.Domain
         $S2DEnabled = $Cluster.S2DEnabled
@@ -4394,9 +4433,9 @@ function Get-SummaryReport
 
         Write-Host "Cluster Name                  : $ClusterName"
         Write-Host "S2D Enabled                   : $S2DEnabled"
-    }
-    catch
-    {
+
+    } else {
+
         Write-Host "Cluster Name                  : Cluster was unavailable"
         Write-Host "S2D Enabled                   : Cluster was unavailable"
     }
@@ -4418,60 +4457,67 @@ function Get-SummaryReport
     # Cluster status
     #
 
-    $ClusterGroups = Import-Clixml (Join-Path $Path "GetClusterGroup.XML")
+    if ($Cluster) {
 
-    $ScaleOutServers = $ClusterGroups |? GroupType -like "ScaleOut*"
-    if ($null -eq $ScaleOutServers) {
-        if ($S2DEnabled -ne $true) {
-            Show-Warning "No Scale-Out File Server cluster roles found"
-        }
-    } else {
-        $ScaleOutName = $ScaleOutServers[0].Name + "." + $ClusterDomain
-        Write-Host "Scale-Out File Server Name : $ScaleOutName"
-    }
+        $ClusterGroups = Import-ClixmlIf (Join-Path $Path "GetClusterGroup.XML")
 
-    # Cluster node health
-
-    $NodesTotal = NCount($ClusterNodes)
-    $NodesHealthy = NCount($ClusterNodes |? {$_.State -like "Paused" -or $_.State -like "Up"})
-    Write-Host "Cluster Nodes up              : $NodesHealthy / $NodesTotal"
-
-    if ($NodesTotal -lt $ExpectedNodes) { Show-Warning "Fewer nodes than the $ExpectedNodes expected" }
-    if ($NodesHealthy -lt $NodesTotal) { Show-Warning "Unhealthy nodes detected" }
-
-    # Cluster network health
-
-    $ClusterNetworks = Import-Clixml (Join-Path $Path "GetClusterNetwork.XML")
-
-    $NetsTotal = NCount($ClusterNetworks)
-    $NetsHealthy = NCount($ClusterNetworks |? {$_.State -like "Up"})
-    Write-Host "Cluster Networks up           : $NetsHealthy / $NetsTotal"
-
-    if ($NetsTotal -lt $ExpectedNetworks) { Show-Warning "Fewer cluster networks than the $ExpectedNetworks expected" }
-    if ($NetsHealthy -lt $NetsTotal) { Show-Warning "Unhealthy cluster networks detected" }
-
-    # Cluster resource health
-
-    $ClusterResources = Import-Clixml (Join-Path $Path "GetClusterResource.XML")
-    $ClusterResourceParameters = Import-Clixml (Join-Path $Path "GetClusterResourceParameters.XML")
-
-    $ResTotal = NCount($ClusterResources)
-    $ResHealthy = NCount($ClusterResources |? State -like "Online")
-    Write-Host "Cluster Resources Online      : $ResHealthy / $ResTotal "
-    if ($ResHealthy -lt $ResTotal) { Show-Warning "Unhealthy cluster resources detected" }
-
-    if ($S2DEnabled) {
-        $HealthProviders = $ClusterResourceParameters |? { $_.ClusterObject -like 'Health' -and $_.Name -eq 'Providers' }
-        $HealthProviderCount = $HealthProviders.Value.Count
-        if ($HealthProviderCount) {
-            Write-Host "Health Resource               : $HealthProviderCount health providers registered"
+        $ScaleOutServers = $ClusterGroups |? GroupType -like "ScaleOut*"
+        if ($null -eq $ScaleOutServers) {
+            if ($S2DEnabled -ne $true) {
+                Show-Warning "No Scale-Out File Server cluster roles found"
+            }
         } else {
-            Show-Warning "Health Resource providers not registered"
+            $ScaleOutName = $ScaleOutServers[0].Name + "." + $ClusterDomain
+            Write-Host "Scale-Out File Server Name : $ScaleOutName"
         }
+
+        # Cluster node health
+
+        $NodesTotal = NCount($ClusterNodes)
+        $NodesHealthy = NCount($ClusterNodes |? {$_.State -like "Paused" -or $_.State -like "Up"})
+        Write-Host "Cluster Nodes up              : $NodesHealthy / $NodesTotal"
+
+        if ($NodesTotal -lt $ExpectedNodes) { Show-Warning "Fewer nodes than the $ExpectedNodes expected" }
+        if ($NodesHealthy -lt $NodesTotal) { Show-Warning "Unhealthy nodes detected" }
+
+        # Cluster network health
+
+        $ClusterNetworks = Import-ClixmlIf (Join-Path $Path "GetClusterNetwork.XML")
+
+        $NetsTotal = NCount($ClusterNetworks)
+        $NetsHealthy = NCount($ClusterNetworks |? {$_.State -like "Up"})
+        Write-Host "Cluster Networks up           : $NetsHealthy / $NetsTotal"
+
+        if ($NetsTotal -lt $ExpectedNetworks) { Show-Warning "Fewer cluster networks than the $ExpectedNetworks expected" }
+        if ($NetsHealthy -lt $NetsTotal) { Show-Warning "Unhealthy cluster networks detected" }
+
+        # Cluster resource health
+
+        $ClusterResources = Import-ClixmlIf (Join-Path $Path "GetClusterResource.XML")
+        $ClusterResourceParameters = Import-ClixmlIf (Join-Path $Path "GetClusterResourceParameters.XML")
+
+        $ResTotal = NCount($ClusterResources)
+        $ResHealthy = NCount($ClusterResources |? State -like "Online")
+        Write-Host "Cluster Resources Online      : $ResHealthy / $ResTotal "
+        if ($ResHealthy -lt $ResTotal) { Show-Warning "Unhealthy cluster resources detected" }
+
+        if ($S2DEnabled) {
+            $HealthProviders = $ClusterResourceParameters |? { $_.ClusterObject -like 'Health' -and $_.Name -eq 'Providers' }
+            $HealthProviderCount = $HealthProviders.Value.Count
+            if ($HealthProviderCount) {
+                Write-Host "Health Resource               : $HealthProviderCount health providers registered"
+            } else {
+                Show-Warning "Health Resource providers not registered"
+            }
+        }
+
+    } else {
+
+        Show-Warning "Skipping Cluster status since it was unavailable"
     }
 
     # Storage subsystem health
-    $Subsystem = Import-Clixml (Join-Path $Path "GetStorageSubsystem.XML")
+    $Subsystem = Import-ClixmlIf (Join-Path $Path "GetStorageSubsystem.XML")
 
     $SubsystemUnhealthy = $false
     if ($Subsystem -eq $null) {
@@ -4504,7 +4550,7 @@ function Get-SummaryReport
     }
 
     # Storage jobs
-    $StorageJobs = Import-Clixml (Join-Path $Path "GetStorageJob.XML")
+    $StorageJobs = Import-ClixmlIf (Join-Path $Path "GetStorageJob.XML")
 
     if ($StorageJobs -eq $null) {
         Write-Host "No storage jobs were present at the time of the gather"
@@ -4520,7 +4566,7 @@ function Get-SummaryReport
     Write-Host "`nHealthy Components count: [SMBShare -> CSV -> VirtualDisk -> StoragePool -> PhysicalDisk -> StorageEnclosure]"
 
     # Scale-out share health
-    $ShareStatus = Import-Clixml (Join-Path $Path "ShareStatus.XML")
+    $ShareStatus = Import-ClixmlIf (Join-Path $Path "ShareStatus.XML")
 
     $ShTotal = NCount($ShareStatus)
     $ShHealthy = NCount($ShareStatus |? Health -like "Accessible")
@@ -4529,7 +4575,7 @@ function Get-SummaryReport
 
     # SMB Open Files
 
-    $SmbOpenFiles = Import-Clixml (Join-Path $Path "GetSmbOpenFile.XML")
+    $SmbOpenFiles = Import-ClixmlIf (Join-Path $Path "GetSmbOpenFile.XML")
 
     $FileTotal = NCount( $SmbOpenFiles | Group-Object ClientComputerName)
     Write-Host "Users with Open Files         : $FileTotal"
@@ -4537,7 +4583,7 @@ function Get-SummaryReport
 
     # SMB witness
 
-    $SmbWitness = Import-Clixml (Join-Path $Path "GetSmbWitness.XML")
+    $SmbWitness = Import-ClixmlIf (Join-Path $Path "GetSmbWitness.XML")
 
     $WitTotal = NCount($SmbWitness |? State -eq RequestedNotifications | Group-Object ClientName)
     Write-Host "Users with a Witness          : $WitTotal"
@@ -4545,16 +4591,23 @@ function Get-SummaryReport
 
     # Cluster shared volume status
 
-    $CSV = Import-Clixml (Join-Path $Path "GetClusterSharedVolume.XML")
+    if ($Cluster) {
 
-    $CSVTotal = NCount($CSV)
-    $CSVHealthy = NCount($CSV |? State -like "Online")
-    Write-Host "Cluster Shared Volumes Online : $CSVHealthy / $CSVTotal"
-    if ($CSVHealthy -lt $CSVTotal) { Show-Warning "Offline cluster shared volumes detected" }
+        $CSV = Import-ClixmlIf (Join-Path $Path "GetClusterSharedVolume.XML")
+
+        $CSVTotal = NCount($CSV)
+        $CSVHealthy = NCount($CSV |? State -like "Online")
+        Write-Host "Cluster Shared Volumes Online : $CSVHealthy / $CSVTotal"
+        if ($CSVHealthy -lt $CSVTotal) { Show-Warning "Offline cluster shared volumes detected" }
+
+    } else {
+
+        Show-Warning "Skipping Cluster shared volume status since cluster was unavailable"
+    }
 
     # Volume health
 
-    $Volumes = Import-Clixml (Join-Path $Path "GetVolume.XML")
+    $Volumes = Import-ClixmlIf (Join-Path $Path "GetVolume.XML")
 
     $VolsTotal = NCount($Volumes |? FileSystem -eq CSVFS )
     $VolsHealthy = NCount($Volumes  |? FileSystem -eq CSVFS |? { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) })
@@ -4569,7 +4622,7 @@ function Get-SummaryReport
     if (Test-Path (Join-Path $Path "GetDedupVolume.XML")) {
         $DedupEnabled = $true
 
-        $DedupVolumes = Import-Clixml (Join-Path $Path "GetDedupVolume.XML")
+        $DedupVolumes = Import-ClixmlIf (Join-Path $Path "GetDedupVolume.XML")
         $DedupTotal = NCount($DedupVolumes)
         $DedupHealthy = NCount($DedupVolumes |? LastOptimizationResult -eq 0)
 
@@ -4588,7 +4641,7 @@ function Get-SummaryReport
 
     # Virtual disk health
 
-    $VirtualDisks = Import-Clixml (Join-Path $Path "GetVirtualDisk.XML")
+    $VirtualDisks = Import-ClixmlIf (Join-Path $Path "GetVirtualDisk.XML")
 
     $VDsTotal = NCount($VirtualDisks)
     $VDsHealthy = NCount($VirtualDisks |? { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
@@ -4598,7 +4651,7 @@ function Get-SummaryReport
 
     # Storage pool health
 
-    $StoragePools = @(Import-Clixml (Join-Path $Path "GetStoragePool.XML"))
+    $StoragePools = @(Import-ClixmlIf (Join-Path $Path "GetStoragePool.XML"))
 
     $PoolsTotal = NCount($StoragePools)
     $PoolsHealthy = NCount($StoragePools |? { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
@@ -4613,8 +4666,8 @@ function Get-SummaryReport
 
     # Physical disk health
 
-    $PhysicalDisks = Import-Clixml (Join-Path $Path "GetPhysicalDisk.XML")
-    $PhysicalDiskSNV = Import-Clixml (Join-Path $Path "GetPhysicalDiskSNV.XML")
+    $PhysicalDisks = Import-ClixmlIf (Join-Path $Path "GetPhysicalDisk.XML")
+    $PhysicalDiskSNV = Import-ClixmlIf (Join-Path $Path "GetPhysicalDiskSNV.XML")
 
     $PDsTotal = NCount($PhysicalDisks)
     $PDsHealthy = NCount($PhysicalDisks |? { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
@@ -4625,7 +4678,7 @@ function Get-SummaryReport
 
     # Storage enclosure health
 
-    $StorageEnclosures = Import-Clixml (Join-Path $Path "GetStorageEnclosure.XML")
+    $StorageEnclosures = Import-ClixmlIf (Join-Path $Path "GetStorageEnclosure.XML")
 
     $EncsTotal = NCount($StorageEnclosures)
     $EncsHealthy = NCount($StorageEnclosures |? { ($_.HealthStatus -like "Healthy") -or ($_.HealthStatus -eq 0) } )
@@ -4654,37 +4707,47 @@ function Get-SummaryReport
 
     $Failed = $False
 
-    if ($NodesTotal -ne $NodesHealthy) {
-        $Failed = $true
-        Write-Host "Cluster Nodes:"
-        $ClusterNodes |? State -ne "Up" | Format-Table -AutoSize
-    }
+    if ($Cluster) {
 
-    if ($NetsTotal -ne $NetsHealthy) {
-        $Failed = $true
-        Write-Host "Cluster Networks:"
-        $ClusterNetworks |? State -ne "Up" | Format-Table -AutoSize
-    }
+        if ($NodesTotal -ne $NodesHealthy) {
+            $Failed = $true
+            Write-Host "Cluster Nodes:"
+            $ClusterNodes |? State -ne "Up" | Format-Table -AutoSize
+        }
 
-    if ($ResTotal -ne $ResHealthy) {
-        $Failed = $true
-        Write-Host "Cluster Resources:"
-        $ClusterResources |? State -notlike "Online" |
-            Format-Table Name,
-                @{ Label = 'State'; Expression = { $_.State.Value }},
-                OwnerGroup,
-                ResourceType
+        if ($NetsTotal -ne $NetsHealthy) {
+            $Failed = $true
+            Write-Host "Cluster Networks:"
+            $ClusterNetworks |? State -ne "Up" | Format-Table -AutoSize
+        }
+
+        if ($ResTotal -ne $ResHealthy) {
+            $Failed = $true
+            Write-Host "Cluster Resources:"
+            $ClusterResources |? State -notlike "Online" |
+                Format-Table Name,
+                    @{ Label = 'State'; Expression = { $_.State.Value }},
+                    OwnerGroup,
+                    ResourceType
+        }
+
+    } else {
+
+        Show-Warning "Skipping cluster node, network and resource reporting since cluster was not available"
     }
 
     if ($SubsystemUnhealthy) {
         Write-Host "Clustered storage subsystem '$($Subsystem.FriendlyName)' not healthy:"
-        Import-Clixml (Join-Path $Path "DebugStorageSubsystem.XML") | ft -AutoSize
+        Import-ClixmlIf (Join-Path $Path "DebugStorageSubsystem.XML") -MessageIf "Expected if cluster not available" | ft -AutoSize
     }
 
-    if ($CSVTotal -ne $CSVHealthy) {
-        $Failed = $true
-        Write-Host "Cluster Shared Volumes not Online:"
-        $CSV |? State -ne "Online" | Format-Table -AutoSize
+    if ($Cluster) {
+
+        if ($CSVTotal -ne $CSVHealthy) {
+            $Failed = $true
+            Write-Host "Cluster Shared Volumes not Online:"
+            $CSV |? State -ne "Online" | Format-Table -AutoSize
+        }
     }
 
     if ($VolsTotal -ne $VolsHealthy) {
@@ -4747,7 +4810,7 @@ function Get-SummaryReport
 
     foreach ($node in $ClusterNodes.Name) {
         "`nCluster Node: $node"
-        Import-Clixml (Join-Path (Get-NodePath $Path $node) "GetDrivers.XML") |? {
+        Import-ClixmlIf (Join-Path (Get-NodePath $Path $node) "GetDrivers.XML") |? {
             ($_.DeviceCLass -eq 'SCSIADAPTER') -or ($_.DeviceCLass -eq 'NET') } |
             Group-Object DeviceName,DriverVersion |
             Sort Name |
@@ -4858,7 +4921,7 @@ function Show-SddcDiagnosticStorageLatencyReport
     $Path = Check-ExtractZip $Path
 
     # get the timebase from the capture parameters
-    $Parameters = Import-Clixml (Join-Path $Path "GetParameters.XML")
+    $Parameters = Import-ClixmlIf (Join-Path $Path "GetParameters.XML")
     $CaptureDate = $Parameters.TodayDate
 
     if ($Hours -eq -1 -or $Days -eq -1) {
