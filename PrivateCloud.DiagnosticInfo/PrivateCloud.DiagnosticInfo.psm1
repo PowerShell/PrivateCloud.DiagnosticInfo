@@ -2588,16 +2588,23 @@ function Get-SddcDiagnosticInfo
 
     [System.GC]::Collect()
 
+    # time/extension suffix
     $ZipSuffix = '-' + (Format-SddcDateTime $TodayDate) + '.ZIP'
+
+    # prepend clustername if live, domain name trimmed away
+    # we could use $Cluster.Name since it will exist if $ClusterName was created from it,
+    # but that may seem excessively mysterious)
     if ($ClusterName.Length) {
-        $ZipSuffix = '-' + $ClusterName + $ZipSuffix
+        $ZipSuffix = '-' + ($ClusterName.Split('.',2)[0]) + $ZipSuffix
     } else {
         $ZipSuffix = '-OFFLINECLUSTER' + $ZipSuffix
     }
 
+    # ... and full path
     $ZipPath = $ZipPrefix + $ZipSuffix
 
     try {
+
         [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
         $ZipPath = Convert-Path $ZipPath
         Show-Update "Zip File Name : $ZipPath"
