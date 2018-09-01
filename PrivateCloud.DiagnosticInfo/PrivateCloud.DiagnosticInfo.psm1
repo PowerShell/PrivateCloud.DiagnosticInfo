@@ -1699,7 +1699,7 @@ function Get-SddcDiagnosticInfo
 
                     $gnvDir = Join-Path $NodePath 'GetNetView'
                     Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
-                    md $gnvDir -Force -ErrorAction SilentlyContinue
+                    $null = md $gnvDir -Force -ErrorAction SilentlyContinue
 
                     # run inside a child session so we can sink output to the transcript
                     # we must pass the GNV dir since $using is statically evaluated in the
