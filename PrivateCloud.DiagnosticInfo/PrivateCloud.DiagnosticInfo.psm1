@@ -336,6 +336,19 @@ $CommonFuncBlock = {
             # Emit filename for capture
             Write-Output $EventFile
         }
+
+        # work around temp file leak re: archive-log/wevtsvc
+        # conservatively estimate that any file older than <right now>
+        # after sleeping a few seconds must be stale, so we do not stomp other
+        # tools using the same functionality.
+        $t = Get-Date
+        sleep 5
+        dir $env:WINDIR\ServiceProfiles\LocalService\AppData\Local\Temp |? {
+            ($_.Name -like 'MSG*.tmp' -or
+             $_.Name -like 'EVT*.tmp' -or
+             $_.Name -like 'PUB*.tmp') -and
+            $_.CreateTime -lt $t
+        } | del -Force -ErrorAction SilentlyContinue
     }
 
     # wrapper for common date format for file naming
