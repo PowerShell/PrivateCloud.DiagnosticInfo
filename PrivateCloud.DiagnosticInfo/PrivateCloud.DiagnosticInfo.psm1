@@ -1827,11 +1827,14 @@ function Get-SddcDiagnosticInfo
                                     'Get-NetQosTrafficClass -CimSession _C_'
                 }
 
+                # Re-enable these after root causing cmdlet issues in VM guest clusters (hsun issue)
+                <#
                 if (Get-Module Hyper-V -ErrorAction SilentlyContinue) {
                     $CmdsToLog += 'Get-VM -CimSession _C_',
                                     'Get-VMNetworkAdapter -All -CimSession _C_',
                                     'Get-VMSwitch -CimSession _C_'
                 }
+                #>
 
                 foreach ($cmd in $CmdsToLog) {
 
