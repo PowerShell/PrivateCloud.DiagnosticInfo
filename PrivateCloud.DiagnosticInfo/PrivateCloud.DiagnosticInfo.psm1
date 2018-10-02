@@ -2248,7 +2248,7 @@ function Get-SddcDiagnosticInfo
                     }
                 }
             } catch {
-                Show-Warning "Gathering SBL connectivity failed"
+                Show-Warning "Gathering S2D connectivity failed"
             }
         }
 
