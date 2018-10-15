@@ -2429,7 +2429,7 @@ function Get-SddcDiagnosticInfo
         } else {
 
             Show-Update "Get counter sets"
-            $set = Get-Counter -ListSet "Cluster Storage*","Cluster CSV*","Storage Spaces*","Refs","PhysicalDisk" -ComputerName $ClusterNodes.Name
+            $set = Get-Counter -ListSet "Cluster Storage*","Cluster CSV*","Storage Spaces*","Refs","Cluster Disk Counters","PhysicalDisk" -ComputerName $ClusterNodes.Name
             Show-Update "Start monitoring ($($PerfSamples)s)"
             $PerfRaw = Get-Counter -Counter $set.Paths -SampleInterval 1 -MaxSamples $PerfSamples -ErrorAction Ignore -WarningAction Ignore
             Show-Update "Exporting counters"
