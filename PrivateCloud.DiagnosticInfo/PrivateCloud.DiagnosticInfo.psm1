@@ -4856,41 +4856,6 @@ function Get-SummaryReport
         ft -AutoSize Count,
             @{ Expression = { $_.Group[0].Model }; Label="Model" },
             @{ Expression = { $_.Group[0].FirmwareVersion }; Label="FirmwareVersion" }
-    
-    #####
-    ##### Phase 4 Spaces Timeline information
-    #####
-	
-	   if ($ReportLevel -eq [ReportLevelType]::All) 
-    {
-		      Show-Update "<<< Phase 4 - Spaces Timeline information >>>`n" -ForegroundColor Cyan
-        $eventFilter = "EventID=300 or EventID=301 or EventID=302 or EventID=303 or EventID=304 or EventID=305 or EventID=306 or EventID=307 or EventID=308 or EventID=309 or EventID=310 or EventID=311 or EventID=312 or EventID=313"
-		
-		      foreach ($VirtualDisk in $VirtualDisks)
-		      {
-           $id = $VirtualDisk.ObjectId.Split(":")[2].Split("}")[1] + "}"
-						  
-           if ($NumberOfHours)
-			        {
-				          $query = "*[System[($eventFilter) and TimeCreated[timediff(@SystemTime) <= $($NumberOfHours*3600*1000)]]] and *[EventData[Data[@Name='Id'] and (Data='$id')]]"
-			        }
-			        else
-			        {
-			           $query = "*[System[($eventFilter)]] and *[EventData[Data[@Name='Id'] and (Data='$id')]]"
-			        }
-			
-			        foreach ($Node in $ClusterNodes)
-			        {
-				          Write-Host "$Node.Name Spaces Timeline information"
-              
-              $events = Get-WinEvent -LogName Microsoft-Windows-StorageSpaces-Driver/Operational `
-                                     -FilterXPath $query `
-                                     -ComputerName $Node.Name `
-                                     -ErrorAction Stop
-									   		Write-Host $events
-			        }
-        }
-	    }
 }
 
 <#
