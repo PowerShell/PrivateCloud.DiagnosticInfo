@@ -722,23 +722,20 @@ function Invoke-SddcCommonCommand (
     [scriptblock] $ScriptBlock
     )
 {
-	$Jobs       = @()
+	$Job        = @()
 	$Sessions   = @()
 	$SessionIds = @()
 
 	$Sessions = New-PSSession -ComputerName $ClusterNodes
-	$Jobs     = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock
+	$Job      = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock
 
 	foreach ($s in $Sessions) {
 		$SessionIds += $s.Id
 	}
 
-	$Jobs |% {
-		$parent = $_
-		$parent | Add-Member -NotePropertyName ActiveSessions -NotePropertyValue $SessionIds 
-	}
+	$Job | Add-Member -NotePropertyName ActiveSessions -NotePropertyValue $SessionIds 
 	
-	return $Jobs
+	return $Job
 }
 
 #
