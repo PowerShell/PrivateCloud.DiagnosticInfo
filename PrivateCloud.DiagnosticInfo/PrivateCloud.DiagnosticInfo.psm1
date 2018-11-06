@@ -294,6 +294,7 @@ $CommonFuncBlock = {
                         'Microsoft-Windows-Storage',
                         'Microsoft-Windows-TCPIP',
                         'Microsoft-Windows-VHDMP',
+                        'Microsoft-Windows-SDDC-Management',
                         'Microsoft-Windows-WMI-Activity' |% { "$_*" }
 
         # Exclude verbose/lower value channels
@@ -2208,6 +2209,47 @@ function Get-SddcDiagnosticInfo
             Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $Subsystem |
                 Export-Clixml ($Path + "GetStorageEnclosure.XML") }
         catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
+        
+        # SDDC information
+
+        Show-Update "SDDC resource information"
+
+        try
+        {
+            Get-CimInstance -Namespace "root\SDDC\Management" -ClassName SDDC_Drive  | Export-Clixml ($Path + "GetSddcDrive.XML");
+        }
+        catch { Show-Warning("Unable to get SDDC drive. `nError="+$_.Exception.Message) }
+
+        try
+        {
+            Get-CimInstance -Namespace "root\SDDC\Management" -ClassName SDDC_Server | Export-Clixml ($Path + "GetSddcServer.XML");
+        }
+        catch { Show-Warning("Unable to get SDDC server. `nError="+$_.Exception.Message) }
+
+        try
+        {
+            Get-CimInstance -Namespace "root\SDDC\Management" -ClassName SDDC_Volume | Export-Clixml ($Path + "GetSddcVolume.XML");
+        }
+        catch { Show-Warning("Unable to get SDDC volume. `nError="+$_.Exception.Message) }
+
+        try
+        {
+            Get-CimInstance -Namespace "root\SDDC\Management" -ClassName SDDC_Cluster | Export-Clixml ($Path + "GetSddcCluster.XML");
+        }
+        catch { Show-Warning("Unable to get SDDC cluster. `nError="+$_.Exception.Message) }
+
+        try
+        {
+            Get-CimInstance -Namespace "root\SDDC\Management" -ClassName SDDC_VirtualMachine | Export-Clixml ($Path + "GetSddcVM.XML");
+        }
+        catch { Show-Warning("Unable to get SDDC VM. `nError="+$_.Exception.Message) }
+
+        try
+        {
+            (Invoke-CimMethod -Namespace "root\SDDC\Management" -ClassName SDDC_Volume -MethodName GetNewVolumeTemplate -ComputerName $env:clustername).NewVolumeTemplate |
+                Export-Clixml ($Path + "GetSddcNewVolumeTemplate.XML");
+        }
+        catch { Show-Warning("Unable to get SDDC new volume template. `nError="+$_.Exception.Message) }
 
         #
         # Generate SBL Connectivity report based on input clusport information
