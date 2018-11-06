@@ -711,6 +711,40 @@ function Start-CopyJob(
 }
 
 #
+# Utility wrapper for invoking commands by opening sessions 
+# for each of the cluster nodes and preserving the session 
+# to be deleted after use.
+#
+
+function New-InvokeCommand (
+    [string[]] $ClusterNodes = @(),
+    [string] $JobName,
+    [scriptblock] $ScriptBlock
+    )
+{
+	$Jobs       = @()
+	$Sessions   = @()
+	$SessionIds = @()
+
+	if ($ClusterNodes.Count -ge 1) {
+					$Sessions = New-PSSession -ComputerName $ClusterNodes
+	}
+
+	$Jobs = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock
+
+	foreach ($s in $Sessions) {
+					$SessionIds += $s.Id
+	}
+
+	$Jobs |% {
+		$parent = $_
+		$parent | Add-Member -NotePropertyName ActiveSessions -NotePropertyValue $SessionIds 
+	}
+	
+	return $Jobs
+}
+
+#
 # Makes a list of cluster nodes or equivalent property-containing objects (Name/State)
 # Optionally filtered for if they are physically responding v. cluster visible state.
 #
@@ -1661,7 +1695,7 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Start gather of verifier ..."
 
-        $JobCopyOut += Invoke-Command -ComputerName $($ClusterNodes).Name -AsJob -JobName Verifier {
+        $JobCopyOut += New-InvokeCommand -ClusterNodes $($ClusterNodes).Name -JobName Verifier {
 
             # import common functions
             . ([scriptblock]::Create($using:CommonFunc))
@@ -1679,7 +1713,7 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Start gather of filesystem filter status ..."
 
-        $JobCopyOut += Invoke-Command -ComputerName $($ClusterNodes).Name -AsJob -JobName 'Filesystem Filter Manager' {
+        $JobCopyOut += New-InvokeCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Filesystem Filter Manager' {
 
             # import common functions
             . ([scriptblock]::Create($using:CommonFunc))
@@ -2257,6 +2291,12 @@ function Get-SddcDiagnosticInfo
         ####
 
         if ($JobCopyOut.Count -or $JobCopyOutNoDelete.Count) {
+
+			if (Get-Member -InputObject $JobCopyOut ActiveSessions)
+			{
+				Remove-PSSession -Id $JobCopyOut.ActiveSessions
+			}
+			
             Show-Update "Completing jobs with remote copyout ..." -ForegroundColor Green
             Show-WaitChildJob ($JobCopyOut + $JobCopyOutNoDelete) 120
             Show-Update "Starting remote copyout ..."
