@@ -716,8 +716,8 @@ function Start-CopyJob(
 # to be deleted after use.
 #
 
-function New-InvokeCommand (
-    [string[]] $ClusterNodes = @(),
+function Invoke-SddcCommonCommand (
+    [ValidateNotNullOrEmpty()][string[]] $ClusterNodes = @(),
     [string] $JobName,
     [scriptblock] $ScriptBlock
     )
@@ -726,14 +726,11 @@ function New-InvokeCommand (
 	$Sessions   = @()
 	$SessionIds = @()
 
-	if ($ClusterNodes.Count -ge 1) {
-					$Sessions = New-PSSession -ComputerName $ClusterNodes
-	}
-
-	$Jobs = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock
+	$Sessions = New-PSSession -ComputerName $ClusterNodes
+	$Jobs     = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock
 
 	foreach ($s in $Sessions) {
-					$SessionIds += $s.Id
+		$SessionIds += $s.Id
 	}
 
 	$Jobs |% {
@@ -1695,7 +1692,7 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Start gather of verifier ..."
 
-        $JobCopyOut += New-InvokeCommand -ClusterNodes $($ClusterNodes).Name -JobName Verifier {
+        $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName Verifier {
 
             # import common functions
             . ([scriptblock]::Create($using:CommonFunc))
@@ -1713,7 +1710,7 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Start gather of filesystem filter status ..."
 
-        $JobCopyOut += New-InvokeCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Filesystem Filter Manager' {
+        $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Filesystem Filter Manager' {
 
             # import common functions
             . ([scriptblock]::Create($using:CommonFunc))
