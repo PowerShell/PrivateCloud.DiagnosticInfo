@@ -2246,6 +2246,12 @@ function Get-SddcDiagnosticInfo
 
         try
         {
+            Get-CimInstance -Namespace "root\SDDC\Management" -ClassName SDDC_VirtualSwitch | Export-Clixml ($Path + "GetSddcVSwitch.XML");
+        }
+        catch { Show-Warning("Unable to get SDDC Virtual Switch. `nError="+$_.Exception.Message) }
+
+        try
+        {
             (Invoke-CimMethod -Namespace "root\SDDC\Management" -ClassName SDDC_Volume -MethodName GetNewVolumeTemplate -ComputerName $env:clustername).NewVolumeTemplate |
                 Export-Clixml ($Path + "GetSddcNewVolumeTemplate.XML");
         }
