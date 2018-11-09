@@ -294,6 +294,7 @@ $CommonFuncBlock = {
                         'Microsoft-Windows-Storage',
                         'Microsoft-Windows-TCPIP',
                         'Microsoft-Windows-VHDMP',
+                        'Microsoft-Windows-SDDC-Management',
                         'Microsoft-Windows-WMI-Activity' |% { "$_*" }
 
         # Exclude verbose/lower value channels
@@ -2236,6 +2237,25 @@ function Get-SddcDiagnosticInfo
             Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $Subsystem |
                 Export-Clixml ($Path + "GetStorageEnclosure.XML") }
         catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
+
+        # SDDC cim objects
+
+        Show-Update "SDDC Cim Objects"
+
+        foreach($objType in @("Drive","Server","Volume","Cluster","VirtualMachine","VirtualSwitch"))
+        {
+            try {
+                $className = "SDDC_"+$objType;
+                Get-CimInstance -Namespace "root\SDDC\Management" -ClassName $className  | Export-Clixml ($Path + "GetSddc"+$objType+".XML");
+            } 
+            catch { Show-Warning("Unable to get SDDC "+$objType+". `nError="+$_.Exception.Message) }
+        }
+
+        try {
+            (Invoke-CimMethod -Namespace "root\SDDC\Management" -ClassName SDDC_Volume -MethodName GetNewVolumeTemplate -ComputerName $env:clustername).NewVolumeTemplate | 
+                Export-Clixml ($Path + "GetSddcNewVolumeTemplate.XML");
+        }
+        catch { Show-Warning("Unable to get SDDC new volume template. `nError="+$_.Exception.Message) }
 
         #
         # Generate SBL Connectivity report based on input clusport information
