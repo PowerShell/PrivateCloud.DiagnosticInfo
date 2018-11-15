@@ -695,8 +695,8 @@ function Start-CopyJob(
                     }
                 }
 
-                start-job -Name "Copy $($parent.Name) $($_.Location)" -InitializationScript $CommonFunc {
-
+                Start-Job -Name "Copy $($parent.Name) $($_.Location)" { $CommonFunc;
+				
                     $using:logs |% {
                         # allow errors to propagte for triage
                         Copy-Item -Recurse $_ $using:Destination -Force -ErrorAction Continue
@@ -1688,7 +1688,7 @@ function Get-SddcDiagnosticInfo
 
             Show-Update "Start gather of cluster configuration ..."
 
-            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterGroup {
+            $JobStatic += Start-Job -Name ClusterGroup {$CommonFunc;
                 try {
                     $o = Get-ClusterGroup -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
@@ -1696,7 +1696,7 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
             }
 
-            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterNetwork {
+            $JobStatic += Start-Job -Name ClusterNetwork {$CommonFunc;
                 try {
                     $o = Get-ClusterNetwork -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
@@ -1704,7 +1704,7 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
             }
 
-            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResource {
+            $JobStatic += Start-Job -Name ClusterResource {$CommonFunc;
                 try {
                     $o = Get-ClusterResource -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
@@ -1713,7 +1713,7 @@ function Get-SddcDiagnosticInfo
 
             }
 
-            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResourceParameter {
+            $JobStatic += Start-Job -Name ClusterResourceParameter {$CommonFunc;
                 try {
                     $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
                     $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
@@ -1721,7 +1721,7 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
             }
 
-            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterSharedVolume {
+            $JobStatic += Start-Job -Name ClusterSharedVolume {$CommonFunc;
                 try {
                     $o = Get-ClusterSharedVolume -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
@@ -1739,7 +1739,7 @@ function Get-SddcDiagnosticInfo
 
             $node = $_
 
-            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name "Driver Information: $node" {
+            $JobStatic += Start-Job -Name "Driver Information: $node" {$CommonFunc;
                 try { $o = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node }
                 catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
                 $o | Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "GetDrivers.XML")
@@ -1859,7 +1859,7 @@ function Get-SddcDiagnosticInfo
 
         $JobStatic += $($ClusterNodes).Name |% {
 
-            Start-Job -Name "System Info: $_" -ArgumentList $_,$ClusterDomain,$AccessNode -InitializationScript $CommonFunc {
+            Start-Job -Name "System Info: $_" -ArgumentList $_,$ClusterDomain,$AccessNode {$CommonFunc;
 
                 param($NodeName,$DomainName,$AccessNode)
 
@@ -2332,7 +2332,7 @@ function Get-SddcDiagnosticInfo
             try {
                 $JobStatic += $ClusterNodes |% {
                     $node = $_.Name
-                    Start-Job -Name "S2D Connectivity: $node" -InitializationScript $CommonFunc {
+                    Start-Job -Name "S2D Connectivity: $node" {$CommonFunc;
                         Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $using:node |
                             Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusPort.xml")
                         Get-CimInstance -Namespace root\wmi -ClassName ClusBfltDeviceInformation -ComputerName $using:node |
@@ -3954,7 +3954,7 @@ function Get-StorageLatencyReport
 
         # parallelize processing of per-node event logs
 
-        $j += Start-Job -InitializationScript $CommonFunc -Name $node -ArgumentList $($ReportLevel -eq [ReportLevelType]::Full) {
+        $j += Start-Job -Name $node -ArgumentList $($ReportLevel -eq [ReportLevelType]::Full) {$CommonFunc;
 
             param($dofull)
 
@@ -4481,7 +4481,7 @@ WARNING: the SMB Client is receiving RDMA disconnects. This is an error whose ro
 `t cluster node reboots are a natural & expected source of disconnects.
 "@
 
-    $j += Start-Job -name 'SMB Connectivity Error Check - Disconnect Failures (Event 30804)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30804,$CaptureDate,([ConsoleColor]'Red'),$w
+    $j += Start-Job -name 'SMB Connectivity Error Check - Disconnect Failures (Event 30804)' -ScriptBlock {$CommonFunc; $ReportTableBlock } -ArgumentList $eventlogs,30804,$CaptureDate,([ConsoleColor]'Red'),$w
 
     $w = @"
 WARNING: the SMB Client is receiving RDMA connect errors. This is an error whose root
@@ -4489,7 +4489,7 @@ WARNING: the SMB Client is receiving RDMA connect errors. This is an error whose
 `t network fabric. Please inspect especially if in the Last5 bucket.
 "@
 
-    $j += Start-Job -name 'SMB Connectivity Error Check - Connect Failures (Event 30803)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30803,$CaptureDate,([ConsoleColor]'Yellow'),$w
+    $j += Start-Job -name 'SMB Connectivity Error Check - Connect Failures (Event 30803)' -ScriptBlock {$CommonFunc; $ReportTableBlock } -ArgumentList $eventlogs,30803,$CaptureDate,([ConsoleColor]'Yellow'),$w
 
     $null = $j | Wait-Job
     $j | sort Name |% {
