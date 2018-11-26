@@ -828,12 +828,7 @@ function Get-NodeList(
 			for ($j = 0; $j -lt $NodesToPing.Count; $j++)
 			{
 				if ($NodesToPing[$j].Name -eq $PingResults[$i].Name)
-				{
-					if ([bool]($NodesToPing[$j].PSObject.Properties.Name -match "Type")) # Real cluster nodes don't have a "Type" Property
-					{
-						$NodesToPing[$j].State = "Up"
-					}
-					
+				{					
 					$SuccesfullyPingedNodes += @($NodesToPing[$j])
 				}
 			}		
