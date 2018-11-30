@@ -1885,23 +1885,23 @@ function Get-SddcDiagnosticInfo
 			
         $JobStatic += $ClusterNodes.Name |% {
 		
-	    $Node = $_
+			$NodeName = $_
+			
+            Invoke-SddcCommonCommand -ClusterNodes $AccessNode -JobName "System Info: $NodeName" -InitBlock $CommonFunc {
 
-            Invoke-SddcCommonCommand -ClusterNodes $AccessNode -JobName "System Info: $Node" -InitBlock $CommonFunc -ArgumentList $Node,$ClusterDomain,$AccessNode {
-
-                param($NodeName,$DomainName,$AccessNode)
+                #param($NodeName,$DomainName,$AccessNode)
 				
-		$Node = "$NodeName"
-                if ($ClusterDomain.Length) {
-                    $Node += ".$DomainName"
+				$Node = "$using:NodeName"
+                if ($using:ClusterDomain.Length) {
+                    $Node += ".$using:ClusterDomain"
                 }
 				
-                $LocalNodeDir = Get-NodePath $using:Path $NodeName
+                $LocalNodeDir = Get-NodePath $using:Path $using:NodeName
 
                 # Text-only conventional commands
                 #
                 # Gather SYSTEMINFO.EXE output for a given node
-                SystemInfo.exe /S $Node > (Join-Path (Get-NodePath $using:Path $NodeName) "SystemInfo.TXT")
+                SystemInfo.exe /S $using:NodeName > (Join-Path (Get-NodePath $using:Path $using:NodeName) "SystemInfo.TXT")
 
                 # Cmdlets to drop in TXT and XML forms
                 #
@@ -1962,7 +1962,7 @@ function Get-SddcDiagnosticInfo
                     $LocalFile = (Join-Path $LocalNodeDir (($cmd.split(' '))[0] -replace "-",""))
                     try {
 
-                        $cmdex = $cmd -replace '_C_',$Node -replace '_N_',$NodeName -replace '_A_',$AccessNode
+                        $cmdex = $cmd -replace '_C_',$using:NodeName -replace '_N_',$using:NodeName -replace '_A_',$using:AccessNode
                         $out = iex $cmdex
 
                         # capture as txt and xml for quick analysis according to taste
@@ -1974,7 +1974,7 @@ function Get-SddcDiagnosticInfo
                     }
                 }
 
-                $NodeSystemRootPath = Invoke-Command -ComputerName $Node { $env:SystemRoot }
+                $NodeSystemRootPath = Invoke-Command -ComputerName $using:NodeName { $env:SystemRoot }
 
                 if ($using:IncludeDumps -eq $true) {
 
@@ -1983,9 +1983,9 @@ function Get-SddcDiagnosticInfo
                     ##
 
                     try {
-                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Minidump\*.dmp"))
+                        $RPath = (Get-AdminSharePathFromLocal $using:NodeName (Join-Path $NodeSystemRootPath "Minidump\*.dmp"))
                         $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-                    catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $Node" }
+                    catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $using:NodeName" }
 
                     $DmpFiles |% {
                         try { Copy-Item $_.FullName $LocalNodeDir }
@@ -1997,9 +1997,9 @@ function Get-SddcDiagnosticInfo
                     ##
 
                     try {
-                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "LiveKernelReports\*.dmp"))
+                        $RPath = (Get-AdminSharePathFromLocal $using:NodeName (Join-Path $NodeSystemRootPath "LiveKernelReports\*.dmp"))
                         $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-                    catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $Node" }
+                    catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $using:NodeName" }
 
                     $DmpFiles |% {
                         try { Copy-Item $_.FullName $LocalNodeDir }
@@ -2008,9 +2008,9 @@ function Get-SddcDiagnosticInfo
                 }
 
                 try {
-                    $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Cluster\Reports\*.*"))
+                    $RPath = (Get-AdminSharePathFromLocal $using:NodeName (Join-Path $NodeSystemRootPath "Cluster\Reports\*.*"))
                     $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-                catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $Node" }
+                catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $using:NodeName" }
 
                 $LocalReportDir = Join-Path $LocalNodeDir "ClusterReports"
                 md $LocalReportDir | Out-Null
