@@ -697,7 +697,7 @@ function Start-CopyJob(
 				
                 start-job -Name "Copy $($parent.Name) $($_.Location)" -ArgumentList $logs,$Destination,$Delete {
 
-					param($logs,$Destination,$Delete)
+		    param($logs,$Destination,$Delete)
 					
                     $logs |% {
                         # allow errors to propagte for triage
@@ -706,7 +706,7 @@ function Start-CopyJob(
                             Remove-Item -Recurse $_ -Force -ErrorAction Continue
                         }
                     }
-                }				
+                }
             }
         }
     }
@@ -1486,11 +1486,10 @@ function Get-SddcDiagnosticInfo
 
     $PathObject = Get-Item $Path
     if ($null -eq $PathObject) { Show-Error ("Path not found: $Path") }
-    $Path     = $PathObject.FullName
+    $Path = $PathObject.FullName
 
     # Note: this should be unnecessary as soon as we have the discipline of Join-Path flushed through
     if (-not $Path.EndsWith("\")) { $Path = $Path + "\" }
-	
     ###
     # Now handle read case
     #
@@ -1889,10 +1888,9 @@ function Get-SddcDiagnosticInfo
 			
             Invoke-SddcCommonCommand -ClusterNodes $AccessNode -JobName "System Info: $NodeName" -InitBlock $CommonFunc {
 
-                #param($NodeName,$DomainName,$AccessNode)
-				
-				$Node = "$using:NodeName"
-                if ($using:ClusterDomain.Length) {
+                $Node = "$using:NodeName"
+                
+		if ($using:ClusterDomain.Length) {
                     $Node += ".$using:ClusterDomain"
                 }
 				
