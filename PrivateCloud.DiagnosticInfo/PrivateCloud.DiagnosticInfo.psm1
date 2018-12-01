@@ -697,7 +697,7 @@ function Start-CopyJob(
 				
                 start-job -Name "Copy $($parent.Name) $($_.Location)" -ArgumentList $logs,$Destination,$Delete {
 
-		    param($logs,$Destination,$Delete)
+					param($logs,$Destination,$Delete)
 					
                     $logs |% {
                         # allow errors to propagte for triage
@@ -706,7 +706,7 @@ function Start-CopyJob(
                             Remove-Item -Recurse $_ -Force -ErrorAction Continue
                         }
                     }
-                }
+                }				
             }
         }
     }
@@ -719,9 +719,9 @@ function Start-CopyJob(
 # 
 
 function Invoke-SddcCommonCommand ( 
-    [ValidateNotNullOrEmpty()][string[]] $ClusterNodes = @(), 
+    [string[]] $ClusterNodes = @(), 
     [string] $JobName,
-	[scriptblock] $InitBlock, 
+    [scriptblock] $InitBlock, 
     [scriptblock] $ScriptBlock 
     ) 
 { 
@@ -729,16 +729,24 @@ function Invoke-SddcCommonCommand (
 	$Sessions   = @() 
 	$SessionIds = @() 
 
-	$Sessions = New-PSSession -ComputerName $ClusterNodes 
+	if ($ClusterNodes.Count -eq 0)
+	{
+		$Sessions = New-PSSession -Cn localhost -EnableNetworkAccess
+	}
+	else
+	{
+		$Sessions = New-PSSession -ComputerName $ClusterNodes
+	}
+	
 	Invoke-Command -Session $Sessions $InitBlock
-	$Job      = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock 
+	$Job = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock 
 
 	foreach ($s in $Sessions) { 
 		$SessionIds += $s.Id 
 	} 
 
 	$Job | Add-Member -NotePropertyName ActiveSessions -NotePropertyValue $SessionIds  
-
+	
 	return $Job 
 }
 
@@ -1486,10 +1494,11 @@ function Get-SddcDiagnosticInfo
 
     $PathObject = Get-Item $Path
     if ($null -eq $PathObject) { Show-Error ("Path not found: $Path") }
-    $Path = $PathObject.FullName
+    $Path     = $PathObject.FullName
 
     # Note: this should be unnecessary as soon as we have the discipline of Join-Path flushed through
     if (-not $Path.EndsWith("\")) { $Path = $Path + "\" }
+	
     ###
     # Now handle read case
     #
@@ -1713,7 +1722,7 @@ function Get-SddcDiagnosticInfo
 
             Show-Update "Start gather of cluster configuration ..."
 
-            $JobStatic += Invoke-SddcCommonCommand -ClusterNodes $AccessNode -JobName ClusterGroup -InitBlock $CommonFunc {
+            $JobStatic += start-job -Name ClusterGroup {
                 try {
                     $o = Get-ClusterGroup -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
@@ -1721,7 +1730,7 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
             }
 
-            $JobStatic += Invoke-SddcCommonCommand -ClusterNodes $AccessNode -JobName ClusterNetwork -InitBlock $CommonFunc {
+            $JobStatic += start-job -Name ClusterNetwork {
                 try {
                     $o = Get-ClusterNetwork -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
@@ -1729,7 +1738,7 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
             }
 
-            $JobStatic += Invoke-SddcCommonCommand -ClusterNodes $AccessNode -JobName ClusterResource -InitBlock $CommonFunc {
+            $JobStatic += start-job -Name ClusterResource {
                 try {
                     $o = Get-ClusterResource -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
@@ -1738,7 +1747,7 @@ function Get-SddcDiagnosticInfo
 
             }
 
-            $JobStatic += Invoke-SddcCommonCommand -ClusterNodes $AccessNode -JobName ClusterResourceParameter -InitBlock $CommonFunc {
+            $JobStatic += start-job -Name ClusterResourceParameter {
                 try {
                     $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
                     $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
@@ -1746,7 +1755,7 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
             }
 
-            $JobStatic += Invoke-SddcCommonCommand -ClusterNodes $AccessNode -JobName ClusterSharedVolume -InitBlock $CommonFunc {
+            $JobStatic += start-job -Name ClusterSharedVolume {
                 try {
                     $o = Get-ClusterSharedVolume -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
@@ -1764,10 +1773,10 @@ function Get-SddcDiagnosticInfo
 
             $node = $_
 
-            $JobStatic += Invoke-SddcCommonCommand -ClusterNodes $AccessNode -JobName "Driver Information: $node" -InitBlock $CommonFunc {
+            $JobStatic += start-job -Name "Driver Information: $node" {
                 try { $o = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node }
                 catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
-                $o | Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "GetDrivers.XML")
+                $o | Export-Clixml (Join-Path (Join-Path $using:Path "Node_$using:node") "GetDrivers.XML")
             }
         }
 
@@ -1886,11 +1895,12 @@ function Get-SddcDiagnosticInfo
 		
 			$NodeName = $_
 			
-            Invoke-SddcCommonCommand -ClusterNodes $AccessNode -JobName "System Info: $NodeName" -InitBlock $CommonFunc {
+            Invoke-SddcCommonCommand -JobName "System Info: $NodeName" -InitBlock $CommonFunc -ScriptBlock {
 
-                $Node = "$using:NodeName"
-                
-		if ($using:ClusterDomain.Length) {
+                #param($NodeName,$DomainName,$AccessNode)
+				
+				$Node = "$using:NodeName"
+                if ($using:ClusterDomain.Length) {
                     $Node += ".$using:ClusterDomain"
                 }
 				
@@ -2358,11 +2368,11 @@ function Get-SddcDiagnosticInfo
             try {
                 $JobStatic += $ClusterNodes |% {
                     $node = $_.Name
-                    Invoke-SddcCommonCommand -ClusterNodes $AccessNode -JobName "S2D Connectivity: $node" -InitBlock $CommonFunc {
+                    start-job -Name "S2D Connectivity: $node" {
                         Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $using:node |
-                            Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusPort.xml")
+                            Export-Clixml (Join-Path (Join-Path $using:Path "Node_$using:node") "ClusPort.xml")
                         Get-CimInstance -Namespace root\wmi -ClassName ClusBfltDeviceInformation -ComputerName $using:node |
-                            Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusBflt.xml")
+                            Export-Clixml (Join-Path (Join-Path $using:Path "Node_$using:node") "ClusBflt.xml")
                     }
                 }
             } catch {
@@ -2391,10 +2401,10 @@ function Get-SddcDiagnosticInfo
             Remove-Job ($JobCopyOut + $JobCopyOutNoDelete)
             Remove-Job $JobCopy
 			
-			if (Get-Member -InputObject $JobCopyOut ActiveSessions)
-			{
-				Remove-PSSession -Id $JobCopyOut.ActiveSessions
-			}
+            if (Get-Member -InputObject $JobCopyOut ActiveSessions)
+            {
+                 Remove-PSSession -Id $JobCopyOut.ActiveSessions
+            }
         }
 
         Show-Update "All remote copyout complete" -ForegroundColor Green
