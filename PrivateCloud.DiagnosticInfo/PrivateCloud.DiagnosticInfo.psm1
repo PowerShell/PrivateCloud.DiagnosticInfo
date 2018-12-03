@@ -1890,7 +1890,7 @@ function Get-SddcDiagnosticInfo
 			
         $JobStatic += $ClusterNodes.Name |% {
 		
-			$NodeName = $_
+            $NodeName = $_
 			
             Invoke-SddcCommonCommand -JobName "System Info: $NodeName" -InitBlock $CommonFunc -ScriptBlock {
 
