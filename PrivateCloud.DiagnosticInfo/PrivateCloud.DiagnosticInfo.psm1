@@ -738,12 +738,9 @@ function Invoke-SddcCommonCommand (
 		$Sessions = New-PSSession -ComputerName $ClusterNodes
 	}
 	
-	Invoke-Command -Session $Sessions $InitBlock
-	$Job = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock 
-
-	foreach ($s in $Sessions) { 
-		$SessionIds += $s.Id 
-	} 
+    Invoke-Command -Session $Sessions $InitBlock
+    $Job = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock 
+    $SessionIds = $Sessions.Id
 
 	$Job | Add-Member -NotePropertyName ActiveSessions -NotePropertyValue $SessionIds  
 	
@@ -1897,8 +1894,6 @@ function Get-SddcDiagnosticInfo
 			
             Invoke-SddcCommonCommand -JobName "System Info: $NodeName" -InitBlock $CommonFunc -ScriptBlock {
 
-                #param($NodeName,$DomainName,$AccessNode)
-				
 				$Node = "$using:NodeName"
                 if ($using:ClusterDomain.Length) {
                     $Node += ".$using:ClusterDomain"
@@ -2418,10 +2413,10 @@ function Get-SddcDiagnosticInfo
         Receive-Job $JobStatic
         Remove-Job $JobStatic
 		
-		if (Get-Member -InputObject $JobStatic ActiveSessions)
-		{
-			Remove-PSSession -Id $JobStatic.ActiveSessions
-		}
+        if (Get-Member -InputObject $JobStatic ActiveSessions)
+        {
+                Remove-PSSession -Id $JobStatic.ActiveSessions
+        }
 
         # wipe variables to catch reuse
         Remove-Variable JobCopyOut
@@ -4001,9 +3996,12 @@ function Get-StorageLatencyReport
 
         # parallelize processing of per-node event logs
 
-        $j += Invoke-SddcCommonCommand -ClusterNodes $node -InitBlock $CommonFunc -JobName $node -ArgumentList $($ReportLevel -eq [ReportLevelType]::Full) {
+        $j += Invoke-SddcCommonCommand -ClusterNodes $node -InitBlock $CommonFunc -JobName $node {
 
-            param($dofull)
+			$dofull = $false
+			
+			if ($using:ReportLevel -eq [ReportLevelType]::Full)
+				$dofull = $true
 
             # helper function for getting list of bucketnames from x->end
             function Get-Bucket
