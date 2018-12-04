@@ -694,22 +694,58 @@ function Start-CopyJob(
                         $null = md $Destination -Force -ErrorAction Continue
                     }
                 }
+				
+                start-job -Name "Copy $($parent.Name) $($_.Location)" -ArgumentList $logs,$Destination,$Delete {
 
-                start-job -Name "Copy $($parent.Name) $($_.Location)" -InitializationScript $CommonFunc {
-
-                    $using:logs |% {
+                    param($logs,$Destination,$Delete)
+					
+                    $logs |% {
                         # allow errors to propagte for triage
-                        Copy-Item -Recurse $_ $using:Destination -Force -ErrorAction Continue
-                        if ($using:Delete) {
+                        Copy-Item -Recurse $_ $Destination -Force -ErrorAction Continue
+                        if ($Delete) {
                             Remove-Item -Recurse $_ -Force -ErrorAction Continue
                         }
                     }
-                }
+                }				
             }
         }
     }
 }
 
+# 
+# Utility wrapper for invoking commands by opening sessions  
+# for each of the cluster nodes and preserving the session  
+# to be deleted after use. 
+# 
+
+function Invoke-SddcCommonCommand ( 
+    [string[]] $ClusterNodes = @(), 
+    [string] $JobName,
+    [scriptblock] $InitBlock, 
+    [scriptblock] $ScriptBlock 
+    ) 
+{ 
+	$Job        = @() 
+	$Sessions   = @() 
+	$SessionIds = @() 
+
+	if ($ClusterNodes.Count -eq 0)
+	{
+		$Sessions = New-PSSession -Cn localhost -EnableNetworkAccess
+	}
+	else
+	{
+		$Sessions = New-PSSession -ComputerName $ClusterNodes
+	}
+	
+	Invoke-Command -Session $Sessions $InitBlock
+	$Job = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock 
+	$SessionIds = $Sessions.Id
+
+	$Job | Add-Member -NotePropertyName ActiveSessions -NotePropertyValue $SessionIds  
+	
+	return $Job 
+}
 
 #
 # Goes over a list of nodes and finds the first one that can access the cluster
@@ -1455,11 +1491,11 @@ function Get-SddcDiagnosticInfo
 
     $PathObject = Get-Item $Path
     if ($null -eq $PathObject) { Show-Error ("Path not found: $Path") }
-    $Path = $PathObject.FullName
+    $Path     = $PathObject.FullName
 
     # Note: this should be unnecessary as soon as we have the discipline of Join-Path flushed through
     if (-not $Path.EndsWith("\")) { $Path = $Path + "\" }
-
+	
     ###
     # Now handle read case
     #
@@ -1620,7 +1656,7 @@ function Get-SddcDiagnosticInfo
                     $null = Confirm-SddcDiagnosticModule -Cluster $using:Cluster 3> $o
                 }
 
-                $j = icm $ClusterNodes.Name -AsJob -JobName SddcDiagnosticArchive {
+                $j = Invoke-SddcCommonCommand -ClusterNodes $ClusterNodes.Name -JobName SddcDiagnosticArchive -InitBlock $CommonFunc {
 
                     Import-Module $using:Module -ErrorAction SilentlyContinue
 
@@ -1683,7 +1719,7 @@ function Get-SddcDiagnosticInfo
 
             Show-Update "Start gather of cluster configuration ..."
 
-            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterGroup {
+            $JobStatic += start-job -Name ClusterGroup {
                 try {
                     $o = Get-ClusterGroup -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
@@ -1691,7 +1727,7 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
             }
 
-            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterNetwork {
+            $JobStatic += start-job -Name ClusterNetwork {
                 try {
                     $o = Get-ClusterNetwork -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
@@ -1699,7 +1735,7 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
             }
 
-            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResource {
+            $JobStatic += start-job -Name ClusterResource {
                 try {
                     $o = Get-ClusterResource -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
@@ -1708,7 +1744,7 @@ function Get-SddcDiagnosticInfo
 
             }
 
-            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterResourceParameter {
+            $JobStatic += start-job -Name ClusterResourceParameter {
                 try {
                     $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
                     $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
@@ -1716,7 +1752,7 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
             }
 
-            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name ClusterSharedVolume {
+            $JobStatic += start-job -Name ClusterSharedVolume {
                 try {
                     $o = Get-ClusterSharedVolume -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
@@ -1734,10 +1770,10 @@ function Get-SddcDiagnosticInfo
 
             $node = $_
 
-            $JobStatic += Start-Job -InitializationScript $CommonFunc -Name "Driver Information: $node" {
+            $JobStatic += start-job -Name "Driver Information: $node" {
                 try { $o = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node }
                 catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
-                $o | Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "GetDrivers.XML")
+                $o | Export-Clixml (Join-Path (Join-Path $using:Path "Node_$using:node") "GetDrivers.XML")
             }
         }
 
@@ -1748,7 +1784,7 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Start gather of verifier ..."
 
-        $JobCopyOut += Invoke-Command -ComputerName $($ClusterNodes).Name -AsJob -JobName Verifier {
+        $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName Verifier -InitBlock $CommonFunc {
 
             # import common functions
             . ([scriptblock]::Create($using:CommonFunc))
@@ -1766,7 +1802,7 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Start gather of filesystem filter status ..."
 
-        $JobCopyOut += Invoke-Command -ComputerName $($ClusterNodes).Name -AsJob -JobName 'Filesystem Filter Manager' {
+        $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Filesystem Filter Manager' -InitBlock $CommonFunc {
 
             # import common functions
             . ([scriptblock]::Create($using:CommonFunc))
@@ -1851,24 +1887,24 @@ function Get-SddcDiagnosticInfo
                 $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -Health -UseLocalTime
             }
         }
+			
+        $JobStatic += $ClusterNodes.Name |% {
+		
+			$NodeName = $_
+			
+            Invoke-SddcCommonCommand -JobName "System Info: $NodeName" -InitBlock $CommonFunc -ScriptBlock {
 
-        $JobStatic += $($ClusterNodes).Name |% {
-
-            Start-Job -Name "System Info: $_" -ArgumentList $_,$ClusterDomain,$AccessNode -InitializationScript $CommonFunc {
-
-                param($NodeName,$DomainName,$AccessNode)
-
-                $Node = "$NodeName"
-                if ($ClusterDomain.Length) {
-                    $Node += ".$DomainName"
+                $Node = "$using:NodeName"
+                if ($using:ClusterDomain.Length) {
+                    $Node += ".$using:ClusterDomain"
                 }
-
-                $LocalNodeDir = Get-NodePath $using:Path $NodeName
+				
+                $LocalNodeDir = Get-NodePath $using:Path $using:NodeName
 
                 # Text-only conventional commands
                 #
                 # Gather SYSTEMINFO.EXE output for a given node
-                SystemInfo.exe /S $Node > (Join-Path (Get-NodePath $using:Path $NodeName) "SystemInfo.TXT")
+                SystemInfo.exe /S $using:NodeName > (Join-Path (Get-NodePath $using:Path $using:NodeName) "SystemInfo.TXT")
 
                 # Cmdlets to drop in TXT and XML forms
                 #
@@ -1929,7 +1965,7 @@ function Get-SddcDiagnosticInfo
                     $LocalFile = (Join-Path $LocalNodeDir (($cmd.split(' '))[0] -replace "-",""))
                     try {
 
-                        $cmdex = $cmd -replace '_C_',$Node -replace '_N_',$NodeName -replace '_A_',$AccessNode
+                        $cmdex = $cmd -replace '_C_',$using:NodeName -replace '_N_',$using:NodeName -replace '_A_',$using:AccessNode
                         $out = iex $cmdex
 
                         # capture as txt and xml for quick analysis according to taste
@@ -1941,7 +1977,7 @@ function Get-SddcDiagnosticInfo
                     }
                 }
 
-                $NodeSystemRootPath = Invoke-Command -ComputerName $Node { $env:SystemRoot }
+                $NodeSystemRootPath = Invoke-Command -ComputerName $using:NodeName { $env:SystemRoot }
 
                 if ($using:IncludeDumps -eq $true) {
 
@@ -1950,9 +1986,9 @@ function Get-SddcDiagnosticInfo
                     ##
 
                     try {
-                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Minidump\*.dmp"))
+                        $RPath = (Get-AdminSharePathFromLocal $using:NodeName (Join-Path $NodeSystemRootPath "Minidump\*.dmp"))
                         $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-                    catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $Node" }
+                    catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $using:NodeName" }
 
                     $DmpFiles |% {
                         try { Copy-Item $_.FullName $LocalNodeDir }
@@ -1964,9 +2000,9 @@ function Get-SddcDiagnosticInfo
                     ##
 
                     try {
-                        $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "LiveKernelReports\*.dmp"))
+                        $RPath = (Get-AdminSharePathFromLocal $using:NodeName (Join-Path $NodeSystemRootPath "LiveKernelReports\*.dmp"))
                         $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-                    catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $Node" }
+                    catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $using:NodeName" }
 
                     $DmpFiles |% {
                         try { Copy-Item $_.FullName $LocalNodeDir }
@@ -1975,9 +2011,9 @@ function Get-SddcDiagnosticInfo
                 }
 
                 try {
-                    $RPath = (Get-AdminSharePathFromLocal $Node (Join-Path $NodeSystemRootPath "Cluster\Reports\*.*"))
+                    $RPath = (Get-AdminSharePathFromLocal $using:NodeName (Join-Path $NodeSystemRootPath "Cluster\Reports\*.*"))
                     $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-                catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $Node" }
+                catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $using:NodeName" }
 
                 $LocalReportDir = Join-Path $LocalNodeDir "ClusterReports"
                 md $LocalReportDir | Out-Null
@@ -2327,11 +2363,11 @@ function Get-SddcDiagnosticInfo
             try {
                 $JobStatic += $ClusterNodes |% {
                     $node = $_.Name
-                    Start-Job -Name "S2D Connectivity: $node" -InitializationScript $CommonFunc {
+                    start-job -Name "S2D Connectivity: $node" {
                         Get-CimInstance -Namespace root\wmi -ClassName ClusPortDeviceInformation -ComputerName $using:node |
-                            Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusPort.xml")
+                            Export-Clixml (Join-Path (Join-Path $using:Path "Node_$using:node") "ClusPort.xml")
                         Get-CimInstance -Namespace root\wmi -ClassName ClusBfltDeviceInformation -ComputerName $using:node |
-                            Export-Clixml (Join-Path (Get-NodePath $using:Path $using:node) "ClusBflt.xml")
+                            Export-Clixml (Join-Path (Join-Path $using:Path "Node_$using:node") "ClusBflt.xml")
                     }
                 }
             } catch {
@@ -2344,6 +2380,7 @@ function Get-SddcDiagnosticInfo
         ####
 
         if ($JobCopyOut.Count -or $JobCopyOutNoDelete.Count) {
+		
             Show-Update "Completing jobs with remote copyout ..." -ForegroundColor Green
             Show-WaitChildJob ($JobCopyOut + $JobCopyOutNoDelete) 120
             Show-Update "Starting remote copyout ..."
@@ -2358,6 +2395,11 @@ function Get-SddcDiagnosticInfo
             Receive-Job $JobCopy
             Remove-Job ($JobCopyOut + $JobCopyOutNoDelete)
             Remove-Job $JobCopy
+			
+            if (Get-Member -InputObject $JobCopyOut ActiveSessions)
+            {
+                 Remove-PSSession -Id $JobCopyOut.ActiveSessions
+            }
         }
 
         Show-Update "All remote copyout complete" -ForegroundColor Green
@@ -2370,6 +2412,11 @@ function Get-SddcDiagnosticInfo
         Show-WaitChildJob $JobStatic 30
         Receive-Job $JobStatic
         Remove-Job $JobStatic
+		
+        if (Get-Member -InputObject $JobStatic ActiveSessions)
+        {
+                Remove-PSSession -Id $JobStatic.ActiveSessions
+        }
 
         # wipe variables to catch reuse
         Remove-Variable JobCopyOut
@@ -3949,9 +3996,14 @@ function Get-StorageLatencyReport
 
         # parallelize processing of per-node event logs
 
-        $j += Start-Job -InitializationScript $CommonFunc -Name $node -ArgumentList $($ReportLevel -eq [ReportLevelType]::Full) {
+        $j += Invoke-SddcCommonCommand -ClusterNodes $node -InitBlock $CommonFunc -JobName $node {
 
-            param($dofull)
+			$dofull = $false
+			
+			if ($using:ReportLevel -eq [ReportLevelType]::Full)
+			{
+				$dofull = $true
+			}
 
             # helper function for getting list of bucketnames from x->end
             function Get-Bucket
@@ -5198,131 +5250,131 @@ Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
     'Set-SddcDiagnosticArchiveJobParameters',
     'Get-SddcDiagnosticArchiveJobParameters'
 # SIG # Begin signature block
-# MIIkZQYJKoZIhvcNAQcCoIIkVjCCJFICAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIjngYJKoZIhvcNAQcCoIIjjzCCI4sCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCANLGfqZL63dWKl
-# rUlSwTA8PW2CaGRoNcnjx5k4Qv1VHqCCDXYwggX0MIID3KADAgECAhMzAAABApvw
-# C6eOXcNNAAAAAAECMA0GCSqGSIb3DQEBCwUAMH4xCzAJBgNVBAYTAlVTMRMwEQYD
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCHfwT1VD2KXNi2
+# XnmsEckG5QfEpO94Kqo9eq27FDKFbKCCDYEwggX/MIID56ADAgECAhMzAAABA14l
+# HJkfox64AAAAAAEDMA0GCSqGSIb3DQEBCwUAMH4xCzAJBgNVBAYTAlVTMRMwEQYD
 # VQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNy
 # b3NvZnQgQ29ycG9yYXRpb24xKDAmBgNVBAMTH01pY3Jvc29mdCBDb2RlIFNpZ25p
 # bmcgUENBIDIwMTEwHhcNMTgwNzEyMjAwODQ4WhcNMTkwNzI2MjAwODQ4WjB0MQsw
 # CQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9u
 # ZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMR4wHAYDVQQDExVNaWNy
 # b3NvZnQgQ29ycG9yYXRpb24wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIB
-# AQDUDAYEhQiWKKfpa3TQ4mGT46UwX/UIw1uE9sGnMPeISoedadT4fvCy8/PZRrTh
-# ZBX9b57KFsdYqKOZjNWn/PGNGndg7F1FC8ebalEJhAOS5BBqqPtyOA06BMewVkEv
-# TJSrsMDIoi+f0fMD2QkBpQuo3RWmXmIooaqu29rVRJqjCTLZxSva7CttEYz10R2a
-# c3D/mvjopbp0qOp2c3vVlvAYuCfM6O2URhG4aZeV+JizcZgx7nvYu3W1OV8iZHkN
-# WeqmhDjx+o9jl6xUF7rJnT9lLTeX6n5wHJnl2uPqbj7XJRzfGASda+BDhGNvBUix
-# uV08JmisMcr9fu7u2ttsRsNbAgMBAAGjggFzMIIBbzAfBgNVHSUEGDAWBgorBgEE
-# AYI3TAgBBggrBgEFBQcDAzAdBgNVHQ4EFgQUiRcFro07Z+9cIaFfJbDdSbk3Tu8w
-# RQYDVR0RBD4wPKQ6MDgxHjAcBgNVBAsTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEW
-# MBQGA1UEBRMNMjMwMDEyKzQzNzk2NDAfBgNVHSMEGDAWgBRIbmTlUAXTgqoXNzci
-# tW2oynUClTBUBgNVHR8ETTBLMEmgR6BFhkNodHRwOi8vd3d3Lm1pY3Jvc29mdC5j
-# b20vcGtpb3BzL2NybC9NaWNDb2RTaWdQQ0EyMDExXzIwMTEtMDctMDguY3JsMGEG
-# CCsGAQUFBwEBBFUwUzBRBggrBgEFBQcwAoZFaHR0cDovL3d3dy5taWNyb3NvZnQu
-# Y29tL3BraW9wcy9jZXJ0cy9NaWNDb2RTaWdQQ0EyMDExXzIwMTEtMDctMDguY3J0
-# MAwGA1UdEwEB/wQCMAAwDQYJKoZIhvcNAQELBQADggIBAJP2AnJLtJYleQ4Y+xu0
-# mJhorCOZ5ethfBHgoSMAyX7zSSjgdf3zaMQZxqBWVWoiuzVVJRvBZnJzp2IitEFu
-# hzB6LGOkJi1/+UCxeHnFw/V7jaHn6EBWZ3k1BHZgJleNNhmSLZvYbdBBSsVM1x3H
-# dvJ6sz8lE4+N2yvXTxTJwmWKoxu53+LEGFgFrPHtDEvn5IR/RGLLZqKSKrfIkXNK
-# PPuLpyr/4mG0EVkB14trliGGrUZu26qZX7HwYOjo+DkqEkZWe1l7fA0C9ZwCFLYV
-# /Gdb/7Ior5ARqTh89EV/IB/0K79VyS3VY1PA6xegIIuYGOVX9QKUMoQSbzpQb/XW
-# hRLntzMDwcVHMPaHj/x/iQpiGaUTSMsPPl+UgFZZMLPTyHT6ID3OMYhuWrDcxuTI
-# r1MIqCpZObp6ulQ9MIM9QZlt1s/Y6LAlpDzUi+YrVRR6PpqROT+MfrtXhJUQJkPC
-# ZoTcK5kjzE1PJfHQQDlJ7z8t0VGyPgu9KtQ9oW/1cKmfa1WZQSlpElOoS/NT4si2
-# UTf9a787z68X7IJ4cKEnAHj0U7PhyZFJ5sC0z5vZMWVbQJcE6DgBk+IJxyv7+b8I
-# fgKTnryEQDxLwmX87vU2FCU1a4sxJEAlVAOkZkez0CO2jxfJsO9gciiEJOCoCDcK
-# 7pzYBx6Fi5zPFJ+h5pLv1XWHMIIHejCCBWKgAwIBAgIKYQ6Q0gAAAAAAAzANBgkq
-# hkiG9w0BAQsFADCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24x
-# EDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlv
-# bjEyMDAGA1UEAxMpTWljcm9zb2Z0IFJvb3QgQ2VydGlmaWNhdGUgQXV0aG9yaXR5
-# IDIwMTEwHhcNMTEwNzA4MjA1OTA5WhcNMjYwNzA4MjEwOTA5WjB+MQswCQYDVQQG
-# EwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwG
-# A1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSgwJgYDVQQDEx9NaWNyb3NvZnQg
-# Q29kZSBTaWduaW5nIFBDQSAyMDExMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIIC
-# CgKCAgEAq/D6chAcLq3YbqqCEE00uvK2WCGfQhsqa+laUKq4BjgaBEm6f8MMHt03
-# a8YS2AvwOMKZBrDIOdUBFDFC04kNeWSHfpRgJGyvnkmc6Whe0t+bU7IKLMOv2akr
-# rnoJr9eWWcpgGgXpZnboMlImEi/nqwhQz7NEt13YxC4Ddato88tt8zpcoRb0Rrrg
-# OGSsbmQ1eKagYw8t00CT+OPeBw3VXHmlSSnnDb6gE3e+lD3v++MrWhAfTVYoonpy
-# 4BI6t0le2O3tQ5GD2Xuye4Yb2T6xjF3oiU+EGvKhL1nkkDstrjNYxbc+/jLTswM9
-# sbKvkjh+0p2ALPVOVpEhNSXDOW5kf1O6nA+tGSOEy/S6A4aN91/w0FK/jJSHvMAh
-# dCVfGCi2zCcoOCWYOUo2z3yxkq4cI6epZuxhH2rhKEmdX4jiJV3TIUs+UsS1Vz8k
-# A/DRelsv1SPjcF0PUUZ3s/gA4bysAoJf28AVs70b1FVL5zmhD+kjSbwYuER8ReTB
-# w3J64HLnJN+/RpnF78IcV9uDjexNSTCnq47f7Fufr/zdsGbiwZeBe+3W7UvnSSmn
-# Eyimp31ngOaKYnhfsi+E11ecXL93KCjx7W3DKI8sj0A3T8HhhUSJxAlMxdSlQy90
-# lfdu+HggWCwTXWCVmj5PM4TasIgX3p5O9JawvEagbJjS4NaIjAsCAwEAAaOCAe0w
-# ggHpMBAGCSsGAQQBgjcVAQQDAgEAMB0GA1UdDgQWBBRIbmTlUAXTgqoXNzcitW2o
-# ynUClTAZBgkrBgEEAYI3FAIEDB4KAFMAdQBiAEMAQTALBgNVHQ8EBAMCAYYwDwYD
-# VR0TAQH/BAUwAwEB/zAfBgNVHSMEGDAWgBRyLToCMZBDuRQFTuHqp8cx0SOJNDBa
-# BgNVHR8EUzBRME+gTaBLhklodHRwOi8vY3JsLm1pY3Jvc29mdC5jb20vcGtpL2Ny
-# bC9wcm9kdWN0cy9NaWNSb29DZXJBdXQyMDExXzIwMTFfMDNfMjIuY3JsMF4GCCsG
-# AQUFBwEBBFIwUDBOBggrBgEFBQcwAoZCaHR0cDovL3d3dy5taWNyb3NvZnQuY29t
-# L3BraS9jZXJ0cy9NaWNSb29DZXJBdXQyMDExXzIwMTFfMDNfMjIuY3J0MIGfBgNV
-# HSAEgZcwgZQwgZEGCSsGAQQBgjcuAzCBgzA/BggrBgEFBQcCARYzaHR0cDovL3d3
-# dy5taWNyb3NvZnQuY29tL3BraW9wcy9kb2NzL3ByaW1hcnljcHMuaHRtMEAGCCsG
-# AQUFBwICMDQeMiAdAEwAZQBnAGEAbABfAHAAbwBsAGkAYwB5AF8AcwB0AGEAdABl
-# AG0AZQBuAHQALiAdMA0GCSqGSIb3DQEBCwUAA4ICAQBn8oalmOBUeRou09h0ZyKb
-# C5YR4WOSmUKWfdJ5DJDBZV8uLD74w3LRbYP+vj/oCso7v0epo/Np22O/IjWll11l
-# hJB9i0ZQVdgMknzSGksc8zxCi1LQsP1r4z4HLimb5j0bpdS1HXeUOeLpZMlEPXh6
-# I/MTfaaQdION9MsmAkYqwooQu6SpBQyb7Wj6aC6VoCo/KmtYSWMfCWluWpiW5IP0
-# wI/zRive/DvQvTXvbiWu5a8n7dDd8w6vmSiXmE0OPQvyCInWH8MyGOLwxS3OW560
-# STkKxgrCxq2u5bLZ2xWIUUVYODJxJxp/sfQn+N4sOiBpmLJZiWhub6e3dMNABQam
-# ASooPoI/E01mC8CzTfXhj38cbxV9Rad25UAqZaPDXVJihsMdYzaXht/a8/jyFqGa
-# J+HNpZfQ7l1jQeNbB5yHPgZ3BtEGsXUfFL5hYbXw3MYbBL7fQccOKO7eZS/sl/ah
-# XJbYANahRr1Z85elCUtIEJmAH9AAKcWxm6U/RXceNcbSoqKfenoi+kiVH6v7RyOA
-# 9Z74v2u3S5fi63V4GuzqN5l5GEv/1rMjaHXmr/r8i+sLgOppO6/8MO0ETI7f33Vt
-# Y5E90Z1WTk+/gFcioXgRMiF670EKsT/7qMykXcGhiJtXcVZOSEXAQsmbdlsKgEhr
-# /Xmfwb1tbWrJUnMTDXpQzTGCFkUwghZBAgEBMIGVMH4xCzAJBgNVBAYTAlVTMRMw
-# EQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVN
-# aWNyb3NvZnQgQ29ycG9yYXRpb24xKDAmBgNVBAMTH01pY3Jvc29mdCBDb2RlIFNp
-# Z25pbmcgUENBIDIwMTECEzMAAAECm/ALp45dw00AAAAAAQIwDQYJYIZIAWUDBAIB
-# BQCggcYwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEO
-# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEIEk8zLf9rrvJRlUwWHT3PucS
-# 8C2sT97jWSzfif/SFNx1MFoGCisGAQQBgjcCAQwxTDBKoCSAIgBNAGkAYwByAG8A
-# cwBvAGYAdAAgAFcAaQBuAGQAbwB3AHOhIoAgaHR0cDovL3d3dy5taWNyb3NvZnQu
-# Y29tL3dpbmRvd3MwDQYJKoZIhvcNAQEBBQAEggEAzqb8OunchNCO7Q5TWPnp1C1o
-# uF2STIuWSBtV9E3ShBbDIX3hV0hxDk9CM834nv2BrUsvaAufoDTA99a5IAKqSf51
-# 11MOFo3XFFSs5nq1fk+g7EClUvkZlAT+QJmDycQW0AGK5yXSI1mU8BCBhRxjnVbj
-# inyfOj+xIQsSjGea5x+2PQEkoKVSQWkGPnM6dBVloLhQA9bku9y5jI5/Lzr2mfaM
-# uR9+NFd4b+5yK1iDgbB3S9HLJyNljCN3JQVCbgBW6HCYR2Zcam9YRPfl+iE2Urzz
-# k+kiRyaNTsfIF2OeUJK/pTdhTBOqGKPi5GSnI3cSozcQrlXdsj2hkaHLr1/1EKGC
-# E7cwghOzBgorBgEEAYI3AwMBMYITozCCE58GCSqGSIb3DQEHAqCCE5AwghOMAgED
-# MQ8wDQYJYIZIAWUDBAIBBQAwggFYBgsqhkiG9w0BCRABBKCCAUcEggFDMIIBPwIB
-# AQYKKwYBBAGEWQoDATAxMA0GCWCGSAFlAwQCAQUABCC5vwr3XTLdZ0m7qV3DqWPd
-# mhvTAZ7EdCemR3iB2xvTZwIGW9uUIVIkGBMyMDE4MTEyMDIyMzY0Ni4wOTVaMAcC
-# AQGAAgH0oIHUpIHRMIHOMQswCQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3Rv
-# bjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0
-# aW9uMSkwJwYDVQQLEyBNaWNyb3NvZnQgT3BlcmF0aW9ucyBQdWVydG8gUmljbzEm
-# MCQGA1UECxMdVGhhbGVzIFRTUyBFU046QzBGNC0zMDg2LURFRjgxJTAjBgNVBAMT
-# HE1pY3Jvc29mdCBUaW1lLVN0YW1wIFNlcnZpY2Wggg8fMIIE9TCCA92gAwIBAgIT
-# MwAAANAcamBhwufhrQAAAAAA0DANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJV
-# UzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UE
-# ChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSYwJAYDVQQDEx1NaWNyb3NvZnQgVGlt
-# ZS1TdGFtcCBQQ0EgMjAxMDAeFw0xODA4MjMyMDI2MjhaFw0xOTExMjMyMDI2Mjha
-# MIHOMQswCQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMH
-# UmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSkwJwYDVQQL
-# EyBNaWNyb3NvZnQgT3BlcmF0aW9ucyBQdWVydG8gUmljbzEmMCQGA1UECxMdVGhh
-# bGVzIFRTUyBFU046QzBGNC0zMDg2LURFRjgxJTAjBgNVBAMTHE1pY3Jvc29mdCBU
-# aW1lLVN0YW1wIFNlcnZpY2UwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIB
-# AQCbPoY211rO+8Z9zCo8IAYVmps5IDy61+pDNMYTp0m8huVorXo5SKMmKAYnE0C1
-# sg6srmX5Q0s4a64HYRinDv2ly2HM2cU36hva3Ey1ZXtNkas6jSudX1Idqe3NuICG
-# kOTGtydhBeSLWQ57tWx4c0/eFPyRb56B93OVe35gMirnNNUxG13+Z0PV52SRjGTZ
-# +zUPZy7crK1UP8RNbKfHWd2PYZK6WSRv37Vd7ocqC79HbP1xJb8pZLxTVCqWlfPo
-# kE1oZfKxmHTtBDlPyT1rGkqCgV97H/KWaAeXsy/WReXaWuaPVxJVCnpcEsRrgtfF
-# mnSiNoEzu+fg7FIIBPXOkkYrAgMBAAGjggEbMIIBFzAdBgNVHQ4EFgQUA4Mol6hr
-# JfLEUzIfma06vHcYxXEwHwYDVR0jBBgwFoAU1WM6XIoxkPNDe3xGG8UzaFqFbVUw
+# AQDRlHY25oarNv5p+UZ8i4hQy5Bwf7BVqSQdfjnnBZ8PrHuXss5zCvvUmyRcFrU5
+# 3Rt+M2wR/Dsm85iqXVNrqsPsE7jS789Xf8xly69NLjKxVitONAeJ/mkhvT5E+94S
+# nYW/fHaGfXKxdpth5opkTEbOttU6jHeTd2chnLZaBl5HhvU80QnKDT3NsumhUHjR
+# hIjiATwi/K+WCMxdmcDt66VamJL1yEBOanOv3uN0etNfRpe84mcod5mswQ4xFo8A
+# DwH+S15UD8rEZT8K46NG2/YsAzoZvmgFFpzmfzS/p4eNZTkmyWPU78XdvSX+/Sj0
+# NIZ5rCrVXzCRO+QUauuxygQjAgMBAAGjggF+MIIBejAfBgNVHSUEGDAWBgorBgEE
+# AYI3TAgBBggrBgEFBQcDAzAdBgNVHQ4EFgQUR77Ay+GmP/1l1jjyA123r3f3QP8w
+# UAYDVR0RBEkwR6RFMEMxKTAnBgNVBAsTIE1pY3Jvc29mdCBPcGVyYXRpb25zIFB1
+# ZXJ0byBSaWNvMRYwFAYDVQQFEw0yMzAwMTIrNDM3OTY1MB8GA1UdIwQYMBaAFEhu
+# ZOVQBdOCqhc3NyK1bajKdQKVMFQGA1UdHwRNMEswSaBHoEWGQ2h0dHA6Ly93d3cu
+# bWljcm9zb2Z0LmNvbS9wa2lvcHMvY3JsL01pY0NvZFNpZ1BDQTIwMTFfMjAxMS0w
+# Ny0wOC5jcmwwYQYIKwYBBQUHAQEEVTBTMFEGCCsGAQUFBzAChkVodHRwOi8vd3d3
+# Lm1pY3Jvc29mdC5jb20vcGtpb3BzL2NlcnRzL01pY0NvZFNpZ1BDQTIwMTFfMjAx
+# MS0wNy0wOC5jcnQwDAYDVR0TAQH/BAIwADANBgkqhkiG9w0BAQsFAAOCAgEAn/XJ
+# Uw0/DSbsokTYDdGfY5YGSz8eXMUzo6TDbK8fwAG662XsnjMQD6esW9S9kGEX5zHn
+# wya0rPUn00iThoj+EjWRZCLRay07qCwVlCnSN5bmNf8MzsgGFhaeJLHiOfluDnjY
+# DBu2KWAndjQkm925l3XLATutghIWIoCJFYS7mFAgsBcmhkmvzn1FFUM0ls+BXBgs
+# 1JPyZ6vic8g9o838Mh5gHOmwGzD7LLsHLpaEk0UoVFzNlv2g24HYtjDKQ7HzSMCy
+# RhxdXnYqWJ/U7vL0+khMtWGLsIxB6aq4nZD0/2pCD7k+6Q7slPyNgLt44yOneFuy
+# bR/5WcF9ttE5yXnggxxgCto9sNHtNr9FB+kbNm7lPTsFA6fUpyUSj+Z2oxOzRVpD
+# MYLa2ISuubAfdfX2HX1RETcn6LU1hHH3V6qu+olxyZjSnlpkdr6Mw30VapHxFPTy
+# 2TUxuNty+rR1yIibar+YRcdmstf/zpKQdeTr5obSyBvbJ8BblW9Jb1hdaSreU0v4
+# 6Mp79mwV+QMZDxGFqk+av6pX3WDG9XEg9FGomsrp0es0Rz11+iLsVT9qGTlrEOla
+# P470I3gwsvKmOMs1jaqYWSRAuDpnpAdfoP7YO0kT+wzh7Qttg1DO8H8+4NkI6Iwh
+# SkHC3uuOW+4Dwx1ubuZUNWZncnwa6lL2IsRyP64wggd6MIIFYqADAgECAgphDpDS
+# AAAAAAADMA0GCSqGSIb3DQEBCwUAMIGIMQswCQYDVQQGEwJVUzETMBEGA1UECBMK
+# V2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0
+# IENvcnBvcmF0aW9uMTIwMAYDVQQDEylNaWNyb3NvZnQgUm9vdCBDZXJ0aWZpY2F0
+# ZSBBdXRob3JpdHkgMjAxMTAeFw0xMTA3MDgyMDU5MDlaFw0yNjA3MDgyMTA5MDla
+# MH4xCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdS
+# ZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xKDAmBgNVBAMT
+# H01pY3Jvc29mdCBDb2RlIFNpZ25pbmcgUENBIDIwMTEwggIiMA0GCSqGSIb3DQEB
+# AQUAA4ICDwAwggIKAoICAQCr8PpyEBwurdhuqoIQTTS68rZYIZ9CGypr6VpQqrgG
+# OBoESbp/wwwe3TdrxhLYC/A4wpkGsMg51QEUMULTiQ15ZId+lGAkbK+eSZzpaF7S
+# 35tTsgosw6/ZqSuuegmv15ZZymAaBelmdugyUiYSL+erCFDPs0S3XdjELgN1q2jz
+# y23zOlyhFvRGuuA4ZKxuZDV4pqBjDy3TQJP4494HDdVceaVJKecNvqATd76UPe/7
+# 4ytaEB9NViiienLgEjq3SV7Y7e1DkYPZe7J7hhvZPrGMXeiJT4Qa8qEvWeSQOy2u
+# M1jFtz7+MtOzAz2xsq+SOH7SnYAs9U5WkSE1JcM5bmR/U7qcD60ZI4TL9LoDho33
+# X/DQUr+MlIe8wCF0JV8YKLbMJyg4JZg5SjbPfLGSrhwjp6lm7GEfauEoSZ1fiOIl
+# XdMhSz5SxLVXPyQD8NF6Wy/VI+NwXQ9RRnez+ADhvKwCgl/bwBWzvRvUVUvnOaEP
+# 6SNJvBi4RHxF5MHDcnrgcuck379GmcXvwhxX24ON7E1JMKerjt/sW5+v/N2wZuLB
+# l4F77dbtS+dJKacTKKanfWeA5opieF+yL4TXV5xcv3coKPHtbcMojyyPQDdPweGF
+# RInECUzF1KVDL3SV9274eCBYLBNdYJWaPk8zhNqwiBfenk70lrC8RqBsmNLg1oiM
+# CwIDAQABo4IB7TCCAekwEAYJKwYBBAGCNxUBBAMCAQAwHQYDVR0OBBYEFEhuZOVQ
+# BdOCqhc3NyK1bajKdQKVMBkGCSsGAQQBgjcUAgQMHgoAUwB1AGIAQwBBMAsGA1Ud
+# DwQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB8GA1UdIwQYMBaAFHItOgIxkEO5FAVO
+# 4eqnxzHRI4k0MFoGA1UdHwRTMFEwT6BNoEuGSWh0dHA6Ly9jcmwubWljcm9zb2Z0
+# LmNvbS9wa2kvY3JsL3Byb2R1Y3RzL01pY1Jvb0NlckF1dDIwMTFfMjAxMV8wM18y
+# Mi5jcmwwXgYIKwYBBQUHAQEEUjBQME4GCCsGAQUFBzAChkJodHRwOi8vd3d3Lm1p
+# Y3Jvc29mdC5jb20vcGtpL2NlcnRzL01pY1Jvb0NlckF1dDIwMTFfMjAxMV8wM18y
+# Mi5jcnQwgZ8GA1UdIASBlzCBlDCBkQYJKwYBBAGCNy4DMIGDMD8GCCsGAQUFBwIB
+# FjNodHRwOi8vd3d3Lm1pY3Jvc29mdC5jb20vcGtpb3BzL2RvY3MvcHJpbWFyeWNw
+# cy5odG0wQAYIKwYBBQUHAgIwNB4yIB0ATABlAGcAYQBsAF8AcABvAGwAaQBjAHkA
+# XwBzAHQAYQB0AGUAbQBlAG4AdAAuIB0wDQYJKoZIhvcNAQELBQADggIBAGfyhqWY
+# 4FR5Gi7T2HRnIpsLlhHhY5KZQpZ90nkMkMFlXy4sPvjDctFtg/6+P+gKyju/R6mj
+# 82nbY78iNaWXXWWEkH2LRlBV2AySfNIaSxzzPEKLUtCw/WvjPgcuKZvmPRul1LUd
+# d5Q54ulkyUQ9eHoj8xN9ppB0g430yyYCRirCihC7pKkFDJvtaPpoLpWgKj8qa1hJ
+# Yx8JaW5amJbkg/TAj/NGK978O9C9Ne9uJa7lryft0N3zDq+ZKJeYTQ49C/IIidYf
+# wzIY4vDFLc5bnrRJOQrGCsLGra7lstnbFYhRRVg4MnEnGn+x9Cf43iw6IGmYslmJ
+# aG5vp7d0w0AFBqYBKig+gj8TTWYLwLNN9eGPfxxvFX1Fp3blQCplo8NdUmKGwx1j
+# NpeG39rz+PIWoZon4c2ll9DuXWNB41sHnIc+BncG0QaxdR8UvmFhtfDcxhsEvt9B
+# xw4o7t5lL+yX9qFcltgA1qFGvVnzl6UJS0gQmYAf0AApxbGbpT9Fdx41xtKiop96
+# eiL6SJUfq/tHI4D1nvi/a7dLl+LrdXga7Oo3mXkYS//WsyNodeav+vyL6wuA6mk7
+# r/ww7QRMjt/fdW1jkT3RnVZOT7+AVyKheBEyIXrvQQqxP/uozKRdwaGIm1dxVk5I
+# RcBCyZt2WwqASGv9eZ/BvW1taslScxMNelDNMYIVczCCFW8CAQEwgZUwfjELMAkG
+# A1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQx
+# HjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEoMCYGA1UEAxMfTWljcm9z
+# b2Z0IENvZGUgU2lnbmluZyBQQ0EgMjAxMQITMwAAAQNeJRyZH6MeuAAAAAABAzAN
+# BglghkgBZQMEAgEFAKCBxjAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgor
+# BgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgfPVg8u4H
+# i3UL7IGZ/2eeDzp/316/Y151Bb1+cSX+Je0wWgYKKwYBBAGCNwIBDDFMMEqgJIAi
+# AE0AaQBjAHIAbwBzAG8AZgB0ACAAVwBpAG4AZABvAHcAc6EigCBodHRwOi8vd3d3
+# Lm1pY3Jvc29mdC5jb20vd2luZG93czANBgkqhkiG9w0BAQEFAASCAQDGH2k4V+UU
+# flr9OjMFNK8RnI0DPPMc9S/YXMm7XBePFzFuaeXIKCqM1I3yaHOTpEnSKNTA6FtA
+# tnxBqZOqHKB4MrX1An7I5JtT2VIim3Cyd7KXBbvANbkT1J/e5zVvKb9QTDcWFL4b
+# 8f3uMYgPTNjU3JC3uipml4el0ncQzO+YlSY2mDpB8PvA/KbnTZBrzkaVtFTNFqdV
+# 3+B1nfT9rZdfS1jxBSHDCuDFGaRKRtBQYuWynmfsZ1shmCTyuVjkZprPDppzO3R3
+# vNDld999VtqrzNqyqP/uv2ShfVF7gbFdANSkPPfgcLEqLqgi0z37eSt229aDMIwI
+# hOHWSh5FhsRloYIS5TCCEuEGCisGAQQBgjcDAwExghLRMIISzQYJKoZIhvcNAQcC
+# oIISvjCCEroCAQMxDzANBglghkgBZQMEAgEFADCCAVEGCyqGSIb3DQEJEAEEoIIB
+# QASCATwwggE4AgEBBgorBgEEAYRZCgMBMDEwDQYJYIZIAWUDBAIBBQAEIAKfE4CX
+# ZLm0zHal7JbOdwB3MZS06ySFuBiiPoX62EZPAgZb/fzxopIYEzIwMTgxMjA0MTgz
+# NzU3LjkzN1owBIACAfSggdCkgc0wgcoxCzAJBgNVBAYTAlVTMQswCQYDVQQIEwJX
+# QTEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0
+# aW9uMS0wKwYDVQQLEyRNaWNyb3NvZnQgSXJlbGFuZCBPcGVyYXRpb25zIExpbWl0
+# ZWQxJjAkBgNVBAsTHVRoYWxlcyBUU1MgRVNOOkEyNDAtNEI4Mi0xMzBFMSUwIwYD
+# VQQDExxNaWNyb3NvZnQgVGltZS1TdGFtcCBzZXJ2aWNloIIOPDCCBPEwggPZoAMC
+# AQICEzMAAADgship1NHCtPcAAAAAAOAwDQYJKoZIhvcNAQELBQAwfDELMAkGA1UE
+# BhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAc
+# BgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEmMCQGA1UEAxMdTWljcm9zb2Z0
+# IFRpbWUtU3RhbXAgUENBIDIwMTAwHhcNMTgwODIzMjAyNzAxWhcNMTkxMTIzMjAy
+# NzAxWjCByjELMAkGA1UEBhMCVVMxCzAJBgNVBAgTAldBMRAwDgYDVQQHEwdSZWRt
+# b25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xLTArBgNVBAsTJE1p
+# Y3Jvc29mdCBJcmVsYW5kIE9wZXJhdGlvbnMgTGltaXRlZDEmMCQGA1UECxMdVGhh
+# bGVzIFRTUyBFU046QTI0MC00QjgyLTEzMEUxJTAjBgNVBAMTHE1pY3Jvc29mdCBU
+# aW1lLVN0YW1wIHNlcnZpY2UwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIB
+# AQDCl/hnDsembJx7FMS5RuaJsiQJDP0tiqyeCettiNlGcNoa428oVtblH6yZatCX
+# ZygyhzbnDJofTHIGtdiEzQc5fPhddfTd4hEQgd5ch/BlGITXFEwJ4d/GhHZQ1hbL
+# diBT/j67Qx15VeuXy5n/jM9PvIbBksSWwX8vrkhRT/rqa1xWrmF+SfcYKw+pC+d3
+# tUHrgACo0YaVHuS3jlpXg33A+pul8wibZBcGxMF1CqwlP0AfMW60Dp4qm/JLbWxd
+# x/pOiiOrM/tykFDtEnN07HXRjXDhDhfIeBCz4GPiCEFk94AaFxysFeFn9vyz7TyK
+# JxUksXJhtWGq2i4WmPcphyDzAgMBAAGjggEbMIIBFzAdBgNVHQ4EFgQUa0HTCrY5
+# zqzv/p44rWuSbXaAh+gwHwYDVR0jBBgwFoAU1WM6XIoxkPNDe3xGG8UzaFqFbVUw
 # VgYDVR0fBE8wTTBLoEmgR4ZFaHR0cDovL2NybC5taWNyb3NvZnQuY29tL3BraS9j
 # cmwvcHJvZHVjdHMvTWljVGltU3RhUENBXzIwMTAtMDctMDEuY3JsMFoGCCsGAQUF
 # BwEBBE4wTDBKBggrBgEFBQcwAoY+aHR0cDovL3d3dy5taWNyb3NvZnQuY29tL3Br
 # aS9jZXJ0cy9NaWNUaW1TdGFQQ0FfMjAxMC0wNy0wMS5jcnQwDAYDVR0TAQH/BAIw
-# ADATBgNVHSUEDDAKBggrBgEFBQcDCDANBgkqhkiG9w0BAQsFAAOCAQEApbwklmQJ
-# 31r0v5RTfzYZkW48IPXgYF18spdGCVoMGD7qK1GR5IXN0eTzTWNJTRpOkR4726dJ
-# 9trulEfwTDe9owtngVnUTTZco4j1Ba1hLnc0rcT1wZfbQc9bXWmhEI3KLobATjK7
-# Stfz49VV9QvRgr3ldnqGGbY5miHg5CKOIGOr9XDFtT3ve9jTqJZl8qxJVoKfHcUi
-# dYdGwfAKj8zcMIrt0+aE9V7G00wTNV9duDIA5vazZAUkJh6vs+H2Hmsl0Sreztcn
-# LOuSGL5HwSJrenGPlBT4mEeZqRhdJWunQdNWfEGmN1ovQZs7KayRu9l5Oia8rM7w
-# kXDVF9cE+cCBLDCCBnEwggRZoAMCAQICCmEJgSoAAAAAAAIwDQYJKoZIhvcNAQEL
+# ADATBgNVHSUEDDAKBggrBgEFBQcDCDANBgkqhkiG9w0BAQsFAAOCAQEACx/endmS
+# 5DW6xgb8fIdEqI963fUB7IoYlYNQU/YZwq155uK1lwhcH5R1CaVMr+lyNIfD8l+l
+# qy8mdou+Zwcrnzo3m2UEGO0uNFd4c8Iew5Z49V+6AojT6z5IGJh3y56uDACQzRZr
+# R+26uCx1nLsYjK/WtxQDq1IHHWeAxfrGxsAZO1BdQo25Mx34ZseViVj+usfmy0nU
+# mfvZ0hFcMeNd4i4Kds03kY/CwWVZBw62tAjOHK/c81wO7hiutu9JX4MNjaEuFdhe
+# iNwmHyAmbpqYmz6K+9IPM75iXELbzjDc6yLJpVOq17gfVDCaweryzgVnC2CIxq7g
+# DGyTM9afwMtESTCCBnEwggRZoAMCAQICCmEJgSoAAAAAAAIwDQYJKoZIhvcNAQEL
 # BQAwgYgxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQH
 # EwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xMjAwBgNV
 # BAMTKU1pY3Jvc29mdCBSb290IENlcnRpZmljYXRlIEF1dGhvcml0eSAyMDEwMB4X
@@ -5356,41 +5408,37 @@ Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
 # b3epgcunCaw5u+zGy9iCtHLNHfS4hQEegPsbiSpUObJb2sgNVZl6h3M7COaYLeqN
 # 4DMuEin1wC9UJyH3yKxO2ii4sanblrKnQqLJzxlBTeCG+SqaoxFmMNO7dDJL32N7
 # 9ZmKLxvHIa9Zta7cRDyXUHHXodLFVeNp3lfB0d4wwP3M5k37Db9dT+mdHhk4L7zP
-# WAUu7w2gUDXa7wknHNWzfjUeCLraNtvTX4/edIhJEqGCA60wggKVAgEBMIH+oYHU
-# pIHRMIHOMQswCQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UE
-# BxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSkwJwYD
-# VQQLEyBNaWNyb3NvZnQgT3BlcmF0aW9ucyBQdWVydG8gUmljbzEmMCQGA1UECxMd
-# VGhhbGVzIFRTUyBFU046QzBGNC0zMDg2LURFRjgxJTAjBgNVBAMTHE1pY3Jvc29m
-# dCBUaW1lLVN0YW1wIFNlcnZpY2WiJQoBATAJBgUrDgMCGgUAAxUAKSkfi3FxMlc3
-# Nr+9neHTozE+jpWggd4wgdukgdgwgdUxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpX
-# YXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQg
-# Q29ycG9yYXRpb24xKTAnBgNVBAsTIE1pY3Jvc29mdCBPcGVyYXRpb25zIFB1ZXJ0
-# byBSaWNvMScwJQYDVQQLEx5uQ2lwaGVyIE5UUyBFU046NTdGNi1DMUUwLTU1NEMx
-# KzApBgNVBAMTIk1pY3Jvc29mdCBUaW1lIFNvdXJjZSBNYXN0ZXIgQ2xvY2swDQYJ
-# KoZIhvcNAQEFBQACBQDfnm/5MCIYDzIwMTgxMTIwMTkzNTIxWhgPMjAxODExMjEx
-# OTM1MjFaMHQwOgYKKwYBBAGEWQoEATEsMCowCgIFAN+eb/kCAQAwBwIBAAICHVUw
-# BwIBAAICGmswCgIFAN+fwXkCAQAwNgYKKwYBBAGEWQoEAjEoMCYwDAYKKwYBBAGE
-# WQoDAaAKMAgCAQACAxbjYKEKMAgCAQACAwehIDANBgkqhkiG9w0BAQUFAAOCAQEA
-# YDl0AhwG3k30bLL03ERUYJKnqKqxgUZiQeb5aJo5t7II/AlSatZqA8ey0E2w4mhR
-# CE6fxKp+eDon7haGQ1bYWIRot6S4kf6dsGip+MikhO4EhLY1X6ymakX0A2fKfeQI
-# 9FITrCFRZlSxc2jnaw8fyVzEOh8GXPLPzJ6YKeBr+FFGGwH+xY2RudryH/rY2MZ4
-# G13TJkjhH0wsmNHXdJQoQm1tGhWfOiE8qEqOn/Nq44V/sDujnl86na0mUWnNa5ZK
-# 9Ccc8Gl78CGYP5wvykMVwP0q14SGUzFMDUMCw1q+iveAGMw0NfGc0pchMq+esp+8
-# iLUaYeSX+MKD8IKW+s7kvjGCAvUwggLxAgEBMIGTMHwxCzAJBgNVBAYTAlVTMRMw
-# EQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVN
-# aWNyb3NvZnQgQ29ycG9yYXRpb24xJjAkBgNVBAMTHU1pY3Jvc29mdCBUaW1lLVN0
-# YW1wIFBDQSAyMDEwAhMzAAAA0BxqYGHC5+GtAAAAAADQMA0GCWCGSAFlAwQCAQUA
-# oIIBMjAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwLwYJKoZIhvcNAQkEMSIE
-# IE/c1z7VE105+5dMINCYDcEOu8mNfAl76JAcQRLWNOaVMIHiBgsqhkiG9w0BCRAC
-# DDGB0jCBzzCBzDCBsQQUKSkfi3FxMlc3Nr+9neHTozE+jpUwgZgwgYCkfjB8MQsw
-# CQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9u
-# ZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSYwJAYDVQQDEx1NaWNy
-# b3NvZnQgVGltZS1TdGFtcCBQQ0EgMjAxMAITMwAAANAcamBhwufhrQAAAAAA0DAW
-# BBRH4Z78UJLBmqgJ9ct1Q82fRtpYBjANBgkqhkiG9w0BAQsFAASCAQAJItXGwLOc
-# AC6HFX62tH+N2GuC6LRlXfzPsvZlQ4OD7trPxVnUveYOvX2rYSY21z6kB/rTZSRT
-# Z1FL3Q3tWS+xqJ+gw2KzNitSQKLRx5Vs0Rg0G4aFVATdQtnPNgkiiTo0Hzx79/4C
-# HFDVfbzSFZf4zqCBOguCER0ZdXOF6wEQV2j0q22aTMqevZI7ySQJ118PNqWH49ld
-# xdZhdRoX5MADfNiJ0+vhzxIpczIiMl/doVJ2tzbO4QKORfAVBogOIYZ67/1T3Bbf
-# DCozhtH6WafTptRSAUju73bjfSFWbog9JeciAWyzID/lrRsa8P0Cw78tJx4bMKmf
-# ITEoJWoShgYE
+# WAUu7w2gUDXa7wknHNWzfjUeCLraNtvTX4/edIhJEqGCAs4wggI3AgEBMIH4oYHQ
+# pIHNMIHKMQswCQYDVQQGEwJVUzELMAkGA1UECBMCV0ExEDAOBgNVBAcTB1JlZG1v
+# bmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEtMCsGA1UECxMkTWlj
+# cm9zb2Z0IElyZWxhbmQgT3BlcmF0aW9ucyBMaW1pdGVkMSYwJAYDVQQLEx1UaGFs
+# ZXMgVFNTIEVTTjpBMjQwLTRCODItMTMwRTElMCMGA1UEAxMcTWljcm9zb2Z0IFRp
+# bWUtU3RhbXAgc2VydmljZaIjCgEBMAcGBSsOAwIaAxUAxnmkjOXedpqyHQqkJGn7
+# ewhSC9GggYMwgYCkfjB8MQswCQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3Rv
+# bjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0
+# aW9uMSYwJAYDVQQDEx1NaWNyb3NvZnQgVGltZS1TdGFtcCBQQ0EgMjAxMDANBgkq
+# hkiG9w0BAQUFAAIFAN+xDRgwIhgPMjAxODEyMDQyMjI2MzJaGA8yMDE4MTIwNTIy
+# MjYzMlowdzA9BgorBgEEAYRZCgQBMS8wLTAKAgUA37ENGAIBADAKAgEAAgIHxwIB
+# /zAHAgEAAgIRlzAKAgUA37JemAIBADA2BgorBgEEAYRZCgQCMSgwJjAMBgorBgEE
+# AYRZCgMCoAowCAIBAAIDB6EgoQowCAIBAAIDAYagMA0GCSqGSIb3DQEBBQUAA4GB
+# AJnroRT9r1KiBz9wr1NaOJb4utKNbmthVvlmibG6W4Bs8y0W8DJfZMYOk7i0tG7V
+# gVRkWIByiZCK8b0UVd1Wx/jgibyRVyfUhsjdEUsSvGYWl86lL7znT1xt4zCxX3+R
+# 73J1L65GFF1uzj8lus/rVp7hrXd1EKselJ0bizGgpqd2MYIDDTCCAwkCAQEwgZMw
+# fDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1Jl
+# ZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEmMCQGA1UEAxMd
+# TWljcm9zb2Z0IFRpbWUtU3RhbXAgUENBIDIwMTACEzMAAADgship1NHCtPcAAAAA
+# AOAwDQYJYIZIAWUDBAIBBQCgggFKMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRAB
+# BDAvBgkqhkiG9w0BCQQxIgQgSX7dh51dBQpCCUDrXm9pE6Z+0wkrJRGWKJM7KX//
+# nYowgfoGCyqGSIb3DQEJEAIvMYHqMIHnMIHkMIG9BCClgS9VpDMosldyg1GQPVVk
+# 5wwNOD+Pcl2aoLvRrEJfkDCBmDCBgKR+MHwxCzAJBgNVBAYTAlVTMRMwEQYDVQQI
+# EwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3Nv
+# ZnQgQ29ycG9yYXRpb24xJjAkBgNVBAMTHU1pY3Jvc29mdCBUaW1lLVN0YW1wIFBD
+# QSAyMDEwAhMzAAAA4LIYqdTRwrT3AAAAAADgMCIEIDL6+y/nrZ866qqTnfK0tfmm
+# //O8p6ECe8z8vg/GASSpMA0GCSqGSIb3DQEBCwUABIIBAD80rEaKAA/FymrRn/h+
+# jvTABuU+Ub0SGJDZveolRQXa4wRP59dNgRx9259vKFUv9Hfzk9lQZoW+FnbfCSmV
+# r7y8SPbSrT1W56MWcOG1dalZRRiiL+Foa9KkWjUdIECcNiQ4ej/hXMBu1Mplg9xE
+# TSDF1ljl4GYn5JCLvVbpfiCNLZiMLssk1M5N8xX2/M6HfZG+zIE1eY4gicoFQpr/
+# YAMyrbNVFB0J5350ne06kKpm/vKjBov65bmmalfJskUeX//dKbwQLX4odO/eM5m1
+# u7melS7CZp+GMA/pqNJZOYM4BsGaU+j9Mch6ULEFMtlks0B4BMBZcCwiy4wQ7m9G
+# 7oU=
 # SIG # End signature block
