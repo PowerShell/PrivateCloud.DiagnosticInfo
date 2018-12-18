@@ -3577,6 +3577,548 @@ function Register-SddcDiagnosticArchiveJob
     Register-ClusteredScheduledTask -Cluster $c.Name -Action $action -Trigger $trigger -TaskName SddcDiagnosticArchive -TaskType ClusterWide -Description "Get-SddcDiagnosticInfo Periodic Diagnostic Archive Task"
 }
 
+function Show-TableReport
+{
+	Param (
+	   [parameter(Position=0, Mandatory=$true)]
+	   [ValidateNotNullOrEmpty()]
+	   [string] $Path,
+	   [Parameter (Mandatory = $false)]
+	   [bool] $showerr = $false,
+	   [Parameter (Mandatory = $false)]
+	   [int] $delta = 0
+	   )
+
+	if (-not (Test-Path $Path)) {
+		Write-Error "Path is not accessible. Please check and try again: $Path"
+		return
+	}
+
+	$d=import-counter -Path $path\"GetCounters.blg"
+
+	$tabName="Cache Perf"
+	$cachetable=new-object System.Data.DataTable "$tabName"
+
+	#Define Columns
+	$col1 = New-Object system.Data.DataColumn Node,([string]) 
+	$col2 = New-Object system.Data.DataColumn CacheHits,([string])
+	$col3 = New-Object system.Data.DataColumn CacheMiss,([string])
+	$col4 = New-Object system.Data.DataColumn DiskReads,([string])
+	$col5 = New-Object system.Data.DataColumn DirectReads,([string])
+
+	$col6 = New-Object system.Data.DataColumn DiskWrites,([string])
+	$col7 = New-Object system.Data.DataColumn DirectWrites,([string])
+	$col8 = New-Object system.Data.DataColumn CacheWrites,([string])
+
+	$tabName="Error Table"
+	$errtable=new-object System.Data.DataTable "$tabName"
+
+	$col9 = New-Object system.Data.DataColumn Node,([string]) 
+	$col10 = New-Object system.Data.DataColumn WriteError,([string])
+	$col11 = New-Object system.Data.DataColumn WriteMedia,([string])
+	$col12 = New-Object system.Data.DataColumn ReadTimeout,([string])
+	$col13 = New-Object system.Data.DataColumn ReadMedia,([string])
+
+	#Add the Columns
+	$cachetable.columns.add($col1) 
+	$cachetable.columns.add($col2)
+	$cachetable.columns.add($col3)
+	$cachetable.columns.add($col4)
+	$cachetable.columns.add($col5)
+	$cachetable.columns.add($col6)
+	$cachetable.columns.add($col7)
+	$cachetable.columns.add($col8)
+
+	$errtable.columns.add($col9) 
+	$errtable.columns.add($col10)
+	$errtable.columns.add($col11)
+	$errtable.columns.add($col12)
+	$errtable.columns.add($col13)
+
+
+	$tabName="CSV Clusport Perf"
+	$table=new-object System.Data.DataTable "$tabName"
+
+	#Define Columns
+	$col1 = New-Object system.Data.DataColumn Node,([string]) 
+	$col2 = New-Object system.Data.DataColumn CSVReadIOPS,([string])
+	$col3 = New-Object system.Data.DataColumn CSVReadLatency,([string])
+	$col4 = New-Object system.Data.DataColumn CSVWriteIOPS,([string])
+	$col5 = New-Object system.Data.DataColumn CSVWriteLatency,([string])
+
+	$tabName="SBL Perf"
+	$sbltable=new-object System.Data.DataTable "$tabName"
+	$col6 = New-Object system.Data.DataColumn Node,([string]) 
+	$col7 = New-Object system.Data.DataColumn SBLReadIOPS,([string])
+	$col8 = New-Object system.Data.DataColumn SBLReadLatency,([string])
+	$col9 = New-Object system.Data.DataColumn SBLWriteIOPS,([string])
+	$col10 = New-Object system.Data.DataColumn SBLWriteLatency,([string])
+	$col11 = New-Object system.Data.DataColumn SBLLocalRead,([string])
+	$col12 = New-Object system.Data.DataColumn SBLLocalWrite,([string])
+	$col13 = New-Object system.Data.DataColumn SBLRemoteRead,([string])
+	$col14 = New-Object system.Data.DataColumn SBLRemoteWrite,([string])
+
+	#Add the Columns
+	$table.columns.add($col1) 
+	$table.columns.add($col2)
+	$table.columns.add($col3)
+	$table.columns.add($col4)
+	$table.columns.add($col5)
+
+	$sbltable.columns.add($col6) 
+	$sbltable.columns.add($col7)
+	$sbltable.columns.add($col8)
+	$sbltable.columns.add($col9)
+	$sbltable.columns.add($col10)
+	$sbltable.columns.add($col11)
+	$sbltable.columns.add($col12)
+	$sbltable.columns.add($col13)
+	$sbltable.columns.add($col14)
+
+	$tabName="Hybrid IO Profile"
+	$ioprofiletable=new-object System.Data.DataTable "$tabName"
+
+	#Define Columns
+	$col1 = New-Object system.Data.DataColumn Node,([string]) 
+	$col2 = New-Object system.Data.DataColumn IOProfileRead,([string])
+	$col3 = New-Object system.Data.DataColumn IOProfileWrites,([string])
+
+	$ioprofiletable.columns.add($col1) 
+	$ioprofiletable.columns.add($col2)
+	$ioprofiletable.columns.add($col3)
+
+	if ($delta -ne 0) {
+		$sample = $delta
+	} else {
+		$sample=0
+	}
+
+	do {
+
+		$csvreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster csvfs(_total)\reads/sec*"}
+		$csvwrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster csvfs(_total)\writes/sec*"}
+		$csvwritelat=$d[$sample].CounterSamples | where { $_.path -Like "*cluster csvfs(_total)\avg. sec/write"}
+		$csvreadlat=$d[$sample].CounterSamples | where { $_.path -Like "*cluster csvfs(_total)\avg. sec/read"}
+		$csvnodes=$csvreads.Path
+		
+		$sblreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\read/sec*"}
+		$sblwrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\writes/sec*"}
+		$sbllocalreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\Local: read/sec*"}
+		$sbllocalwrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\Local: writes/sec*"}
+		$sblremotereads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\Remote: read/sec*"}
+		$sblremotewrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\Remote: writes/sec*"}
+		$sblwritelat=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\write latency"}
+		$sblreadlat=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\read latency"}
+		$sblnodes=$sblreads.Path
+
+		$cachehits=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\cache hit reads/sec*"}
+		$cachemiss=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\cache miss reads/sec*"}
+		$diskreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\disk reads/sec"}
+		$directreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\direct reads/sec"}
+			
+		$diskwrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\disk writes/sec*"}
+		$directwrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\direct writes/sec*"}
+		$cachewrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\cache writes/sec"}
+
+		$writeerror=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\write errors total*"}
+		$writemedia=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\write errors media*"}
+		$readtimeout=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\read errors timeout*"}
+		$readmedia=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\read errors media*"}
+		$cachenodes=$cachehits.Path
+		
+		
+		$diskioreads=$d[$sample].CounterSamples | where { $_.path -like "*cluster storage hybrid disks io profile(_total)\reads/sec total*" }
+		$diskiowrites=$d[$sample].CounterSamples | where { $_.path -like "*cluster storage hybrid disks io profile(_total)\writes/sec total*" }
+		$ioprofilenodes = $diskioreads.Path
+		
+		$csvreadtotal=0
+		$csvwritetotal=0
+		$sblreadtotal=0
+		$sblwritetotal=0
+		$ioprofilereadtotal=0
+		$ioprofilewritetotal=0
+
+
+		$cachehittotal =0
+		$cachemisstotal=0
+		$diskreadtotal=0
+		$diskwritetotal=0
+		$directreadtotal=0
+		$directwritetotal=0
+		$cachewritetotal=0
+
+		$table.Clear()
+		$cachetable.Clear()
+		$errtable.Clear()
+		$sbltable.Clear()
+		$ioprofiletable.Clear()
+
+		$index=0
+		foreach($node in $csvnodes) {
+			$row = $table.NewRow()
+
+			$pos = $csvnodes[$index].IndexOf("\",2)
+			#Enter data in the row
+			$row.Node = $csvnodes[$index].Substring(2,$pos-2)
+			$row.CSVReadIOPS = $([math]::Round($csvreads[$index].cookedValue,0))
+			$row.CSVReadLatency = $([math]::Round($csvreadlat[$index].cookedValue*1000,2))
+			$row.CSVWriteIOPS = $([math]::Round($csvwrites[$index].cookedValue,0)) 
+			$row.CSVWriteLatency = $([math]::Round($csvwritelat[$index].cookedValue*1000,2))
+			$csvreadtotal += $row.CSVReadIOPS
+			$csvwritetotal+= $row.CSVWriteIOPS
+			$table.Rows.Add($row)
+			$index+=1
+		}
+		
+		$index=0
+		foreach($node in $sblnodes) {
+			$row = $sbltable.NewRow()
+			$pos = $sblnodes[$index].IndexOf("\",2)
+			$row.Node = $sblnodes[$index].Substring(2,$pos-2)
+			$row.SBLReadIOPS = $([math]::Round($sblreads[$index].cookedValue,0))
+			$row.SBLReadLatency = $([math]::Round($sblreadlat[$index].cookedValue*1000,2))
+			$row.SBLWriteIOPS = $([math]::Round($sblwrites[$index].cookedValue,0)) 
+			$row.SBLWriteLatency = $([math]::Round($sblwritelat[$index].cookedValue*1000,2))
+			$row.SBLLocalRead = $([math]::Round($sbllocalreads[$index].cookedValue,0)) 
+			$row.SBLLocalWrite = $([math]::Round($sbllocalwrites[$index].cookedValue,0)) 
+			$row.SBLRemoteRead = $([math]::Round($sblremotereads[$index].cookedValue,0)) 
+			$row.SBLRemoteWrite = $([math]::Round($sblremotewrites[$index].cookedValue,0)) 
+			
+			$sblreadtotal+=$row.SBLReadIOPS
+			$sblwritetotal+=$row.SBLWriteIOPS
+
+			#Add the row to the table
+			$sbltable.Rows.Add($row)
+			$index+=1
+		}
+		
+		$index=0
+		foreach($node in $cachenodes) {
+			$row = $cachetable.NewRow();
+			$pos = $cachenodes[$index].IndexOf("\",2)
+			$row.Node = $cachenodes[$index].Substring(2,$pos-2)
+
+			$row.CacheHits = $([math]::Round($cachehits[$index].cookedValue,0))
+			$row.CacheMiss = $([math]::Round($cachemiss[$index].cookedValue,0))
+			$row.DiskReads = $([math]::Round($diskreads[$index].cookedValue,0)) 
+			$row.DirectReads = $([math]::Round($directreads[$index].cookedValue,0))
+			$row.DiskWrites = $([math]::Round($diskwrites[$index].cookedValue,0))
+			$row.DirectWrites = $([math]::Round($directwrites[$index].cookedValue,0))
+			$row.CacheWrites = $([math]::Round($cachewrites[$index].cookedValue,0)) 
+			#Add the row to the table
+			$cachetable.Rows.Add($row)
+			
+			$cachehittotal+=$row.CacheHits
+			$cachemisstotal+=$row.CacheMiss
+			$diskreadtotal+=$row.DiskReads
+			$diskwritetotal+=$row.DiskWrites
+			$directreadtotal+=$row.DirectReads
+			$directwritetotal+=$row.DirectWrites
+			$cachewritetotal+=$row.CacheWrites
+
+			if ($showerr) {
+				$row = $errtable.NewRow();
+				$row.Node = $nodes[$index].Substring(2,$pos-2)
+				$row.WriteError = $([math]::Round($writeerror[$index].cookedValue,0))
+				$row.WriteMedia = $([math]::Round($writemedia[$index].cookedValue,0))
+				$row.ReadTimeout = $([math]::Round($readtimeout[$index].cookedValue,0))
+				$row.ReadMedia = $([math]::Round($readmedia[$index].cookedValue,0))
+
+				#Add the row to the table
+				$errtable.Rows.Add($row)
+			}
+
+			$index+=1
+		}
+		
+		$index=0
+		foreach($node in $ioprofilenodes) {
+			$row = $ioprofiletable.NewRow()
+			$pos = $ioprofilenodes[$index].IndexOf("\",2)
+			$row.Node = $ioprofilenodes[$index].Substring(2,$pos-2)
+			$row.IOProfileRead = $([math]::Round($diskioreads[$index].cookedValue,0))
+			$row.IOProfileWrites = $([math]::Round($diskiowrites[$index].cookedValue,0)) 
+
+			$ioprofilereadtotal+=$row.IOProfileRead
+			$ioprofilewritetotal+=$row.IOProfileWrites
+			
+			#Add the row to the table
+			$ioprofiletable.Rows.Add($row)
+			$index+=1
+		}
+
+		# add Total row 
+		$row = $table.NewRow()
+		$row.Node = "Total"
+		$row.CSVReadIOPS = $csvreadtotal
+		$row.CSVWriteIOPS = $csvwritetotal
+		#Add the row to the table
+		$table.Rows.Add($row)
+
+		$row = $sbltable.NewRow()
+		$row.Node = "Total"
+		$row.SBLReadIOPS = $sblreadtotal
+		$row.SBLWriteIOPS= $sblwritetotal
+
+		#Add the row to the table
+		$sbltable.Rows.Add($row)
+
+
+		$row = $cachetable.NewRow()
+		$row.Node = "Total"
+		$row.CacheHits = $cachehittotal
+		$row.CacheMiss = $cachemisstotal
+		$row.DiskReads = $diskreadtotal
+		$row.DirectReads = $directreadtotal
+		$row.DiskWrites = $diskwritetotal
+		$row.DirectWrites= $directwritetotal
+		$row.CacheWrites = $cachewritetotal
+		#Add the row to the table
+		$cachetable.Rows.Add($row)
+		
+		$row = $ioprofiletable.NewRow()
+		$row.Node = "Total"
+		$row.IOProfileRead = $ioprofilereadtotal
+		$row.IOProfileWrites= $ioprofilewritetotal
+
+		#Add the row to the table
+		$ioprofiletable.Rows.Add($row)
+
+		cls
+
+		#Display the table
+		write-host "Sample interval " $sample
+		$table | sort-object Node| format-table -AutoSize
+		$sbltable | sort-object Node| format-table -AutoSize
+		$cachetable | sort-object Node| format-table -AutoSize
+		$ioprofiletable | sort-object Node| format-table -AutoSize
+
+		if ($showerr) {
+			$errtable | sort-object Node| format-table -AutoSize
+		}
+
+		$sample+=1
+		if ($sample -eq $d.Count) {
+			$sample=0
+		}
+		
+		if ($delta -ne 0) {
+			break
+		}
+
+		Start-Sleep -Seconds 1
+
+	} while (1)
+}
+
+function Get-SpacesTimeline
+
+{
+
+    # aliases usage in this module is idiomatic, only using defaults
+
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
+
+    param(
+
+        [parameter(Position=0, Mandatory=$true)]
+
+        [ValidateNotNullOrEmpty()]
+
+        [string]
+
+        $Path,
+		
+		[parameter(Mandatory=$true)]
+
+        [ValidateNotNullOrEmpty()]
+
+        [string]
+		
+		$VirtualDiskId
+		
+        )
+ 
+		$VirtualDiskFilePath = Join-Path $Path "GetVirtualDisk.XML"
+		$ClusterNodeFilePath = Join-Path $Path "GetClusterNode.XML"
+		
+		if ((-not (Test-Path $VirtualDiskFilePath)) -or (-not (Test-Path $ClusterNodeFilePath)))
+		{
+			Write-Error "Path is not valid or collection files are not present. Please check and try again: $Path"
+			return
+		}
+		
+        $VirtualDisks = Import-ClixmlIf ($VirtualDiskFilePath)
+        $ClusterNodes = Import-ClixmlIf ($ClusterNodeFilePath)
+		
+        $OperationalLog = "Microsoft-Windows-StorageSpaces-Driver-Operational.EVTX"
+        $DiagnosticLog  = "Microsoft-Windows-StorageSpaces-Driver-Diagnostic.EVTX"
+
+        $eventshash  = @{}
+
+        foreach ($node in $ClusterNodes)
+        {
+            $nodeName = $node.Name
+            $OperationalLogPath = Join-Path (Get-NodePath $Path $nodeName) $OperationalLog
+            $DiagnosticLogPath  = Join-Path (Get-NodePath $Path $nodeName) $DiagnosticLog
+
+            foreach ($VirtualDisk in $VirtualDisks)
+            {
+                $id = $VirtualDisk.ObjectId.Split(":")[2].Split("}")[1] + "}"				
+
+				if ($VirtualDiskId -ne $id.Trim("{}"))
+				{
+					continue;
+				}
+				
+                $eventFilter = "EventID=1008 or EventID=1009 or EventID=1021 or EventID=1022"
+
+			    $query = "*[System[($eventFilter)]] and *[EventData[Data[@Name='Id'] and (Data='$id')]]"
+
+                $events = Get-WinEvent -Path $DiagnosticLogPath -FilterXPath $query -ErrorAction SilentlyContinue
+                $events | % { $_ | Add-Member NodeName $nodeName}
+			
+                if ($events)
+                {
+                    $eventshash[$id] += $events;
+                }
+            }
+        }
+
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Windows.Forms.DataVisualization
+		
+		$Title = "Storage Spaces State Timeline"
+		
+		$chart = New-object Windows.Forms.DataVisualization.Charting.Chart
+		$chart.Anchor = [Windows.Forms.AnchorStyles]::Bottom -bor
+						[Windows.Forms.AnchorStyles]::Right -bor
+						[Windows.Forms.AnchorStyles]::Top -bor
+						[Windows.Forms.AnchorStyles]::Left
+
+		$chart.Width = 1000
+		$chart.Height = 800
+		$chart.Left = 40
+		$chart.Top = 30
+		$chart.BackColor = [Drawing.Color]::White
+		[void]$chart.Titles.Add($Title)
+		$chart.Titles[0].Font = "segoeuilight,12pt"
+
+		#
+		# Create a chart area to draw on
+		#
+
+		$chartArea = New-Object Windows.Forms.DataVisualization.Charting.ChartArea
+		$chartarea.Name = "TimeSeries"
+		$chartarea.AxisX.IntervalType = [Windows.Forms.DataVisualization.Charting.DateTimeIntervalType]::Hours
+		$chartarea.AxisX.IntervalAutoMode = [Windows.Forms.DataVisualization.Charting.IntervalAutoMode]::VariableCount
+		$chartarea.AxisX.MajorGrid.Enabled = $false
+		$chartarea.AxisX.LabelStyle.Format = "yyyy/MM/dd h tt"
+		$chartarea.AxisX.ScaleView.Zoomable = $true
+		$chartarea.AxisX.ScrollBar.IsPositionedInside = $true
+		$chartarea.AxisX.ScrollBar.ButtonStyle = [Windows.Forms.DataVisualization.Charting.ScrollBarButtonStyles]::All
+		$chartarea.CursorX.IsUserEnabled = $true
+		$chartarea.CursorX.IsUserSelectionEnabled = $true
+		$chartarea.CursorX.IntervalType = [Windows.Forms.DataVisualization.Charting.DateTimeIntervalType]::Hours
+		$chartarea.CursorX.AutoScroll = $true
+		$chartArea.AxisY.Title = "State"
+		$chartArea.AxisY.TitleFont = "segoeuilight,12pt"
+		$chartarea.AxisY.LabelStyle.Format = "N0"
+		$chartarea.AxisY.MinorGrid.Enabled = $true
+		$chartarea.AxisY.MinorGrid.LineDashStyle = [Windows.Forms.DataVisualization.Charting.ChartDashStyle]::Dot
+
+		$chart.ChartAreas.Add($chartArea)
+			
+		foreach ($key in $eventshash.Keys)
+		{	
+			if ($key.Trim("{}") -ne $VirtualDiskId)
+			{
+				continue;
+			}
+			
+			$eventsHashSortTime = $eventshash[$key] | sort TimeCreated
+	
+			foreach ($i in $eventsHashSortTime)
+			{
+				
+				$point = New-Object Windows.Forms.DataVisualization.Charting.DataPoint
+				$point.Color = [Drawing.Color]::Green
+				
+				if ($i.Id -eq 1008)
+				{
+					$startTime = $i.TimeCreated
+					$seriesName = "State" + $startTime
+					[void]$chart.Series.Add($seriesName)
+					$endTime   = $null
+				}
+				if ($i.Id -eq 1009)
+				{
+					$endTime = $i.TimeCreated
+					$startTime = $null
+				}
+				
+				if ($i.Id -eq 1021)
+				{
+					$value = 20
+					$seriesName = "Attach" + $i.TimeCreated
+					$point.SetValueXY($i.TimeCreated, $value)
+					$point.Tooltip = "Attached" +
+									"At: #VALX{MM/dd/yyyy h:mm:ss tt}\n" +
+									"NodeName: $($i.NodeName)"
+					$point.Color = [Drawing.Color]::Red
+					$chart.Series[$seriesName].Points.Add($point)
+				}
+				
+				if ($i.Id -eq 1021)
+				{
+					$value = 20
+					$seriesName = "Detached" + $i.TimeCreated
+					$point.SetValueXY($i.TimeCreated, $value)
+					$point.Tooltip = "Detached" +
+									"At: #VALX{MM/dd/yyyy h:mm:ss tt}\n" +
+									"NodeName: $($i.NodeName)"
+					$point.Color = [Drawing.Color]::Red
+					$chart.Series[$seriesName].Points.Add($point)
+				}
+				
+				$chart.Series[$seriesName].ChartType = [Windows.Forms.DataVisualization.Charting.SeriesChartType]::Line
+				$chart.Series[$seriesName].XValueType = [Windows.Forms.DataVisualization.Charting.ChartValueType]::DateTime
+				$chart.Series[$seriesName].MarkerStyle = [Windows.Forms.DataVisualization.Charting.MarkerStyle]::Circle
+				
+				if ($startTime -ne $null)
+				{
+					$value = 10
+					$point.SetValueXY($i.TimeCreated, $value)
+					$point.Tooltip = "Regen progressing" +
+									"At: #VALX{MM/dd/yyyy h:mm:ss tt}\n" +
+									"NodeName: $($i.NodeName)"
+					$chart.Series[$seriesName].Points.Add($point)
+					$startTime = $null
+				}
+				if ($endTime -ne $null)
+				{
+					$value = 20
+					$point.SetValueXY($i.TimeCreated, $value)
+					$point.Tooltip = "RegenCompleted " +
+									"At: #VALX{MM/dd/yyyy h:mm:ss tt}\n" +
+									"NodeName: $($i.NodeName)"
+					$chart.Series[$seriesName].Points.Add($point)
+					$startTime = $null
+					$endTime   = $null
+				}
+			}
+		}
+		
+		$form = New-Object Windows.Forms.Form
+		$form.Text = "Storage Chart plotting space timeline"
+		$form.Width = 1100
+		$form.Height = 900
+		$form.controls.add($chart)
+		$form.Add_Shown({$form.Activate()})
+
+		[void]$form.ShowDialog()
+ }
+ 
 #######
 #######
 #######
@@ -5262,13 +5804,15 @@ Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
     'Update-SddcDiagnosticArchive',
     'Limit-SddcDiagnosticArchive',
     'Show-SddcDiagnosticArchiveJob',
+	'Show-TableReport',
+    'Get-SpacesTimeline',
     'Set-SddcDiagnosticArchiveJobParameters',
     'Get-SddcDiagnosticArchiveJobParameters'
 # SIG # Begin signature block
-# MIIjngYJKoZIhvcNAQcCoIIjjzCCI4sCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIjnwYJKoZIhvcNAQcCoIIjkDCCI4wCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBdRg97BCEP8rNS
-# cx0Vo53c6ZNAN4EmCzXfIe2WRN8kLaCCDYEwggX/MIID56ADAgECAhMzAAABA14l
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCqNggTLUHTMebx
+# pCkJJbLkIppcfbkHM8ta+QMLBMwmV6CCDYEwggX/MIID56ADAgECAhMzAAABA14l
 # HJkfox64AAAAAAEDMA0GCSqGSIb3DQEBCwUAMH4xCzAJBgNVBAYTAlVTMRMwEQYD
 # VQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNy
 # b3NvZnQgQ29ycG9yYXRpb24xKDAmBgNVBAMTH01pY3Jvc29mdCBDb2RlIFNpZ25p
@@ -5340,56 +5884,56 @@ Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
 # xw4o7t5lL+yX9qFcltgA1qFGvVnzl6UJS0gQmYAf0AApxbGbpT9Fdx41xtKiop96
 # eiL6SJUfq/tHI4D1nvi/a7dLl+LrdXga7Oo3mXkYS//WsyNodeav+vyL6wuA6mk7
 # r/ww7QRMjt/fdW1jkT3RnVZOT7+AVyKheBEyIXrvQQqxP/uozKRdwaGIm1dxVk5I
-# RcBCyZt2WwqASGv9eZ/BvW1taslScxMNelDNMYIVczCCFW8CAQEwgZUwfjELMAkG
+# RcBCyZt2WwqASGv9eZ/BvW1taslScxMNelDNMYIVdDCCFXACAQEwgZUwfjELMAkG
 # A1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQx
 # HjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEoMCYGA1UEAxMfTWljcm9z
 # b2Z0IENvZGUgU2lnbmluZyBQQ0EgMjAxMQITMwAAAQNeJRyZH6MeuAAAAAABAzAN
 # BglghkgBZQMEAgEFAKCBxjAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgor
-# BgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg9poMCgxm
-# v5Hq1hduyt1b7cb4KS3FRu4T+DdT0msB2WYwWgYKKwYBBAGCNwIBDDFMMEqgJIAi
+# BgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgZ5364kEC
+# Cucpp60QN3vXGilpPa59EkHXZ+5eEf6bv4UwWgYKKwYBBAGCNwIBDDFMMEqgJIAi
 # AE0AaQBjAHIAbwBzAG8AZgB0ACAAVwBpAG4AZABvAHcAc6EigCBodHRwOi8vd3d3
-# Lm1pY3Jvc29mdC5jb20vd2luZG93czANBgkqhkiG9w0BAQEFAASCAQDAWZdVk3B0
-# PTnsXJWYFre18KlyvCl3R4Ef+KaiE8RSaIKfccxoFnQFGkuwJm7dl+vCM/hzWPSM
-# UNglrUspCi5uLyMP8Ziv3c4YYEBoOk9Atar2VLg4NHmKxDKKEW3pZr6R7azvMJdm
-# wExNZUbcejrKyL20z2rqvixs4UfaT5O7FxqevxnUkPwM+AOPzhkEI5+bBjP5NyoY
-# 91MO5bObo2W2Cfe6hONfua2U94BRonn6BL+joJwMRagNvMSQvwUp85U0P/yLg9wZ
-# YNLDFmSsoOe9lM7GKYwY5KqcSM7Yn4EX/x9TvoVa2HvrrCBfhHGZValnc7H7PEVP
-# v/7hZ8f5RalvoYIS5TCCEuEGCisGAQQBgjcDAwExghLRMIISzQYJKoZIhvcNAQcC
-# oIISvjCCEroCAQMxDzANBglghkgBZQMEAgEFADCCAVEGCyqGSIb3DQEJEAEEoIIB
-# QASCATwwggE4AgEBBgorBgEEAYRZCgMBMDEwDQYJYIZIAWUDBAIBBQAEIC2TO2vV
-# hfdpI8zn9Bm/VCMFsbK7PolOBLcE/IQa7OsXAgZb/gpmKTkYEzIwMTgxMjE3MTkx
-# MDA5LjA4MVowBIACAfSggdCkgc0wgcoxCzAJBgNVBAYTAlVTMQswCQYDVQQIEwJX
-# QTEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0
-# aW9uMS0wKwYDVQQLEyRNaWNyb3NvZnQgSXJlbGFuZCBPcGVyYXRpb25zIExpbWl0
-# ZWQxJjAkBgNVBAsTHVRoYWxlcyBUU1MgRVNOOjA4NDItNEJFNi1DMjlBMSUwIwYD
-# VQQDExxNaWNyb3NvZnQgVGltZS1TdGFtcCBzZXJ2aWNloIIOPDCCBPEwggPZoAMC
-# AQICEzMAAADYGuTMP3oR+uEAAAAAANgwDQYJKoZIhvcNAQELBQAwfDELMAkGA1UE
+# Lm1pY3Jvc29mdC5jb20vd2luZG93czANBgkqhkiG9w0BAQEFAASCAQAKDfUOjjZH
+# 4VjfMYKVprO6har4HAXeHplt0LIkcMDKoOzGWByKbP8wY58/miQ5fKTifvt6XIql
+# 3JJYzjH3ja2zpWSQAoIMIkPb6bKU1r8YMSsGe4dcV4eyQbUExaa16UBZ9vGMztIF
+# 4spk11LHCfpCTn7yyGOloAnBXgIkTvJc4o8vuzhMDr9AO4QwIhfzZNRdiYczdamf
+# 10Ja48IFjz0ROi455w60nZowmdLydIt955leb7Dg8Vwp3obuawNZ0+OQnp4VJ5kj
+# SSYplQ+6CMmdj7SRKEkhSPd1FTMvEl6ADdE2p8AWDS6NihvrauFjI0nuHzvXw6P/
+# 7ljQc/+jIPZXoYIS5jCCEuIGCisGAQQBgjcDAwExghLSMIISzgYJKoZIhvcNAQcC
+# oIISvzCCErsCAQMxDzANBglghkgBZQMEAgEFADCCAVEGCyqGSIb3DQEJEAEEoIIB
+# QASCATwwggE4AgEBBgorBgEEAYRZCgMBMDEwDQYJYIZIAWUDBAIBBQAEIORpY+an
+# IVk6jTAUWcpCUX1OM4DjyXV262a4+W9pKj7iAgZcF9VE3FAYEzIwMTgxMjE3MjM1
+# NDM0LjAyMlowBIACAfSggdCkgc0wgcoxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpX
+# YXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQg
+# Q29ycG9yYXRpb24xJTAjBgNVBAsTHE1pY3Jvc29mdCBBbWVyaWNhIE9wZXJhdGlv
+# bnMxJjAkBgNVBAsTHVRoYWxlcyBUU1MgRVNOOjdCRjEtRTNFQS1CODA4MSUwIwYD
+# VQQDExxNaWNyb3NvZnQgVGltZS1TdGFtcCBTZXJ2aWNloIIOPTCCBPEwggPZoAMC
+# AQICEzMAAAD2rM92KnN0mtoAAAAAAPYwDQYJKoZIhvcNAQELBQAwfDELMAkGA1UE
 # BhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAc
 # BgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEmMCQGA1UEAxMdTWljcm9zb2Z0
-# IFRpbWUtU3RhbXAgUENBIDIwMTAwHhcNMTgwODIzMjAyNjUxWhcNMTkxMTIzMjAy
-# NjUxWjCByjELMAkGA1UEBhMCVVMxCzAJBgNVBAgTAldBMRAwDgYDVQQHEwdSZWRt
-# b25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xLTArBgNVBAsTJE1p
-# Y3Jvc29mdCBJcmVsYW5kIE9wZXJhdGlvbnMgTGltaXRlZDEmMCQGA1UECxMdVGhh
-# bGVzIFRTUyBFU046MDg0Mi00QkU2LUMyOUExJTAjBgNVBAMTHE1pY3Jvc29mdCBU
-# aW1lLVN0YW1wIHNlcnZpY2UwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIB
-# AQCUHjDkh1r1sGi48zCSTVJSLXVD5jFUXiSAruKahoBAeXEFg3XtdL97JewT2vEm
-# LeGEPSdc5norl6+e6ZohVj/88wKR+w0l/AXEbbg2gM8g7XZ7UoGBBYj3fTJbNLk9
-# BoAI4Q0+CyCLsJEUNxvXBJkX0KheXr3IptpDZoagBlk/T3UaFHmTOfG6Yce5zRJ5
-# LHQyvE0O9RnJDJMN5DoR5/zMZX7A2FF0DHXf4C/AWQQPYHQOV1fmNufxBlSwD4GF
-# bOu1R8dL+SzNUze77HpTqg+6eLTUSsHNeVr4YKzrN81vmCx6aIu5iuWwcUWxwx7T
-# gbqGr2ddg/V49W8iu9UsMvVDAgMBAAGjggEbMIIBFzAdBgNVHQ4EFgQUn7ZWSx7u
-# FNXfinZ6moMa55DjZuQwHwYDVR0jBBgwFoAU1WM6XIoxkPNDe3xGG8UzaFqFbVUw
+# IFRpbWUtU3RhbXAgUENBIDIwMTAwHhcNMTgxMDI0MjExNDI3WhcNMjAwMTEwMjEx
+# NDI3WjCByjELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNV
+# BAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjElMCMG
+# A1UECxMcTWljcm9zb2Z0IEFtZXJpY2EgT3BlcmF0aW9uczEmMCQGA1UECxMdVGhh
+# bGVzIFRTUyBFU046N0JGMS1FM0VBLUI4MDgxJTAjBgNVBAMTHE1pY3Jvc29mdCBU
+# aW1lLVN0YW1wIFNlcnZpY2UwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIB
+# AQCUmrVAwDHtx3rsVppuWDzC8TXEAXtmAUD6639Of0V6AYaoHuLpUKSE96VNJ8lH
+# fIV6QX0TdLD5k/Yhx7Mq9uvk9e3RK+2fkGoEatgrb5cWSOyMg3NfOwTX5J5gmRPT
+# iGQzCYXxdGmF6zEIwxRNuWb4tUQkWtirkggkKajWSf1s4NLZaq18z9P5P6tUoBF5
+# gdXdhCNClVbmvH/o76zezFAUo3vs7yT678j+lY6dXAvgAkHhaicuJWVFIWwPxLiZ
+# Nu2erW8xSL7GWlnn/j2mGLPLu+vlwRyWvKANsOut8LRLU/KigOH22aXUNRhtqj8m
+# fZ4IkUeg3Q0EfOAR5+lsbQdVAgMBAAGjggEbMIIBFzAdBgNVHQ4EFgQUHYdig5Qf
+# aIJJSNNs7plkg+wm80owHwYDVR0jBBgwFoAU1WM6XIoxkPNDe3xGG8UzaFqFbVUw
 # VgYDVR0fBE8wTTBLoEmgR4ZFaHR0cDovL2NybC5taWNyb3NvZnQuY29tL3BraS9j
 # cmwvcHJvZHVjdHMvTWljVGltU3RhUENBXzIwMTAtMDctMDEuY3JsMFoGCCsGAQUF
 # BwEBBE4wTDBKBggrBgEFBQcwAoY+aHR0cDovL3d3dy5taWNyb3NvZnQuY29tL3Br
 # aS9jZXJ0cy9NaWNUaW1TdGFQQ0FfMjAxMC0wNy0wMS5jcnQwDAYDVR0TAQH/BAIw
-# ADATBgNVHSUEDDAKBggrBgEFBQcDCDANBgkqhkiG9w0BAQsFAAOCAQEADlJwdt7I
-# PyC1NLe7AZze8No7Mnd84D5SMHfxiRpLeOYXz+bgZ+I/b8Bn6bCg2XoS7UKbf0ae
-# ouUqu/TckDsOC6+fko0uW1LpOROUpCvc9WTGv0VXj/oJAuXZRJTR3qeZHOgiYZ0q
-# CyJShOyIImJKb43Ygz4t0k/JA0q5E+z2W/D2nKDVV+zTnK8SnROQ55WKeoJq9pBc
-# Jjd1nf7HvYd1MlyFhF3OwdCPFrM/FtscLO6GKVBivXpe03K9I2KsogJh27sCKXd0
-# 7TN1hqUOVM54sVJbZofPnJEwig+NOhYSRijhS4T/fRa1VcLQ2rwhNMyQc9U++Q+W
-# 3+I2K8aDm0lOsTCCBnEwggRZoAMCAQICCmEJgSoAAAAAAAIwDQYJKoZIhvcNAQEL
+# ADATBgNVHSUEDDAKBggrBgEFBQcDCDANBgkqhkiG9w0BAQsFAAOCAQEAMBX2zuIc
+# VxbQmJHV8h7Z3bvtyG8D8Zio+fgvABObmakrTpAwGqdIN1Bnow0JAz4cxyiLjnlq
+# 1KFxJyEyCIgduOGmFeP/QG1S5o9CJZuTTsn+weLs77yNB7dXe8Mew9Pf0nkuQGan
+# +NZ2s5A02FCy1Q3wK3KIQZ6QXIjsFLoL2RhJ522sZNgUI9bk4lyfMJejDMgnyiWY
+# 4rxZHjWkxGNoP8KeuJ/OJzVpH9gfB86Z73KwZ4jLdpzF3/wl2nu/iIU31NVboafP
+# tcngDhU0qKI6PD+VEP+Hcmauhf4CTv0sDk0kQBqqQsieIYKp1Qjfygju47ippO3Y
+# EvZVnvn228IO1jCCBnEwggRZoAMCAQICCmEJgSoAAAAAAAIwDQYJKoZIhvcNAQEL
 # BQAwgYgxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQH
 # EwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xMjAwBgNV
 # BAMTKU1pY3Jvc29mdCBSb290IENlcnRpZmljYXRlIEF1dGhvcml0eSAyMDEwMB4X
@@ -5423,37 +5967,37 @@ Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
 # b3epgcunCaw5u+zGy9iCtHLNHfS4hQEegPsbiSpUObJb2sgNVZl6h3M7COaYLeqN
 # 4DMuEin1wC9UJyH3yKxO2ii4sanblrKnQqLJzxlBTeCG+SqaoxFmMNO7dDJL32N7
 # 9ZmKLxvHIa9Zta7cRDyXUHHXodLFVeNp3lfB0d4wwP3M5k37Db9dT+mdHhk4L7zP
-# WAUu7w2gUDXa7wknHNWzfjUeCLraNtvTX4/edIhJEqGCAs4wggI3AgEBMIH4oYHQ
-# pIHNMIHKMQswCQYDVQQGEwJVUzELMAkGA1UECBMCV0ExEDAOBgNVBAcTB1JlZG1v
-# bmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEtMCsGA1UECxMkTWlj
-# cm9zb2Z0IElyZWxhbmQgT3BlcmF0aW9ucyBMaW1pdGVkMSYwJAYDVQQLEx1UaGFs
-# ZXMgVFNTIEVTTjowODQyLTRCRTYtQzI5QTElMCMGA1UEAxMcTWljcm9zb2Z0IFRp
-# bWUtU3RhbXAgc2VydmljZaIjCgEBMAcGBSsOAwIaAxUAZTHB3RFeHZDsjSiiSRUI
-# WWArIoGggYMwgYCkfjB8MQswCQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3Rv
+# WAUu7w2gUDXa7wknHNWzfjUeCLraNtvTX4/edIhJEqGCAs8wggI4AgEBMIH4oYHQ
+# pIHNMIHKMQswCQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UE
+# BxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSUwIwYD
+# VQQLExxNaWNyb3NvZnQgQW1lcmljYSBPcGVyYXRpb25zMSYwJAYDVQQLEx1UaGFs
+# ZXMgVFNTIEVTTjo3QkYxLUUzRUEtQjgwODElMCMGA1UEAxMcTWljcm9zb2Z0IFRp
+# bWUtU3RhbXAgU2VydmljZaIjCgEBMAcGBSsOAwIaAxUADxdHwnvWAzfCWtOb88hb
+# m/VWmpGggYMwgYCkfjB8MQswCQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3Rv
 # bjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0
 # aW9uMSYwJAYDVQQDEx1NaWNyb3NvZnQgVGltZS1TdGFtcCBQQ0EgMjAxMDANBgkq
-# hkiG9w0BAQUFAAIFAN/CPdswIhgPMjAxODEyMTcyMzIzMDdaGA8yMDE4MTIxODIz
-# MjMwN1owdzA9BgorBgEEAYRZCgQBMS8wLTAKAgUA38I92wIBADAKAgEAAgIh3AIB
-# /zAHAgEAAgIRYTAKAgUA38OPWwIBADA2BgorBgEEAYRZCgQCMSgwJjAMBgorBgEE
-# AYRZCgMCoAowCAIBAAIDB6EgoQowCAIBAAIDAYagMA0GCSqGSIb3DQEBBQUAA4GB
-# AEx8EvE99AFf/IdLvhn996kERL6QmAfAvIWu174+5HZr2Snb1zOweuOgnHTLFhQh
-# rvYPNymSKnmkJlT14bRwrCHePRb5h+J5YKTiOOAQVRuAS9X5FLRpl+zcXFEqmysu
-# a7fS8NSfgFLydwQ+doqE4z6lJl/207bpkAJOi5+MSQGPMYIDDTCCAwkCAQEwgZMw
-# fDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1Jl
-# ZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEmMCQGA1UEAxMd
-# TWljcm9zb2Z0IFRpbWUtU3RhbXAgUENBIDIwMTACEzMAAADYGuTMP3oR+uEAAAAA
-# ANgwDQYJYIZIAWUDBAIBBQCgggFKMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRAB
-# BDAvBgkqhkiG9w0BCQQxIgQgsySB0ZZWg2M757kCua6IC0EKwdjXrev+Gz+bul+Y
-# JWgwgfoGCyqGSIb3DQEJEAIvMYHqMIHnMIHkMIG9BCBzO53HeFzo83Yp/++Elao9
-# KUDRbwoE/yBrzBOfQS7YLTCBmDCBgKR+MHwxCzAJBgNVBAYTAlVTMRMwEQYDVQQI
-# EwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3Nv
-# ZnQgQ29ycG9yYXRpb24xJjAkBgNVBAMTHU1pY3Jvc29mdCBUaW1lLVN0YW1wIFBD
-# QSAyMDEwAhMzAAAA2BrkzD96EfrhAAAAAADYMCIEIAuWmyz0jYemEeZmly9vqTLi
-# myXOni1ipZEwnmXQkKpcMA0GCSqGSIb3DQEBCwUABIIBADu2K63LFlONwewJS4te
-# 1Bo/kF/3oiJGFOVxshzVe9ajUH2BaTxVYex1E9bLjXqWP9AzsnchFFTLjPsSILhA
-# U4j25GhwupTgBYuYVN6Y1Wy7CmfhR5aCv3GxSF4j0EyYakqZplLR3f0YIieCo9f6
-# +Rt7bE0pUcK3WoJV3IKvZQ4pya1GAlJ8s8W9JpnAQWZdx9G1dNUEBPnCycm6HdSA
-# vzNFztxH80fI+reYs//9VXZhSPlxHZEIrQ9LPYovAWV122fGrCRRLvxXKCN2Dgq2
-# BDJ23GpDlqnR0zu6FKD5jASXF7NKqnaVR7h5dCllzjTm/2+NZdia1z0IxsS5yZhF
-# jmQ=
+# hkiG9w0BAQUFAAIFAN/CU8QwIhgPMjAxODEyMTgwMDU2MzZaGA8yMDE4MTIxOTAw
+# NTYzNloweDA+BgorBgEEAYRZCgQBMTAwLjAKAgUA38JTxAIBADALAgEAAgMGtuMC
+# Af8wBwIBAAICEXUwCgIFAN/DpUQCAQAwNgYKKwYBBAGEWQoEAjEoMCYwDAYKKwYB
+# BAGEWQoDAqAKMAgCAQACAwehIKEKMAgCAQACAwGGoDANBgkqhkiG9w0BAQUFAAOB
+# gQCeXawH2M3ytQ8kYr/FV3+L2adlrBB/MBp1Ucm3g3KcAYHfm8mtDtkLCNsbXalU
+# BYKQ2/HVDyhBKM8EGeg8rJrT4Qk1tlWGZZRZnvKCcGRwcuE+gutpOh2XkWCEdbGY
+# wTd2B8TZB0mywk86jjxsjV5CCv3xd4qW3klOpoNt2rfa1zGCAw0wggMJAgEBMIGT
+# MHwxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdS
+# ZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xJjAkBgNVBAMT
+# HU1pY3Jvc29mdCBUaW1lLVN0YW1wIFBDQSAyMDEwAhMzAAAA9qzPdipzdJraAAAA
+# AAD2MA0GCWCGSAFlAwQCAQUAoIIBSjAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQ
+# AQQwLwYJKoZIhvcNAQkEMSIEINWmrNr3RmOiLRWu81fjjS1DCE8QOp7J+3Au72I0
+# oKzhMIH6BgsqhkiG9w0BCRACLzGB6jCB5zCB5DCBvQQg94dBd2q07RcJ2dMl4z3m
+# gBFSVptilRYPqZBOcS+TtOowgZgwgYCkfjB8MQswCQYDVQQGEwJVUzETMBEGA1UE
+# CBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9z
+# b2Z0IENvcnBvcmF0aW9uMSYwJAYDVQQDEx1NaWNyb3NvZnQgVGltZS1TdGFtcCBQ
+# Q0EgMjAxMAITMwAAAPasz3Yqc3Sa2gAAAAAA9jAiBCBafDxRL+i5syNfnvBYQlQS
+# qCh9Hm3wPnIyHlE+mNs/NjANBgkqhkiG9w0BAQsFAASCAQBbarJiZSOFAiC1jb16
+# M9w83r6oG5ajV6PfIbcDa1rfwcbQSsHwFizoRgGc8b52L3Imt9A3cMxTJ/1lHiGm
+# PGiTp1Z62a+UnPvXhZslY2Y2Vlh/CTv1KOevwjJfmFzKAG5MfWhQqD+ulMCt8U8S
+# SeG6UWcD4UdjkhdPmrcXL21NeEfm8aS1CneDb0YqqbvxRkN4nBJ9+/MMj3zS1FiF
+# WrHbjwg3ie0hffaGaqA1twI0dnvAGTU9/jLcIGq8vW55ugq5h/5/ULRbOleZGaMX
+# V2Swtx9uHnOCvxhOThuGSxOeX0+1thPG7yAlZoN1FpxMajEuWl/4drKowUUzVT7X
+# A3nO
 # SIG # End signature block
