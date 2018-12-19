@@ -2332,20 +2332,31 @@ function Get-SddcDiagnosticInfo
             Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $Subsystem |
                 Export-Clixml ($Path + "GetStorageEnclosure.XML") }
         catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
-		
-		# Undo changes as this is failing in AzureStack environment.
-		# SDDC cim objects
-		
-        #Show-Update "SDDC Cim Objects"
-		
-        #foreach($objType in @("Drive","Server","Volume","Cluster","VirtualMachine","VirtualSwitch"))
-        #{
-        #    try {
-		#		$className = "SDDC_"+$objType;
-        #        Get-CimInstance -Namespace "root\SDDC\Management" -ClassName $className  | Export-Clixml ($Path + "GetSddc"+$objType+".XML");
-        #    }
-        #    catch { Show-Warning("Unable to get SDDC "+$objType+". `nError="+$_.Exception.Message) }
-        #}
+
+        # SDDC cim objects
+
+        try {
+            $sddcRes = Get-ClusterResource -Cluster $AccessNode -ErrorAction Ignore | ?{ ($_.ResourceType -eq "SDDC Management") -and ($_.State -eq "Online")}
+            if($sddcRes) {
+                Show-Update "SDDC Cim Objects"
+
+                foreach($objType in @("Drive","Server","Volume","Cluster","VirtualMachine","VirtualSwitch")) {
+                    try {
+                        $className = "SDDC_"+$objType;
+                        Get-CimInstance -Namespace "root\SDDC\Management" -ComputerName $AccessNode -ClassName $className | Export-Clixml ($Path + "GetSddc"+$objType+".XML");
+                    }
+                    catch { 
+                        Show-Warning("Unable to get SDDC "+$objType+". `nError="+$_.Exception.Message) 
+                    }
+                }
+            }
+            else {
+                Show-Update "No 'SDDC Management' cluster resource is online. Skip SDDC Cim Objects."
+            }
+        }
+        catch {
+            Show-Warning "Unable to get 'SDDC Management' cluster resource. Skip SDDC Cim Objects."
+        }
 
         #
         # Generate SBL Connectivity report based on input clusport information
