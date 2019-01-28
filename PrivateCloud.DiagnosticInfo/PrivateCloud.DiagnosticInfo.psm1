@@ -1748,6 +1748,7 @@ function Get-SddcDiagnosticInfo
             $JobStatic += start-job -Name ClusterResourceParameter {
                 try {
                     $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
+                    $o += Get-ClusterSharedVolume -Cluster $using:AccessNode | Get-ClusterParameter
                     $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
                 }
                 catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
