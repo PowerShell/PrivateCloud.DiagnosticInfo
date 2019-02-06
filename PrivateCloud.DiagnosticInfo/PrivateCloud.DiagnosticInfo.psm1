@@ -5031,7 +5031,8 @@ function Get-SmbConnectivityReport
             [int] $ev,
             [datetime] $timebase,
             [System.ConsoleColor] $warncol,
-            [string] $warn
+            [string] $warn,
+            [hashtable]$data =  @{}
             )
 
         $r = $paths |% {
@@ -5048,24 +5049,21 @@ function Get-SmbConnectivityReport
 
             New-Object psobject -Property @{
                 'ComputerName' = $node
-                'RDMA Last5Min' = Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $last5    -DataAnd @{'ConnectionType'='=2'})
-                'RDMA LastHour' = Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lasthour -DataAnd @{'ConnectionType'='=2'})
-                'RDMA LastDay' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -DataAnd @{'ConnectionType'='=2'})
-
-                'TCP Last5Min' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $last5    -DataAnd @{'ConnectionType'='=1'})
-                'TCP LastHour' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lasthour -DataAnd @{'ConnectionType'='=1'})
-                'TCP LastDay' =   Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -DataAnd @{'ConnectionType'='=1'})
+                'Last5Min' = Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $last5    -DataAnd $data)
+                'LastHour' = Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lasthour -DataAnd $data)
+                'LastDay' =  Count-EventLog -path $_ -xpath $(Get-FilterXpath -Event $ev -TimeBase $timebase -TimeDeltaMs $lastday  -DataAnd $data)
             }
         }
 
-        $hdr = 'ComputerName','RDMA Last5Min','RDMA LastHour','RDMA LastDay','TCP Last5Min','TCP LastHour','TCP LastDay'
-        $rdmafail = ($r |% { $row = $_; $hdr |? {$_ -like 'RDMA*' } |% { $row.$_ }} | measure -sum).sum -ne 0
+        $hdr = 'ComputerName','Last5Min','LastHour','LastDay'
+        $lastfail = ($r |% { $row = $_; $hdr |? {$_ -like 'Last*' } |% { $row.$_ }} | measure -sum).sum -ne 0
 
-        if ($rdmafail) {
+        if ($lastfail) {
             Write-Host -ForegroundColor $warncol $warn
         }
 
         $r | sort -Property ComputerName | ft -Property $hdr
+        Write-Host _________________________________________________________________________________________
     }
 
     # get the timebase from the capture parameters
@@ -5086,7 +5084,7 @@ WARNING: the SMB Client is receiving RDMA disconnects. This is an error whose ro
 `t cluster node reboots are a natural & expected source of disconnects.
 "@
 
-    $j += Start-Job -name 'SMB Connectivity Error Check - Disconnect Failures (Event 30804)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30804,$CaptureDate,([ConsoleColor]'Red'),$w
+    $j += Start-Job -name 'SMB Connectivity Error Check - RDMA Disconnect Failures (Event 30804)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30804,$CaptureDate,([ConsoleColor]'Red'),$w,@{'ConnectionType'='=2'}
 
     $w = @"
 WARNING: the SMB Client is receiving RDMA connect errors. This is an error whose root
@@ -5094,8 +5092,64 @@ WARNING: the SMB Client is receiving RDMA connect errors. This is an error whose
 `t network fabric. Please inspect especially if in the Last5 bucket.
 "@
 
-    $j += Start-Job -name 'SMB Connectivity Error Check - Connect Failures (Event 30803)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30803,$CaptureDate,([ConsoleColor]'Yellow'),$w
+    $j += Start-Job -name 'SMB Connectivity Error Check - RDMA Connect Failures (Event 30803)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30803,$CaptureDate,([ConsoleColor]'Yellow'),$w,@{'ConnectionType'='=2'}
 
+    $w = @"
+
+WARNING: the SMB Client is receiving TCP/IP disconnects. Note that
+
+`t cluster node reboots are a natural & expected source of disconnects.
+
+"@
+
+    $j += Start-Job -name 'SMB Connectivity Error Check -  TCP/IP Connect Failures (Event 30804)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30804,$CaptureDate,([ConsoleColor]'Yellow'),$w, @{'ConnectionType'='=1'}
+
+    $w = @"
+
+WARNING: the SMB Client is receiving TCP/IP connect errors. 
+
+Please inspect especially if in the Last5 bucket.
+
+"@
+
+    $j += Start-Job -name 'SMB Connectivity Error Check - TCP/IP Connect Failures (Event 30803)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30803,$CaptureDate,([ConsoleColor]'Yellow'),$w, @{'ConnectionType'='=1'}
+
+    $w = @"
+
+WARNING: the SMB Client is  experiencing long time to complete IO.
+
+SMB will close diconnected channels
+
+"@
+
+    $j += Start-Job -name 'SMB Connectivity Error Check - SMB IO Timeouts (Event 30809)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30809,$CaptureDate,([ConsoleColor]'Yellow'),$w
+
+    $w = @"
+
+WARNING: the SMB Client has disconnect channels because IO took long time.
+
+`t Something is stuck somewhere in the stack, and we need a LiveDump to 
+
+`t figure it out. Look for CsvIoTM livedumps with close timestamp in the 
+
+`t folder that contains postmortem information
+
+"@
+
+    $j += Start-Job -name 'SMB Connectivity Error Check - SMB Connection Closed (Event 30823)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30823,$CaptureDate,([ConsoleColor]'Yellow'),$w
+
+
+    $eventlogs = (dir $Path\Node_*\System.EVTX).FullName
+
+    $w = @"
+
+WARNING: Dirty Shutdowns has beend detected. Please verify, if those were intended.
+`t There could be connectivity issues due to it.
+
+"@
+
+    $j += Start-Job -name 'Dirty Shutdown Error Check - (Event 41)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,41,$CaptureDate,([ConsoleColor]'Yellow'),$w
+    
     $null = $j | Wait-Job
     $j | sort Name |% {
 
@@ -5744,6 +5798,10 @@ function Show-SddcDiagnosticReport
     # Extract ZIP if neccesary
     $Path = Check-ExtractZip $Path
 
+    # Repror Output file
+    $ReportFileName = (Convert-Path .) + "\" + $Path.Trim('\').Split('\')[-1] + "-SDDCDiagnosticReport.txt"
+    Start-Transcript -Path $ReportFileName -NoClobber
+
     # Produce all reports?
     if ($Report.Count -eq 1 -and $Report[0] -eq [ReportType]::All) {
         $Report = [ReportType].GetEnumValues() |? { $_ -ne [ReportType]::All } | sort
@@ -5786,6 +5844,8 @@ function Show-SddcDiagnosticReport
         $td = (Get-Date) - $t0
         Write-Output ("Report $r took {0:N2} seconds" -f $td.TotalSeconds)
     }
+
+    Stop-Transcript
 }
 
 # DEPRECATED New-Alias -Value Get-SddcDiagnosticInfo -Name Test-StorageHealth # Original name when Jose started (CPSv1)
