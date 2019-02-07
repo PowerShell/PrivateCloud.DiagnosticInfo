@@ -5775,7 +5775,7 @@ function Show-SddcDiagnosticReport
 
         [parameter(Mandatory=$false)]
         [string]
-        $OutputFileName = ""
+        $OutputFile = ""
     )
 
     $Path = (gi $Path).FullName
@@ -5788,8 +5788,8 @@ function Show-SddcDiagnosticReport
     # Extract ZIP if neccesary
     $Path = Check-ExtractZip $Path
 
-    if($OutputFileName -ne ""){
-        Start-Transcript -Path $OutputFileName -NoClobber
+    if($OutputFile -ne ""){
+        Start-Transcript -Path $OutputFile -NoClobber
     }
 
     # Produce all reports?
