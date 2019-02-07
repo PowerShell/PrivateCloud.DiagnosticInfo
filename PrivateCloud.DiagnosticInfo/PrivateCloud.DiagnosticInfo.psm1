@@ -5095,45 +5095,33 @@ WARNING: the SMB Client is receiving RDMA connect errors. This is an error whose
     $j += Start-Job -name 'SMB Connectivity Error Check - RDMA Connect Failures (Event 30803)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30803,$CaptureDate,([ConsoleColor]'Yellow'),$w,@{'ConnectionType'='=2'}
 
     $w = @"
-
 WARNING: the SMB Client is receiving TCP/IP disconnects. Note that
-
 `t cluster node reboots are a natural & expected source of disconnects.
-
 "@
 
     $j += Start-Job -name 'SMB Connectivity Error Check -  TCP/IP Connect Failures (Event 30804)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30804,$CaptureDate,([ConsoleColor]'Yellow'),$w, @{'ConnectionType'='=1'}
 
     $w = @"
-
 WARNING: the SMB Client is receiving TCP/IP connect errors. 
-
-Please inspect especially if in the Last5 bucket.
-
+`t Please inspect especially if in the Last5 bucket.
 "@
 
     $j += Start-Job -name 'SMB Connectivity Error Check - TCP/IP Connect Failures (Event 30803)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30803,$CaptureDate,([ConsoleColor]'Yellow'),$w, @{'ConnectionType'='=1'}
 
     $w = @"
-
-WARNING: the SMB Client is  experiencing long time to complete IO.
-
-SMB will close diconnected channels
-
+WARNING: the SMB Client is experiencing long time to complete IO.
+`t SMB will close disconnected channels. If you are seeing this in quick 
+`t succession with SMB IO Timeouts (Event 30809), look for CsvIoTM 
+`t livedumps with close timestamp.
 "@
 
     $j += Start-Job -name 'SMB Connectivity Error Check - SMB IO Timeouts (Event 30809)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30809,$CaptureDate,([ConsoleColor]'Yellow'),$w
 
     $w = @"
-
-WARNING: the SMB Client has disconnect channels because IO took long time.
-
+WARNING: the SMB Client has disconnected channels because IO took long time.
 `t Something is stuck somewhere in the stack, and we need a LiveDump to 
-
 `t figure it out. Look for CsvIoTM livedumps with close timestamp in the 
-
 `t folder that contains postmortem information
-
 "@
 
     $j += Start-Job -name 'SMB Connectivity Error Check - SMB Connection Closed (Event 30823)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,30823,$CaptureDate,([ConsoleColor]'Yellow'),$w
@@ -5142,13 +5130,11 @@ WARNING: the SMB Client has disconnect channels because IO took long time.
     $eventlogs = (dir $Path\Node_*\System.EVTX).FullName
 
     $w = @"
-
-WARNING: Dirty Shutdowns has beend detected. Please verify, if those were intended.
+WARNING: Dirty Shutdowns have been detected. Please verify if those were intended.
 `t There could be connectivity issues due to it.
-
 "@
 
-    $j += Start-Job -name 'Dirty Shutdown Error Check - (Event 41)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,41,$CaptureDate,([ConsoleColor]'Yellow'),$w
+    $j += Start-Job -name 'Dirty Shutdown Error Check - System Log (Event 41)' -InitializationScript $CommonFunc -ScriptBlock $ReportTableBlock -ArgumentList $eventlogs,41,$CaptureDate,([ConsoleColor]'Yellow'),$w
     
     $null = $j | Wait-Job
     $j | sort Name |% {
@@ -5785,7 +5771,11 @@ function Show-SddcDiagnosticReport
 
         [parameter(Mandatory=$false)]
         [ReportType[]]
-        $Report = [ReportType]::All
+        $Report = [ReportType]::All,
+
+        [parameter(Mandatory=$false)]
+        [string]
+        $OutputFileName = ""
     )
 
     $Path = (gi $Path).FullName
@@ -5798,9 +5788,9 @@ function Show-SddcDiagnosticReport
     # Extract ZIP if neccesary
     $Path = Check-ExtractZip $Path
 
-    # Repror Output file
-    $ReportFileName = (Convert-Path .) + "\" + $Path.Trim('\').Split('\')[-1] + "-SDDCDiagnosticReport.txt"
-    Start-Transcript -Path $ReportFileName -NoClobber
+    if($OutputFileName -ne ""){
+        Start-Transcript -Path $OutputFileName -NoClobber
+    }
 
     # Produce all reports?
     if ($Report.Count -eq 1 -and $Report[0] -eq [ReportType]::All) {
@@ -5845,7 +5835,9 @@ function Show-SddcDiagnosticReport
         Write-Output ("Report $r took {0:N2} seconds" -f $td.TotalSeconds)
     }
 
-    Stop-Transcript
+    if($OutputFileName -ne ""){
+        Stop-Transcript
+    }
 }
 
 # DEPRECATED New-Alias -Value Get-SddcDiagnosticInfo -Name Test-StorageHealth # Original name when Jose started (CPSv1)
