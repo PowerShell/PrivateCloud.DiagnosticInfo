@@ -5774,9 +5774,8 @@ function Show-SddcDiagnosticReport
         $Report = [ReportType]::All,
 
         [parameter(Mandatory=$false)]
-        [ValidateScript({Test-Path -isValid $_})]
         [string]
-        $OutputFile = ""
+        $OutputFile
     )
 
     $Path = (gi $Path).FullName
@@ -5789,7 +5788,9 @@ function Show-SddcDiagnosticReport
     # Extract ZIP if neccesary
     $Path = Check-ExtractZip $Path
 
-    Start-Transcript -Path $OutputFile -NoClobber
+    if(($OutputFile) -and (Test-Path -IsValid $OutputFile)){
+        Start-Transcript -Path $OutputFile -NoClobber
+    }
 
     # Produce all reports?
     if ($Report.Count -eq 1 -and $Report[0] -eq [ReportType]::All) {
@@ -5834,7 +5835,9 @@ function Show-SddcDiagnosticReport
         Write-Output ("Report $r took {0:N2} seconds" -f $td.TotalSeconds)
     }
 
-    Stop-Transcript
+    if(($OutputFile) -and (Test-Path -IsValid $OutputFile)){
+        Stop-Transcript
+    }
 }
 
 # DEPRECATED New-Alias -Value Get-SddcDiagnosticInfo -Name Test-StorageHealth # Original name when Jose started (CPSv1)
