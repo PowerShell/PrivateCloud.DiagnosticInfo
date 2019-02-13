@@ -5775,7 +5775,10 @@ function Show-SddcDiagnosticReport
 
         [parameter(Mandatory=$false)]
         [string]
-        $OutputFile
+        $OutputFile,
+
+        [parameter(Mandatory=$false)]
+        [switch] $NoClobber = $true 
     )
 
     $Path = (gi $Path).FullName
@@ -5788,8 +5791,8 @@ function Show-SddcDiagnosticReport
     # Extract ZIP if neccesary
     $Path = Check-ExtractZip $Path
 
-    if(($OutputFile) -and (Test-Path -IsValid $OutputFile)){
-        Start-Transcript -Path $OutputFile -NoClobber
+    if($OutputFile){
+        Start-Transcript -Path $OutputFile -NoClobber:$NoClobber
     }
 
     # Produce all reports?
@@ -5835,7 +5838,7 @@ function Show-SddcDiagnosticReport
         Write-Output ("Report $r took {0:N2} seconds" -f $td.TotalSeconds)
     }
 
-    if(($OutputFile) -and (Test-Path -IsValid $OutputFile)){
+    if($OutputFile){
         Stop-Transcript
     }
 }
