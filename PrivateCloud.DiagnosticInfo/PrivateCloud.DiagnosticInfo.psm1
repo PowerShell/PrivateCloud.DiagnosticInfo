@@ -1916,7 +1916,7 @@ function Get-SddcDiagnosticInfo
                 # _C_ token will be replaced with node fqdn for cimsession/computername callouts
                 # _N_ token will be replaced with node non-fqdn
                 $CmdsToLog = 'Get-HotFix -ComputerName _C_',
-                                'Get-NetAdapter -CimSession _C_',
+                                'Get-NetAdapter -CimSession _C_ | Select-Object ifName, ifDesc, ifIndex, Status, MACAddress, LinkSpeed, PSComputerName, PnPDeviceID, DriverName, DriverVersion, MtuSize, Hidden, FullDuplex, Speed, NdisVersion',
                                 'Get-NetAdapterAdvancedProperty -CimSession _C_',
                                 'Get-NetAdapterBinding -CimSession _C_',
                                 'Get-NetAdapterChecksumOffload -CimSession _C_',
