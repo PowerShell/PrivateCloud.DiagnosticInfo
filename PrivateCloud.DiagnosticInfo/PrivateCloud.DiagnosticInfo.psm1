@@ -695,11 +695,11 @@ function Start-CopyJob(
                         $null = md $Destination -Force -ErrorAction Continue
                     }
                 }
-				
+
                 start-job -Name "Copy $($parent.Name) $($_.Location)" -ArgumentList $logs,$Destination,$Delete {
 
                     param($logs,$Destination,$Delete)
-					
+
                     $logs |% {
                         # allow errors to propagte for triage
                         Copy-Item -Recurse $_ $Destination -Force -ErrorAction Continue
@@ -707,28 +707,28 @@ function Start-CopyJob(
                             Remove-Item -Recurse $_ -Force -ErrorAction Continue
                         }
                     }
-                }				
+                }
             }
         }
     }
 }
 
-# 
-# Utility wrapper for invoking commands by opening sessions  
-# for each of the cluster nodes and preserving the session  
-# to be deleted after use. 
-# 
+#
+# Utility wrapper for invoking commands by opening sessions
+# for each of the cluster nodes and preserving the session
+# to be deleted after use.
+#
 
-function Invoke-SddcCommonCommand ( 
-    [string[]] $ClusterNodes = @(), 
+function Invoke-SddcCommonCommand (
+    [string[]] $ClusterNodes = @(),
     [string] $JobName,
-    [scriptblock] $InitBlock, 
-    [scriptblock] $ScriptBlock 
-    ) 
-{ 
-	$Job        = @() 
-	$Sessions   = @() 
-	$SessionIds = @() 
+    [scriptblock] $InitBlock,
+    [scriptblock] $ScriptBlock
+    )
+{
+	$Job        = @()
+	$Sessions   = @()
+	$SessionIds = @()
 
 	if ($ClusterNodes.Count -eq 0)
 	{
@@ -738,14 +738,14 @@ function Invoke-SddcCommonCommand (
 	{
 		$Sessions = New-PSSession -ComputerName $ClusterNodes
 	}
-	
+
     Invoke-Command -Session $Sessions $InitBlock
-    $Job = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock 
+    $Job = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock
     $SessionIds = $Sessions.Id
 
-	$Job | Add-Member -NotePropertyName ActiveSessions -NotePropertyValue $SessionIds  
-	
-	return $Job 
+	$Job | Add-Member -NotePropertyName ActiveSessions -NotePropertyValue $SessionIds
+
+	return $Job
 }
 
 #
@@ -785,26 +785,26 @@ function Get-NodeList(
     if ($Nodes.Count) {
         $NodesToPing += $Nodes |% { New-Object -TypeName PSObject -Property @{ "Name" = $_; "State" = "Down"; "Type" = "ManuallySpecifiedMachine" }}
     }
-	
-	
+
+
 	# Now try to contact the cluster - first via name then by every name from $Nodes.Count above if that fails, until we succesfully contact cluster
-	# Add any nodes missing from $NodesToPing / Replace objects in the list with their real objects 
+	# Add any nodes missing from $NodesToPing / Replace objects in the list with their real objects
 	$ClusterNodes = $null
-	
+
 	if ($Cluster -ne "" -and $Cluster -ne $null)
 	{
 		$ClusterNodes = Get-ClusterNode -Cluster $Cluster -ErrorAction SilentlyContinue
 	}
-	
+
 	$NodeIdx = 0;
 	while ($ClusterNodes -eq $null -and $NodeIdx -lt $NodesToPing.Count)
 	{
-		# we failed to get it, iterate through the nodes 
+		# we failed to get it, iterate through the nodes
 		$ClusterNodes = Get-ClusterNode -Cluster $NodesToPing[$NodeIdx].Name -ErrorAction SilentlyContinue
-		
+
 		$NodeIdx++
 	}
-	
+
 	if ($ClusterNodes -ne $null)
 	{
 		if ($Nodes.Count)
@@ -813,7 +813,7 @@ function Get-NodeList(
 			for ($i = 0; $i -lt $ClusterNodes.Count; $i++)
 			{
 				$found = $false
-				
+
 				for ($j = 0; $j -lt $NodesToPing.Count; $j++)
 				{
 					if ($NodesToPing[$j].Name -eq $ClusterNodes[$i].Name)
@@ -823,7 +823,7 @@ function Get-NodeList(
 						break
 					}
 				}
-				
+
 				if ($found -ne $true)
 				{
 					$NodesToPing += @($ClusterNodes[$i])
@@ -835,9 +835,9 @@ function Get-NodeList(
 			$NodesToPing = @($ClusterNodes)
 		}
 	}
-    
-	
-	# Try to ping the nodes 
+
+
+	# Try to ping the nodes
 
 	if ($NodesToPing.Count) {
 
@@ -856,30 +856,30 @@ function Get-NodeList(
 		$null = Wait-Job $j
 		$PingResults += $j | Receive-Job
 		$j | Remove-Job
-		
+
 		# For any notes that are "fake objects" (Type=Machine instead of Type=Node) mark them up
 		# Copy from NodesToPing to SuccesfullyPingedNodes if they're contained in PingResults
-		# Doing this because the job mutates the object 
+		# Doing this because the job mutates the object
 		for ($i = 0; $i -lt $PingResults.Count; $i++)
-		{ 				
+		{
 			for ($j = 0; $j -lt $NodesToPing.Count; $j++)
 			{
 				if ($NodesToPing[$j].Name -eq $PingResults[$i].Name)
-				{					
+				{
 					$SuccesfullyPingedNodes += @($NodesToPing[$j])
 				}
-			}		
+			}
 		}
-		
+
 	}
-	
+
     if ($Filter) {
 		$NodesToReturn = $SuccesfullyPingedNodes
     } else {
         # unfiltered, return all
         $NodesToReturn = $NodesToPing
     }
-	
+
 
     return $NodesToReturn
 }
@@ -1375,7 +1375,7 @@ function Get-SddcDiagnosticInfo
         $NodeList = Get-NodeList -Cluster $ClusterName -Filter
 
         $AccessNode = Get-ClusterAccessNode @($NodeList)
-		
+
 		if ($AccessNode -ne $null)
 		{
 			$AccessNode = $AccessNode + "." + (Get-Cluster -Name $AccessNode).Domain
@@ -1496,7 +1496,7 @@ function Get-SddcDiagnosticInfo
 
     # Note: this should be unnecessary as soon as we have the discipline of Join-Path flushed through
     if (-not $Path.EndsWith("\")) { $Path = $Path + "\" }
-	
+
     ###
     # Now handle read case
     #
@@ -1888,18 +1888,18 @@ function Get-SddcDiagnosticInfo
                 $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -Health -UseLocalTime
             }
         }
-			
+
         $JobStatic += $ClusterNodes.Name |% {
-		
+
 			$NodeName = $_
-			
+
             Invoke-SddcCommonCommand -JobName "System Info: $NodeName" -InitBlock $CommonFunc -ScriptBlock {
 
                 $Node = "$using:NodeName"
                 if ($using:ClusterDomain.Length) {
                     $Node += ".$using:ClusterDomain"
                 }
-				
+
                 $LocalNodeDir = Get-NodePath $using:Path $using:NodeName
 
                 # Text-only conventional commands
@@ -2017,7 +2017,7 @@ function Get-SddcDiagnosticInfo
                         else {
                             $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeSystemRootPath\LiveKernelReports\*.dmp")
                         }
-                        
+
                         $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue
                     }
                     catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $using:NodeName" }
@@ -2349,12 +2349,12 @@ function Get-SddcDiagnosticInfo
             Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $Subsystem |
                 Export-Clixml ($Path + "GetStorageEnclosure.XML") }
         catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
-		
+
 		# Undo changes as this is failing in AzureStack environment.
 		# SDDC cim objects
-		
+
         #Show-Update "SDDC Cim Objects"
-		
+
         #foreach($objType in @("Drive","Server","Volume","Cluster","VirtualMachine","VirtualSwitch"))
         #{
         #    try {
@@ -2412,7 +2412,7 @@ function Get-SddcDiagnosticInfo
         ####
 
         if ($JobCopyOut.Count -or $JobCopyOutNoDelete.Count) {
-		
+
             Show-Update "Completing jobs with remote copyout ..." -ForegroundColor Green
             Show-WaitChildJob ($JobCopyOut + $JobCopyOutNoDelete) 120
             Show-Update "Starting remote copyout ..."
@@ -2427,7 +2427,7 @@ function Get-SddcDiagnosticInfo
             Receive-Job $JobCopy
             Remove-Job ($JobCopyOut + $JobCopyOutNoDelete)
             Remove-Job $JobCopy
-			
+
             if (Get-Member -InputObject $JobCopyOut ActiveSessions)
             {
                  Remove-PSSession -Id $JobCopyOut.ActiveSessions
@@ -2444,7 +2444,7 @@ function Get-SddcDiagnosticInfo
         Show-WaitChildJob $JobStatic 30
         Receive-Job $JobStatic
         Remove-Job $JobStatic
-		
+
         if (Get-Member -InputObject $JobStatic ActiveSessions)
         {
                 Remove-PSSession -Id $JobStatic.ActiveSessions
@@ -2737,6 +2737,23 @@ function Get-SddcDiagnosticInfo
             }
             catch {
                 Show-Warning "Could not gather Get-StorageDiagnosticInfo (cluster down and/or shared storage)`nError = $($_)"
+            }
+        } else {
+
+            try {
+                $destinationPath = Join-Path -Path $Path -ChildPath 'StorageDiagnosticInfo'
+                if (Test-Path -Path $destinationPath) {
+                    Remove-Item -Path $destinationPath -Recurse -Force
+                }
+                $null = New-Item -Path $destinationPath -ItemType Directory
+                $clusterSubsystem = (Get-StorageSubSystem |? Model -eq 'Clustered Windows Storage').FriendlyName
+
+                if ($IncludeLiveDump) {
+                    Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
+                }
+            }
+            catch {
+                Show-Warning "Could not gather Get-StorageDiagnosticInfo for S2D (cluster down and/or shared storage)`nError = $($_)"
             }
         }
 
@@ -3617,7 +3634,7 @@ function Show-StorageCounters
 	$cachetable=new-object System.Data.DataTable "$tabName"
 
 	#Define Columns
-	$col1 = New-Object system.Data.DataColumn Node,([string]) 
+	$col1 = New-Object system.Data.DataColumn Node,([string])
 	$col2 = New-Object system.Data.DataColumn CacheHits,([string])
 	$col3 = New-Object system.Data.DataColumn CacheMiss,([string])
 	$col4 = New-Object system.Data.DataColumn DiskReads,([string])
@@ -3630,14 +3647,14 @@ function Show-StorageCounters
 	$tabName="Error Table"
 	$errtable=new-object System.Data.DataTable "$tabName"
 
-	$col9 = New-Object system.Data.DataColumn Node,([string]) 
+	$col9 = New-Object system.Data.DataColumn Node,([string])
 	$col10 = New-Object system.Data.DataColumn WriteError,([string])
 	$col11 = New-Object system.Data.DataColumn WriteMedia,([string])
 	$col12 = New-Object system.Data.DataColumn ReadTimeout,([string])
 	$col13 = New-Object system.Data.DataColumn ReadMedia,([string])
 
 	#Add the Columns
-	$cachetable.columns.add($col1) 
+	$cachetable.columns.add($col1)
 	$cachetable.columns.add($col2)
 	$cachetable.columns.add($col3)
 	$cachetable.columns.add($col4)
@@ -3646,7 +3663,7 @@ function Show-StorageCounters
 	$cachetable.columns.add($col7)
 	$cachetable.columns.add($col8)
 
-	$errtable.columns.add($col9) 
+	$errtable.columns.add($col9)
 	$errtable.columns.add($col10)
 	$errtable.columns.add($col11)
 	$errtable.columns.add($col12)
@@ -3657,7 +3674,7 @@ function Show-StorageCounters
 	$table=new-object System.Data.DataTable "$tabName"
 
 	#Define Columns
-	$col1 = New-Object system.Data.DataColumn Node,([string]) 
+	$col1 = New-Object system.Data.DataColumn Node,([string])
 	$col2 = New-Object system.Data.DataColumn CSVReadIOPS,([string])
 	$col3 = New-Object system.Data.DataColumn CSVReadLatency,([string])
 	$col4 = New-Object system.Data.DataColumn CSVWriteIOPS,([string])
@@ -3665,7 +3682,7 @@ function Show-StorageCounters
 
 	$tabName="SBL Perf"
 	$sbltable=new-object System.Data.DataTable "$tabName"
-	$col6 = New-Object system.Data.DataColumn Node,([string]) 
+	$col6 = New-Object system.Data.DataColumn Node,([string])
 	$col7 = New-Object system.Data.DataColumn SBLReadIOPS,([string])
 	$col8 = New-Object system.Data.DataColumn SBLReadLatency,([string])
 	$col9 = New-Object system.Data.DataColumn SBLWriteIOPS,([string])
@@ -3676,13 +3693,13 @@ function Show-StorageCounters
 	$col14 = New-Object system.Data.DataColumn SBLRemoteWrite,([string])
 
 	#Add the Columns
-	$table.columns.add($col1) 
+	$table.columns.add($col1)
 	$table.columns.add($col2)
 	$table.columns.add($col3)
 	$table.columns.add($col4)
 	$table.columns.add($col5)
 
-	$sbltable.columns.add($col6) 
+	$sbltable.columns.add($col6)
 	$sbltable.columns.add($col7)
 	$sbltable.columns.add($col8)
 	$sbltable.columns.add($col9)
@@ -3696,11 +3713,11 @@ function Show-StorageCounters
 	$ioprofiletable=new-object System.Data.DataTable "$tabName"
 
 	#Define Columns
-	$col1 = New-Object system.Data.DataColumn Node,([string]) 
+	$col1 = New-Object system.Data.DataColumn Node,([string])
 	$col2 = New-Object system.Data.DataColumn IOProfileRead,([string])
 	$col3 = New-Object system.Data.DataColumn IOProfileWrites,([string])
 
-	$ioprofiletable.columns.add($col1) 
+	$ioprofiletable.columns.add($col1)
 	$ioprofiletable.columns.add($col2)
 	$ioprofiletable.columns.add($col3)
 
@@ -3717,7 +3734,7 @@ function Show-StorageCounters
 		$csvwritelat=$d[$sample].CounterSamples | where { $_.path -Like "*cluster csvfs(_total)\avg. sec/write"}
 		$csvreadlat=$d[$sample].CounterSamples | where { $_.path -Like "*cluster csvfs(_total)\avg. sec/read"}
 		$csvnodes=$csvreads.Path
-		
+
 		$sblreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\read/sec*"}
 		$sblwrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\writes/sec*"}
 		$sbllocalreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\Local: read/sec*"}
@@ -3732,7 +3749,7 @@ function Show-StorageCounters
 		$cachemiss=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\cache miss reads/sec*"}
 		$diskreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\disk reads/sec"}
 		$directreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\direct reads/sec"}
-			
+
 		$diskwrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\disk writes/sec*"}
 		$directwrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\direct writes/sec*"}
 		$cachewrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\cache writes/sec"}
@@ -3742,12 +3759,12 @@ function Show-StorageCounters
 		$readtimeout=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\read errors timeout*"}
 		$readmedia=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\read errors media*"}
 		$cachenodes=$cachehits.Path
-		
-		
+
+
 		$diskioreads=$d[$sample].CounterSamples | where { $_.path -like "*cluster storage hybrid disks io profile(_total)\reads/sec total*" }
 		$diskiowrites=$d[$sample].CounterSamples | where { $_.path -like "*cluster storage hybrid disks io profile(_total)\writes/sec total*" }
 		$ioprofilenodes = $diskioreads.Path
-		
+
 		$csvreadtotal=0
 		$csvwritetotal=0
 		$sblreadtotal=0
@@ -3779,14 +3796,14 @@ function Show-StorageCounters
 			$row.Node = $csvnodes[$index].Substring(2,$pos-2)
 			$row.CSVReadIOPS = $([math]::Round($csvreads[$index].cookedValue,0))
 			$row.CSVReadLatency = $([math]::Round($csvreadlat[$index].cookedValue*1000,2))
-			$row.CSVWriteIOPS = $([math]::Round($csvwrites[$index].cookedValue,0)) 
+			$row.CSVWriteIOPS = $([math]::Round($csvwrites[$index].cookedValue,0))
 			$row.CSVWriteLatency = $([math]::Round($csvwritelat[$index].cookedValue*1000,2))
 			$csvreadtotal += $row.CSVReadIOPS
 			$csvwritetotal+= $row.CSVWriteIOPS
 			$table.Rows.Add($row)
 			$index+=1
 		}
-		
+
 		$index=0
 		foreach($node in $sblnodes) {
 			$row = $sbltable.NewRow()
@@ -3794,13 +3811,13 @@ function Show-StorageCounters
 			$row.Node = $sblnodes[$index].Substring(2,$pos-2)
 			$row.SBLReadIOPS = $([math]::Round($sblreads[$index].cookedValue,0))
 			$row.SBLReadLatency = $([math]::Round($sblreadlat[$index].cookedValue*1000,2))
-			$row.SBLWriteIOPS = $([math]::Round($sblwrites[$index].cookedValue,0)) 
+			$row.SBLWriteIOPS = $([math]::Round($sblwrites[$index].cookedValue,0))
 			$row.SBLWriteLatency = $([math]::Round($sblwritelat[$index].cookedValue*1000,2))
-			$row.SBLLocalRead = $([math]::Round($sbllocalreads[$index].cookedValue,0)) 
-			$row.SBLLocalWrite = $([math]::Round($sbllocalwrites[$index].cookedValue,0)) 
-			$row.SBLRemoteRead = $([math]::Round($sblremotereads[$index].cookedValue,0)) 
-			$row.SBLRemoteWrite = $([math]::Round($sblremotewrites[$index].cookedValue,0)) 
-			
+			$row.SBLLocalRead = $([math]::Round($sbllocalreads[$index].cookedValue,0))
+			$row.SBLLocalWrite = $([math]::Round($sbllocalwrites[$index].cookedValue,0))
+			$row.SBLRemoteRead = $([math]::Round($sblremotereads[$index].cookedValue,0))
+			$row.SBLRemoteWrite = $([math]::Round($sblremotewrites[$index].cookedValue,0))
+
 			$sblreadtotal+=$row.SBLReadIOPS
 			$sblwritetotal+=$row.SBLWriteIOPS
 
@@ -3808,7 +3825,7 @@ function Show-StorageCounters
 			$sbltable.Rows.Add($row)
 			$index+=1
 		}
-		
+
 		$index=0
 		foreach($node in $cachenodes) {
 			$row = $cachetable.NewRow();
@@ -3817,14 +3834,14 @@ function Show-StorageCounters
 
 			$row.CacheHits = $([math]::Round($cachehits[$index].cookedValue,0))
 			$row.CacheMiss = $([math]::Round($cachemiss[$index].cookedValue,0))
-			$row.DiskReads = $([math]::Round($diskreads[$index].cookedValue,0)) 
+			$row.DiskReads = $([math]::Round($diskreads[$index].cookedValue,0))
 			$row.DirectReads = $([math]::Round($directreads[$index].cookedValue,0))
 			$row.DiskWrites = $([math]::Round($diskwrites[$index].cookedValue,0))
 			$row.DirectWrites = $([math]::Round($directwrites[$index].cookedValue,0))
-			$row.CacheWrites = $([math]::Round($cachewrites[$index].cookedValue,0)) 
+			$row.CacheWrites = $([math]::Round($cachewrites[$index].cookedValue,0))
 			#Add the row to the table
 			$cachetable.Rows.Add($row)
-			
+
 			$cachehittotal+=$row.CacheHits
 			$cachemisstotal+=$row.CacheMiss
 			$diskreadtotal+=$row.DiskReads
@@ -3847,24 +3864,24 @@ function Show-StorageCounters
 
 			$index+=1
 		}
-		
+
 		$index=0
 		foreach($node in $ioprofilenodes) {
 			$row = $ioprofiletable.NewRow()
 			$pos = $ioprofilenodes[$index].IndexOf("\",2)
 			$row.Node = $ioprofilenodes[$index].Substring(2,$pos-2)
 			$row.IOProfileRead = $([math]::Round($diskioreads[$index].cookedValue,0))
-			$row.IOProfileWrites = $([math]::Round($diskiowrites[$index].cookedValue,0)) 
+			$row.IOProfileWrites = $([math]::Round($diskiowrites[$index].cookedValue,0))
 
 			$ioprofilereadtotal+=$row.IOProfileRead
 			$ioprofilewritetotal+=$row.IOProfileWrites
-			
+
 			#Add the row to the table
 			$ioprofiletable.Rows.Add($row)
 			$index+=1
 		}
 
-		# add Total row 
+		# add Total row
 		$row = $table.NewRow()
 		$row.Node = "Total"
 		$row.CSVReadIOPS = $csvreadtotal
@@ -3892,7 +3909,7 @@ function Show-StorageCounters
 		$row.CacheWrites = $cachewritetotal
 		#Add the row to the table
 		$cachetable.Rows.Add($row)
-		
+
 		$row = $ioprofiletable.NewRow()
 		$row.Node = "Total"
 		$row.IOProfileRead = $ioprofilereadtotal
@@ -3918,7 +3935,7 @@ function Show-StorageCounters
 		if ($sample -eq $d.Count) {
 			$sample=0
 		}
-		
+
 		if ($delta -ne 0) {
 			break
 		}
@@ -3945,29 +3962,29 @@ function Get-SpacesTimeline
         [string]
 
         $Path,
-		
+
 		[parameter(Mandatory=$true)]
 
         [ValidateNotNullOrEmpty()]
 
         [string]
-		
+
 		$VirtualDiskId
-		
+
         )
- 
+
 		$VirtualDiskFilePath = Join-Path $Path "GetVirtualDisk.XML"
 		$ClusterNodeFilePath = Join-Path $Path "GetClusterNode.XML"
-		
+
 		if ((-not (Test-Path $VirtualDiskFilePath)) -or (-not (Test-Path $ClusterNodeFilePath)))
 		{
 			Write-Error "Path is not valid or collection files are not present. Please check and try again: $Path"
 			return
 		}
-		
+
         $VirtualDisks = Import-ClixmlIf ($VirtualDiskFilePath)
         $ClusterNodes = Import-ClixmlIf ($ClusterNodeFilePath)
-		
+
         $OperationalLog = "Microsoft-Windows-StorageSpaces-Driver-Operational.EVTX"
         $DiagnosticLog  = "Microsoft-Windows-StorageSpaces-Driver-Diagnostic.EVTX"
 
@@ -3981,20 +3998,20 @@ function Get-SpacesTimeline
 
             foreach ($VirtualDisk in $VirtualDisks)
             {
-                $id = $VirtualDisk.ObjectId.Split(":")[2].Split("}")[1] + "}"				
+                $id = $VirtualDisk.ObjectId.Split(":")[2].Split("}")[1] + "}"
 
 				if ($VirtualDiskId -ne $id.Trim("{}"))
 				{
 					continue;
 				}
-				
+
                 $eventFilter = "EventID=1008 or EventID=1009 or EventID=1021 or EventID=1022"
 
 			    $query = "*[System[($eventFilter)]] and *[EventData[Data[@Name='Id'] and (Data='$id')]]"
 
                 $events = Get-WinEvent -Path $DiagnosticLogPath -FilterXPath $query -ErrorAction SilentlyContinue
                 $events | % { $_ | Add-Member NodeName $nodeName}
-			
+
                 if ($events)
                 {
                     $eventshash[$id] += $events;
@@ -4004,9 +4021,9 @@ function Get-SpacesTimeline
 
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Windows.Forms.DataVisualization
-		
+
 		$Title = "Storage Spaces State Timeline"
-		
+
 		$chart = New-object Windows.Forms.DataVisualization.Charting.Chart
 		$chart.Anchor = [Windows.Forms.AnchorStyles]::Bottom -bor
 						[Windows.Forms.AnchorStyles]::Right -bor
@@ -4045,22 +4062,22 @@ function Get-SpacesTimeline
 		$chartarea.AxisY.MinorGrid.LineDashStyle = [Windows.Forms.DataVisualization.Charting.ChartDashStyle]::Dot
 
 		$chart.ChartAreas.Add($chartArea)
-			
+
 		foreach ($key in $eventshash.Keys)
-		{	
+		{
 			if ($key.Trim("{}") -ne $VirtualDiskId)
 			{
 				continue;
 			}
-			
+
 			$eventsHashSortTime = $eventshash[$key] | sort TimeCreated
-	
+
 			foreach ($i in $eventsHashSortTime)
 			{
-				
+
 				$point = New-Object Windows.Forms.DataVisualization.Charting.DataPoint
 				$point.Color = [Drawing.Color]::Green
-				
+
 				if ($i.Id -eq 1008)
 				{
 					$startTime = $i.TimeCreated
@@ -4073,7 +4090,7 @@ function Get-SpacesTimeline
 					$endTime = $i.TimeCreated
 					$startTime = $null
 				}
-				
+
 				if ($i.Id -eq 1021)
 				{
 					$value = 20
@@ -4085,7 +4102,7 @@ function Get-SpacesTimeline
 					$point.Color = [Drawing.Color]::Red
 					$chart.Series[$seriesName].Points.Add($point)
 				}
-				
+
 				if ($i.Id -eq 1021)
 				{
 					$value = 20
@@ -4097,11 +4114,11 @@ function Get-SpacesTimeline
 					$point.Color = [Drawing.Color]::Red
 					$chart.Series[$seriesName].Points.Add($point)
 				}
-				
+
 				$chart.Series[$seriesName].ChartType = [Windows.Forms.DataVisualization.Charting.SeriesChartType]::Line
 				$chart.Series[$seriesName].XValueType = [Windows.Forms.DataVisualization.Charting.ChartValueType]::DateTime
 				$chart.Series[$seriesName].MarkerStyle = [Windows.Forms.DataVisualization.Charting.MarkerStyle]::Circle
-				
+
 				if ($startTime -ne $null)
 				{
 					$value = 10
@@ -4125,7 +4142,7 @@ function Get-SpacesTimeline
 				}
 			}
 		}
-		
+
 		$form = New-Object Windows.Forms.Form
 		$form.Text = "Storage Chart plotting space timeline"
 		$form.Width = 1100
@@ -4135,7 +4152,7 @@ function Get-SpacesTimeline
 
 		[void]$form.ShowDialog()
  }
- 
+
 #######
 #######
 #######
@@ -4573,7 +4590,7 @@ function Get-StorageLatencyReport
         $j += Invoke-SddcCommonCommand -InitBlock $CommonFunc -JobName $node -ScriptBlock {
 
 			$dofull = $false
-			
+
 			if ($using:ReportLevel -eq "Full")
 			{
 				$dofull = $true
@@ -5826,194 +5843,194 @@ Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
     'Set-SddcDiagnosticArchiveJobParameters',
     'Get-SddcDiagnosticArchiveJobParameters'
 # SIG # Begin signature block
-# MIIjewYJKoZIhvcNAQcCoIIjbDCCI2gCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIjhgYJKoZIhvcNAQcCoIIjdzCCI3MCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBd0urv00ddnWMU
-# EH+ojuqYzu0KBrNCcYM6hfLvpQjXBqCCDXYwggX0MIID3KADAgECAhMzAAABUMiP
-# lnfeTPFHAAAAAAFQMA0GCSqGSIb3DQEBCwUAMH4xCzAJBgNVBAYTAlVTMRMwEQYD
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAnic26C8P28qpt
+# ZJvHCyIfVmerMMj03XWQQvcDBhuuRqCCDYEwggX/MIID56ADAgECAhMzAAABUZ6N
+# j0Bxow5BAAAAAAFRMA0GCSqGSIb3DQEBCwUAMH4xCzAJBgNVBAYTAlVTMRMwEQYD
 # VQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNy
 # b3NvZnQgQ29ycG9yYXRpb24xKDAmBgNVBAMTH01pY3Jvc29mdCBDb2RlIFNpZ25p
-# bmcgUENBIDIwMTEwHhcNMTkwNTAyMjEzNzQ1WhcNMjAwNTAyMjEzNzQ1WjB0MQsw
+# bmcgUENBIDIwMTEwHhcNMTkwNTAyMjEzNzQ2WhcNMjAwNTAyMjEzNzQ2WjB0MQsw
 # CQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9u
 # ZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMR4wHAYDVQQDExVNaWNy
 # b3NvZnQgQ29ycG9yYXRpb24wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIB
-# AQCh2V193EGtu49awDgcJ1E8WB5mAim/gAFVpWUVOlk/haZWAiffh/k3W/GPhgYl
-# t2WH/FQS4BcGpeWRb2Wi4seOUWb5lbgIuUKBORF0iiEiPNMLueuD3PAChl/h3WE2
-# N1T8zsQg6UMrWtNRdby48xCI6zdD+26yNei3tOccrOWWullOehpBF5Z4vp8Xvq1n
-# ysaSkGgAZNaKrb3F6et3V5Tq+gJ0DaLm/TGxATcTJ1mrHJOx+cHorSIeGKKzwa19
-# uBuUbGALZx8Isus+3KiK7h2YcZ+AHU+qeUCLbKhU3l97Kg9E6/dvAMa+42/BXSmZ
-# 9+F3WfagixcbNWGaZA1Pn8mPAgMBAAGjggFzMIIBbzAfBgNVHSUEGDAWBgorBgEE
-# AYI3TAgBBggrBgEFBQcDAzAdBgNVHQ4EFgQUGxNB+9SPshuMPQ+xlMnFMiKVkDgw
-# RQYDVR0RBD4wPKQ6MDgxHjAcBgNVBAsTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEW
-# MBQGA1UEBRMNMjMwMDEyKzQ1NDEzNDAfBgNVHSMEGDAWgBRIbmTlUAXTgqoXNzci
-# tW2oynUClTBUBgNVHR8ETTBLMEmgR6BFhkNodHRwOi8vd3d3Lm1pY3Jvc29mdC5j
-# b20vcGtpb3BzL2NybC9NaWNDb2RTaWdQQ0EyMDExXzIwMTEtMDctMDguY3JsMGEG
-# CCsGAQUFBwEBBFUwUzBRBggrBgEFBQcwAoZFaHR0cDovL3d3dy5taWNyb3NvZnQu
-# Y29tL3BraW9wcy9jZXJ0cy9NaWNDb2RTaWdQQ0EyMDExXzIwMTEtMDctMDguY3J0
-# MAwGA1UdEwEB/wQCMAAwDQYJKoZIhvcNAQELBQADggIBADSrnbMt49ZGUc9KnW7S
-# VkzITe55ApMwgxE8jl06lBkMZLd9QatyUt6g2/0RG0boaMHpWzypk6pGDLRD5y/P
-# 6sj6fQYkrGihAw3W4ObLE3rrY8e5GPTrp/AlMFzsywHhD0+ETwgU8PuMvwQfB6ak
-# 2ejWP0M1a1tkyAHfEMEGKd7RVPRmlLX+kPkJoFPz/uSlKxXi/acGH1qISQc0pkRt
-# UE/ufrfpR+LlEOPg5aNZdAwIJAuDWInMeQM7kIoUTShSAJTzT58mrwVXgrfBbZnA
-# NpsC/v8/amGL43MhTN0V2sWBHZNL7N0X9Z2qldu+jj8HdaNRGQyuru1W+IjNV914
-# nk3qp9T/bZmy0elNYkCdNFjapARu6TZ0wwlEkvFW0HuzwtQ2gGDddGuhRFQRrdbU
-# 68ifXf3dtvUDb0Nr+tnw9k0mV4s9jkTraDBaSJV0v1ixeR6WEBgGcc+uL/rHnci8
-# 9cMcZqqcY8gGw0T1GpdDbWYLsYsqfPu5ZP4ga0kZa/ne7Bi3zu8XZ72kM893t5Ib
-# Z96/2xp2Q+I6vIVfZJ7fh7vQ3OcLAZDvN+y6jNq3jtnQSYHuhX+Du074DXhQeVTB
-# qTzBiuZPbnJhmI525u1GVoGemw0fqwk4cpeh3d1cDMN5eWlmqEdRwgaWozpj3a4I
-# BzxVWkDJSJ4ZEq2odtK6eoYcMIIHejCCBWKgAwIBAgIKYQ6Q0gAAAAAAAzANBgkq
-# hkiG9w0BAQsFADCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24x
-# EDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlv
-# bjEyMDAGA1UEAxMpTWljcm9zb2Z0IFJvb3QgQ2VydGlmaWNhdGUgQXV0aG9yaXR5
-# IDIwMTEwHhcNMTEwNzA4MjA1OTA5WhcNMjYwNzA4MjEwOTA5WjB+MQswCQYDVQQG
-# EwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwG
-# A1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSgwJgYDVQQDEx9NaWNyb3NvZnQg
-# Q29kZSBTaWduaW5nIFBDQSAyMDExMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIIC
-# CgKCAgEAq/D6chAcLq3YbqqCEE00uvK2WCGfQhsqa+laUKq4BjgaBEm6f8MMHt03
-# a8YS2AvwOMKZBrDIOdUBFDFC04kNeWSHfpRgJGyvnkmc6Whe0t+bU7IKLMOv2akr
-# rnoJr9eWWcpgGgXpZnboMlImEi/nqwhQz7NEt13YxC4Ddato88tt8zpcoRb0Rrrg
-# OGSsbmQ1eKagYw8t00CT+OPeBw3VXHmlSSnnDb6gE3e+lD3v++MrWhAfTVYoonpy
-# 4BI6t0le2O3tQ5GD2Xuye4Yb2T6xjF3oiU+EGvKhL1nkkDstrjNYxbc+/jLTswM9
-# sbKvkjh+0p2ALPVOVpEhNSXDOW5kf1O6nA+tGSOEy/S6A4aN91/w0FK/jJSHvMAh
-# dCVfGCi2zCcoOCWYOUo2z3yxkq4cI6epZuxhH2rhKEmdX4jiJV3TIUs+UsS1Vz8k
-# A/DRelsv1SPjcF0PUUZ3s/gA4bysAoJf28AVs70b1FVL5zmhD+kjSbwYuER8ReTB
-# w3J64HLnJN+/RpnF78IcV9uDjexNSTCnq47f7Fufr/zdsGbiwZeBe+3W7UvnSSmn
-# Eyimp31ngOaKYnhfsi+E11ecXL93KCjx7W3DKI8sj0A3T8HhhUSJxAlMxdSlQy90
-# lfdu+HggWCwTXWCVmj5PM4TasIgX3p5O9JawvEagbJjS4NaIjAsCAwEAAaOCAe0w
-# ggHpMBAGCSsGAQQBgjcVAQQDAgEAMB0GA1UdDgQWBBRIbmTlUAXTgqoXNzcitW2o
-# ynUClTAZBgkrBgEEAYI3FAIEDB4KAFMAdQBiAEMAQTALBgNVHQ8EBAMCAYYwDwYD
-# VR0TAQH/BAUwAwEB/zAfBgNVHSMEGDAWgBRyLToCMZBDuRQFTuHqp8cx0SOJNDBa
-# BgNVHR8EUzBRME+gTaBLhklodHRwOi8vY3JsLm1pY3Jvc29mdC5jb20vcGtpL2Ny
-# bC9wcm9kdWN0cy9NaWNSb29DZXJBdXQyMDExXzIwMTFfMDNfMjIuY3JsMF4GCCsG
-# AQUFBwEBBFIwUDBOBggrBgEFBQcwAoZCaHR0cDovL3d3dy5taWNyb3NvZnQuY29t
-# L3BraS9jZXJ0cy9NaWNSb29DZXJBdXQyMDExXzIwMTFfMDNfMjIuY3J0MIGfBgNV
-# HSAEgZcwgZQwgZEGCSsGAQQBgjcuAzCBgzA/BggrBgEFBQcCARYzaHR0cDovL3d3
-# dy5taWNyb3NvZnQuY29tL3BraW9wcy9kb2NzL3ByaW1hcnljcHMuaHRtMEAGCCsG
-# AQUFBwICMDQeMiAdAEwAZQBnAGEAbABfAHAAbwBsAGkAYwB5AF8AcwB0AGEAdABl
-# AG0AZQBuAHQALiAdMA0GCSqGSIb3DQEBCwUAA4ICAQBn8oalmOBUeRou09h0ZyKb
-# C5YR4WOSmUKWfdJ5DJDBZV8uLD74w3LRbYP+vj/oCso7v0epo/Np22O/IjWll11l
-# hJB9i0ZQVdgMknzSGksc8zxCi1LQsP1r4z4HLimb5j0bpdS1HXeUOeLpZMlEPXh6
-# I/MTfaaQdION9MsmAkYqwooQu6SpBQyb7Wj6aC6VoCo/KmtYSWMfCWluWpiW5IP0
-# wI/zRive/DvQvTXvbiWu5a8n7dDd8w6vmSiXmE0OPQvyCInWH8MyGOLwxS3OW560
-# STkKxgrCxq2u5bLZ2xWIUUVYODJxJxp/sfQn+N4sOiBpmLJZiWhub6e3dMNABQam
-# ASooPoI/E01mC8CzTfXhj38cbxV9Rad25UAqZaPDXVJihsMdYzaXht/a8/jyFqGa
-# J+HNpZfQ7l1jQeNbB5yHPgZ3BtEGsXUfFL5hYbXw3MYbBL7fQccOKO7eZS/sl/ah
-# XJbYANahRr1Z85elCUtIEJmAH9AAKcWxm6U/RXceNcbSoqKfenoi+kiVH6v7RyOA
-# 9Z74v2u3S5fi63V4GuzqN5l5GEv/1rMjaHXmr/r8i+sLgOppO6/8MO0ETI7f33Vt
-# Y5E90Z1WTk+/gFcioXgRMiF670EKsT/7qMykXcGhiJtXcVZOSEXAQsmbdlsKgEhr
-# /Xmfwb1tbWrJUnMTDXpQzTGCFVswghVXAgEBMIGVMH4xCzAJBgNVBAYTAlVTMRMw
-# EQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVN
-# aWNyb3NvZnQgQ29ycG9yYXRpb24xKDAmBgNVBAMTH01pY3Jvc29mdCBDb2RlIFNp
-# Z25pbmcgUENBIDIwMTECEzMAAAFQyI+Wd95M8UcAAAAAAVAwDQYJYIZIAWUDBAIB
-# BQCgga4wGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEO
-# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEIHlmfVofo2NgJI2Gagr9Nnw4
-# YDWwa1X02HzHqLUrvS8xMEIGCisGAQQBgjcCAQwxNDAyoBSAEgBNAGkAYwByAG8A
-# cwBvAGYAdKEagBhodHRwOi8vd3d3Lm1pY3Jvc29mdC5jb20wDQYJKoZIhvcNAQEB
-# BQAEggEARkcGGfx3CRWcB3qpBsmydaUHnEUS0weqEmq6dsaOLVj4ItmlYxfUOH7T
-# uXSwxVdFp53LfgAxgNoBC030g9ucm4GIJONYG7YrBCfPYqJkTiR1PRTvNQX9/53C
-# uJxXg6lwxPzS76184g4oBCYYi/sOoFbz66scuX+qBOJY5m0zP+dpMCEAgyAAlPFi
-# AbcZs4IeDH+98TPVlLOskE7yNOvIwC7VKARMcrLure8cECFyU+Vmfj2h0nZvwsy9
-# HXkLqZ3RC1urG/vpqVDbKj2P3EPUPuLqhmBooXSvHPnYPMjuoYE1I2T2SlnX67XL
-# Y9i/zaswQAg3wgBTYUuDJ1i6Z/pCgKGCEuUwghLhBgorBgEEAYI3AwMBMYIS0TCC
-# Es0GCSqGSIb3DQEHAqCCEr4wghK6AgEDMQ8wDQYJYIZIAWUDBAIBBQAwggFRBgsq
-# hkiG9w0BCRABBKCCAUAEggE8MIIBOAIBAQYKKwYBBAGEWQoDATAxMA0GCWCGSAFl
-# AwQCAQUABCDIMPeUqd5mr22ykAVsMCmeobHC3f3wi7/aq3/c9Ae9mQIGXMsnDnwY
-# GBMyMDE5MDgwMTA0MDQ0NS42MTFaMASAAgH0oIHQpIHNMIHKMQswCQYDVQQGEwJV
-# UzELMAkGA1UECBMCV0ExEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jv
-# c29mdCBDb3Jwb3JhdGlvbjEtMCsGA1UECxMkTWljcm9zb2Z0IElyZWxhbmQgT3Bl
-# cmF0aW9ucyBMaW1pdGVkMSYwJAYDVQQLEx1UaGFsZXMgVFNTIEVTTjozQkQ0LTRC
-# ODAtNjlDMzElMCMGA1UEAxMcTWljcm9zb2Z0IFRpbWUtU3RhbXAgc2VydmljZaCC
-# DjwwggTxMIID2aADAgECAhMzAAAA2khVAmRImjRmAAAAAADaMA0GCSqGSIb3DQEB
-# CwUAMHwxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQH
-# EwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xJjAkBgNV
-# BAMTHU1pY3Jvc29mdCBUaW1lLVN0YW1wIFBDQSAyMDEwMB4XDTE4MDgyMzIwMjY1
-# MloXDTE5MTEyMzIwMjY1MlowgcoxCzAJBgNVBAYTAlVTMQswCQYDVQQIEwJXQTEQ
-# MA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9u
-# MS0wKwYDVQQLEyRNaWNyb3NvZnQgSXJlbGFuZCBPcGVyYXRpb25zIExpbWl0ZWQx
-# JjAkBgNVBAsTHVRoYWxlcyBUU1MgRVNOOjNCRDQtNEI4MC02OUMzMSUwIwYDVQQD
-# ExxNaWNyb3NvZnQgVGltZS1TdGFtcCBzZXJ2aWNlMIIBIjANBgkqhkiG9w0BAQEF
-# AAOCAQ8AMIIBCgKCAQEAx0UoLe4vNxhzxk2Ore+olTarBAw8M+8pP/7bYoR0RzI2
-# qxg57j1KvMrvRY7terX2QP6Cilu/GW0Xeem+VHGq3LPjAh9fS4hG7x0CwArBvKgn
-# mgMpwxjkXfdo0ORpKkYMLkuSgC+yuBMSA1nPg/loOYks0vkbSsPXY/jV7P8lhprm
-# BFCoVaxexT8kvty0UNPuwwjuMaZjppd9BpxIN/IlFmkbVN7qOlWLaYbTFCnD3iRt
-# +bJ5+kMlTZezwNDYbNiPtluAE8V8XmgxOP/YNQwgL77i69wy2+GVggp/HKSjLuHa
-# 3SkN5gIrDieNUBT066XSuQg2BUZKThgwvDKlnC7/AQIDAQABo4IBGzCCARcwHQYD
-# VR0OBBYEFGvcyOOHRwyBAs4sSmwFNtZOPwAuMB8GA1UdIwQYMBaAFNVjOlyKMZDz
-# Q3t8RhvFM2hahW1VMFYGA1UdHwRPME0wS6BJoEeGRWh0dHA6Ly9jcmwubWljcm9z
-# b2Z0LmNvbS9wa2kvY3JsL3Byb2R1Y3RzL01pY1RpbVN0YVBDQV8yMDEwLTA3LTAx
-# LmNybDBaBggrBgEFBQcBAQROMEwwSgYIKwYBBQUHMAKGPmh0dHA6Ly93d3cubWlj
-# cm9zb2Z0LmNvbS9wa2kvY2VydHMvTWljVGltU3RhUENBXzIwMTAtMDctMDEuY3J0
-# MAwGA1UdEwEB/wQCMAAwEwYDVR0lBAwwCgYIKwYBBQUHAwgwDQYJKoZIhvcNAQEL
-# BQADggEBAEvsYsH3XPF4NGqXMXQXzBh9VaZHNV/uQwJpSJ9C3JF3tNBifSp0jrLS
-# 6YvTnYOwrnVKoP7wnZXly3wpxJpE6msoMRxli4cg97tCeqoVT6S6jjCiXSdUkk1U
-# HngbX7jOgwRgXZZxL/WDolOpO0fZJj2MX1vpcCe20nSrGnzR+Wu52+CvYYIS8XVa
-# UkFW7zHlFdNIx10QA59hQK+d1H/kHavOHt6S4Pmr+iJu67csCUUVRfVC5dVKrnYw
-# uVx5q4AQGrBbPiLoKSmUqaVF8vkLhDNMpevnLfSk7KOKEZP3Km7bk1+ibhTOO9AL
-# V/RXD2U2BEiP0MIugo292xJc9/10UiAwggZxMIIEWaADAgECAgphCYEqAAAAAAAC
-# MA0GCSqGSIb3DQEBCwUAMIGIMQswCQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGlu
-# Z3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBv
-# cmF0aW9uMTIwMAYDVQQDEylNaWNyb3NvZnQgUm9vdCBDZXJ0aWZpY2F0ZSBBdXRo
-# b3JpdHkgMjAxMDAeFw0xMDA3MDEyMTM2NTVaFw0yNTA3MDEyMTQ2NTVaMHwxCzAJ
-# BgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25k
-# MR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xJjAkBgNVBAMTHU1pY3Jv
-# c29mdCBUaW1lLVN0YW1wIFBDQSAyMDEwMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
-# MIIBCgKCAQEAqR0NvHcRijog7PwTl/X6f2mUa3RUENWlCgCChfvtfGhLLF/Fw+Vh
-# wna3PmYrW/AVUycEMR9BGxqVHc4JE458YTBZsTBED/FgiIRUQwzXTbg4CLNC3ZOs
-# 1nMwVyaCo0UN0Or1R4HNvyRgMlhgRvJYR4YyhB50YWeRX4FUsc+TTJLBxKZd0WET
-# bijGGvmGgLvfYfxGwScdJGcSchohiq9LZIlQYrFd/XcfPfBXday9ikJNQFHRD5wG
-# Pmd/9WbAA5ZEfu/QS/1u5ZrKsajyeioKMfDaTgaRtogINeh4HLDpmc085y9Euqf0
-# 3GS9pAHBIAmTeM38vMDJRF1eFpwBBU8iTQIDAQABo4IB5jCCAeIwEAYJKwYBBAGC
-# NxUBBAMCAQAwHQYDVR0OBBYEFNVjOlyKMZDzQ3t8RhvFM2hahW1VMBkGCSsGAQQB
-# gjcUAgQMHgoAUwB1AGIAQwBBMAsGA1UdDwQEAwIBhjAPBgNVHRMBAf8EBTADAQH/
-# MB8GA1UdIwQYMBaAFNX2VsuP6KJcYmjRPZSQW9fOmhjEMFYGA1UdHwRPME0wS6BJ
-# oEeGRWh0dHA6Ly9jcmwubWljcm9zb2Z0LmNvbS9wa2kvY3JsL3Byb2R1Y3RzL01p
-# Y1Jvb0NlckF1dF8yMDEwLTA2LTIzLmNybDBaBggrBgEFBQcBAQROMEwwSgYIKwYB
-# BQUHMAKGPmh0dHA6Ly93d3cubWljcm9zb2Z0LmNvbS9wa2kvY2VydHMvTWljUm9v
-# Q2VyQXV0XzIwMTAtMDYtMjMuY3J0MIGgBgNVHSABAf8EgZUwgZIwgY8GCSsGAQQB
-# gjcuAzCBgTA9BggrBgEFBQcCARYxaHR0cDovL3d3dy5taWNyb3NvZnQuY29tL1BL
-# SS9kb2NzL0NQUy9kZWZhdWx0Lmh0bTBABggrBgEFBQcCAjA0HjIgHQBMAGUAZwBh
-# AGwAXwBQAG8AbABpAGMAeQBfAFMAdABhAHQAZQBtAGUAbgB0AC4gHTANBgkqhkiG
-# 9w0BAQsFAAOCAgEAB+aIUQ3ixuCYP4FxAz2do6Ehb7Prpsz1Mb7PBeKp/vpXbRkw
-# s8LFZslq3/Xn8Hi9x6ieJeP5vO1rVFcIK1GCRBL7uVOMzPRgEop2zEBAQZvcXBf/
-# XPleFzWYJFZLdO9CEMivv3/Gf/I3fVo/HPKZeUqRUgCvOA8X9S95gWXZqbVr5MfO
-# 9sp6AG9LMEQkIjzP7QOllo9ZKby2/QThcJ8ySif9Va8v/rbljjO7Yl+a21dA6fHO
-# mWaQjP9qYn/dxUoLkSbiOewZSnFjnXshbcOco6I8+n99lmqQeKZt0uGc+R38ONiU
-# 9MalCpaGpL2eGq4EQoO4tYCbIjggtSXlZOz39L9+Y1klD3ouOVd2onGqBooPiRa6
-# YacRy5rYDkeagMXQzafQ732D8OE7cQnfXXSYIghh2rBQHm+98eEA3+cxB6STOvdl
-# R3jo+KhIq/fecn5ha293qYHLpwmsObvsxsvYgrRyzR30uIUBHoD7G4kqVDmyW9rI
-# DVWZeodzOwjmmC3qjeAzLhIp9cAvVCch98isTtoouLGp25ayp0Kiyc8ZQU3ghvkq
-# mqMRZjDTu3QyS99je/WZii8bxyGvWbWu3EQ8l1Bx16HSxVXjad5XwdHeMMD9zOZN
-# +w2/XU/pnR4ZOC+8z1gFLu8NoFA12u8JJxzVs341Hgi62jbb01+P3nSISRKhggLO
-# MIICNwIBATCB+KGB0KSBzTCByjELMAkGA1UEBhMCVVMxCzAJBgNVBAgTAldBMRAw
-# DgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24x
-# LTArBgNVBAsTJE1pY3Jvc29mdCBJcmVsYW5kIE9wZXJhdGlvbnMgTGltaXRlZDEm
-# MCQGA1UECxMdVGhhbGVzIFRTUyBFU046M0JENC00QjgwLTY5QzMxJTAjBgNVBAMT
-# HE1pY3Jvc29mdCBUaW1lLVN0YW1wIHNlcnZpY2WiIwoBATAHBgUrDgMCGgMVAHRM
-# 00xKLaEEqRs6edgpDbuC5oWSoIGDMIGApH4wfDELMAkGA1UEBhMCVVMxEzARBgNV
-# BAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jv
-# c29mdCBDb3Jwb3JhdGlvbjEmMCQGA1UEAxMdTWljcm9zb2Z0IFRpbWUtU3RhbXAg
-# UENBIDIwMTAwDQYJKoZIhvcNAQEFBQACBQDg7EtRMCIYDzIwMTkwODAxMDExNjAx
-# WhgPMjAxOTA4MDIwMTE2MDFaMHcwPQYKKwYBBAGEWQoEATEvMC0wCgIFAODsS1EC
-# AQAwCgIBAAICIC8CAf8wBwIBAAICEWowCgIFAODtnNECAQAwNgYKKwYBBAGEWQoE
-# AjEoMCYwDAYKKwYBBAGEWQoDAqAKMAgCAQACAwehIKEKMAgCAQACAwGGoDANBgkq
-# hkiG9w0BAQUFAAOBgQCZ104QF3tvN6TY3GiOqJx3+T8gl4hj6IQWx5tsWdb9Gz++
-# rVK+8Bgcokmd8N9z0jis8RtYhiB1+ImZei/My45cWogKTAQ3NB2wdQTWzpvkClGv
-# S4cDkEXLB94r1GihpWrG/C0tGJHATEQJgpwYRCLbclAjCGSxstulw28UyXMmZDGC
-# Aw0wggMJAgEBMIGTMHwxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9u
-# MRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRp
-# b24xJjAkBgNVBAMTHU1pY3Jvc29mdCBUaW1lLVN0YW1wIFBDQSAyMDEwAhMzAAAA
-# 2khVAmRImjRmAAAAAADaMA0GCWCGSAFlAwQCAQUAoIIBSjAaBgkqhkiG9w0BCQMx
-# DQYLKoZIhvcNAQkQAQQwLwYJKoZIhvcNAQkEMSIEIORXMn+cy+hbxQSpicKxJ9aU
-# pwaLR77FjQedF3EGi7KzMIH6BgsqhkiG9w0BCRACLzGB6jCB5zCB5DCBvQQgis27
-# W7zapYOXiyrehIxm4yubIaVWHfStjvtrDWsVMRMwgZgwgYCkfjB8MQswCQYDVQQG
+# AQCVWsaGaUcdNB7xVcNmdfZiVBhYFGcn8KMqxgNIvOZWNH9JYQLuhHhmJ5RWISy1
+# oey3zTuxqLbkHAdmbeU8NFMo49Pv71MgIS9IG/EtqwOH7upan+lIq6NOcw5fO6Os
+# +12R0Q28MzGn+3y7F2mKDnopVu0sEufy453gxz16M8bAw4+QXuv7+fR9WzRJ2CpU
+# 62wQKYiFQMfew6Vh5fuPoXloN3k6+Qlz7zgcT4YRmxzx7jMVpP/uvK6sZcBxQ3Wg
+# B/WkyXHgxaY19IAzLq2QiPiX2YryiR5EsYBq35BP7U15DlZtpSs2wIYTkkDBxhPJ
+# IDJgowZu5GyhHdqrst3OjkSRAgMBAAGjggF+MIIBejAfBgNVHSUEGDAWBgorBgEE
+# AYI3TAgBBggrBgEFBQcDAzAdBgNVHQ4EFgQUV4Iarkq57esagu6FUBb270Zijc8w
+# UAYDVR0RBEkwR6RFMEMxKTAnBgNVBAsTIE1pY3Jvc29mdCBPcGVyYXRpb25zIFB1
+# ZXJ0byBSaWNvMRYwFAYDVQQFEw0yMzAwMTIrNDU0MTM1MB8GA1UdIwQYMBaAFEhu
+# ZOVQBdOCqhc3NyK1bajKdQKVMFQGA1UdHwRNMEswSaBHoEWGQ2h0dHA6Ly93d3cu
+# bWljcm9zb2Z0LmNvbS9wa2lvcHMvY3JsL01pY0NvZFNpZ1BDQTIwMTFfMjAxMS0w
+# Ny0wOC5jcmwwYQYIKwYBBQUHAQEEVTBTMFEGCCsGAQUFBzAChkVodHRwOi8vd3d3
+# Lm1pY3Jvc29mdC5jb20vcGtpb3BzL2NlcnRzL01pY0NvZFNpZ1BDQTIwMTFfMjAx
+# MS0wNy0wOC5jcnQwDAYDVR0TAQH/BAIwADANBgkqhkiG9w0BAQsFAAOCAgEAWg+A
+# rS4Anq7KrogslIQnoMHSXUPr/RqOIhJX+32ObuY3MFvdlRElbSsSJxrRy/OCCZdS
+# se+f2AqQ+F/2aYwBDmUQbeMB8n0pYLZnOPifqe78RBH2fVZsvXxyfizbHubWWoUf
+# NW/FJlZlLXwJmF3BoL8E2p09K3hagwz/otcKtQ1+Q4+DaOYXWleqJrJUsnHs9UiL
+# crVF0leL/Q1V5bshob2OTlZq0qzSdrMDLWdhyrUOxnZ+ojZ7UdTY4VnCuogbZ9Zs
+# 9syJbg7ZUS9SVgYkowRsWv5jV4lbqTD+tG4FzhOwcRQwdb6A8zp2Nnd+s7VdCuYF
+# sGgI41ucD8oxVfcAMjF9YX5N2s4mltkqnUe3/htVrnxKKDAwSYliaux2L7gKw+bD
+# 1kEZ/5ozLRnJ3jjDkomTrPctokY/KaZ1qub0NUnmOKH+3xUK/plWJK8BOQYuU7gK
+# YH7Yy9WSKNlP7pKj6i417+3Na/frInjnBkKRCJ/eYTvBH+s5guezpfQWtU4bNo/j
+# 8Qw2vpTQ9w7flhH78Rmwd319+YTmhv7TcxDbWlyteaj4RK2wk3pY1oSz2JPE5PNu
+# Nmd9Gmf6oePZgy7Ii9JLLq8SnULV7b+IP0UXRY9q+GdRjM2AEX6msZvvPCIoG0aY
+# HQu9wZsKEK2jqvWi8/xdeeeSI9FN6K1w4oVQM4Mwggd6MIIFYqADAgECAgphDpDS
+# AAAAAAADMA0GCSqGSIb3DQEBCwUAMIGIMQswCQYDVQQGEwJVUzETMBEGA1UECBMK
+# V2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0
+# IENvcnBvcmF0aW9uMTIwMAYDVQQDEylNaWNyb3NvZnQgUm9vdCBDZXJ0aWZpY2F0
+# ZSBBdXRob3JpdHkgMjAxMTAeFw0xMTA3MDgyMDU5MDlaFw0yNjA3MDgyMTA5MDla
+# MH4xCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdS
+# ZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xKDAmBgNVBAMT
+# H01pY3Jvc29mdCBDb2RlIFNpZ25pbmcgUENBIDIwMTEwggIiMA0GCSqGSIb3DQEB
+# AQUAA4ICDwAwggIKAoICAQCr8PpyEBwurdhuqoIQTTS68rZYIZ9CGypr6VpQqrgG
+# OBoESbp/wwwe3TdrxhLYC/A4wpkGsMg51QEUMULTiQ15ZId+lGAkbK+eSZzpaF7S
+# 35tTsgosw6/ZqSuuegmv15ZZymAaBelmdugyUiYSL+erCFDPs0S3XdjELgN1q2jz
+# y23zOlyhFvRGuuA4ZKxuZDV4pqBjDy3TQJP4494HDdVceaVJKecNvqATd76UPe/7
+# 4ytaEB9NViiienLgEjq3SV7Y7e1DkYPZe7J7hhvZPrGMXeiJT4Qa8qEvWeSQOy2u
+# M1jFtz7+MtOzAz2xsq+SOH7SnYAs9U5WkSE1JcM5bmR/U7qcD60ZI4TL9LoDho33
+# X/DQUr+MlIe8wCF0JV8YKLbMJyg4JZg5SjbPfLGSrhwjp6lm7GEfauEoSZ1fiOIl
+# XdMhSz5SxLVXPyQD8NF6Wy/VI+NwXQ9RRnez+ADhvKwCgl/bwBWzvRvUVUvnOaEP
+# 6SNJvBi4RHxF5MHDcnrgcuck379GmcXvwhxX24ON7E1JMKerjt/sW5+v/N2wZuLB
+# l4F77dbtS+dJKacTKKanfWeA5opieF+yL4TXV5xcv3coKPHtbcMojyyPQDdPweGF
+# RInECUzF1KVDL3SV9274eCBYLBNdYJWaPk8zhNqwiBfenk70lrC8RqBsmNLg1oiM
+# CwIDAQABo4IB7TCCAekwEAYJKwYBBAGCNxUBBAMCAQAwHQYDVR0OBBYEFEhuZOVQ
+# BdOCqhc3NyK1bajKdQKVMBkGCSsGAQQBgjcUAgQMHgoAUwB1AGIAQwBBMAsGA1Ud
+# DwQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB8GA1UdIwQYMBaAFHItOgIxkEO5FAVO
+# 4eqnxzHRI4k0MFoGA1UdHwRTMFEwT6BNoEuGSWh0dHA6Ly9jcmwubWljcm9zb2Z0
+# LmNvbS9wa2kvY3JsL3Byb2R1Y3RzL01pY1Jvb0NlckF1dDIwMTFfMjAxMV8wM18y
+# Mi5jcmwwXgYIKwYBBQUHAQEEUjBQME4GCCsGAQUFBzAChkJodHRwOi8vd3d3Lm1p
+# Y3Jvc29mdC5jb20vcGtpL2NlcnRzL01pY1Jvb0NlckF1dDIwMTFfMjAxMV8wM18y
+# Mi5jcnQwgZ8GA1UdIASBlzCBlDCBkQYJKwYBBAGCNy4DMIGDMD8GCCsGAQUFBwIB
+# FjNodHRwOi8vd3d3Lm1pY3Jvc29mdC5jb20vcGtpb3BzL2RvY3MvcHJpbWFyeWNw
+# cy5odG0wQAYIKwYBBQUHAgIwNB4yIB0ATABlAGcAYQBsAF8AcABvAGwAaQBjAHkA
+# XwBzAHQAYQB0AGUAbQBlAG4AdAAuIB0wDQYJKoZIhvcNAQELBQADggIBAGfyhqWY
+# 4FR5Gi7T2HRnIpsLlhHhY5KZQpZ90nkMkMFlXy4sPvjDctFtg/6+P+gKyju/R6mj
+# 82nbY78iNaWXXWWEkH2LRlBV2AySfNIaSxzzPEKLUtCw/WvjPgcuKZvmPRul1LUd
+# d5Q54ulkyUQ9eHoj8xN9ppB0g430yyYCRirCihC7pKkFDJvtaPpoLpWgKj8qa1hJ
+# Yx8JaW5amJbkg/TAj/NGK978O9C9Ne9uJa7lryft0N3zDq+ZKJeYTQ49C/IIidYf
+# wzIY4vDFLc5bnrRJOQrGCsLGra7lstnbFYhRRVg4MnEnGn+x9Cf43iw6IGmYslmJ
+# aG5vp7d0w0AFBqYBKig+gj8TTWYLwLNN9eGPfxxvFX1Fp3blQCplo8NdUmKGwx1j
+# NpeG39rz+PIWoZon4c2ll9DuXWNB41sHnIc+BncG0QaxdR8UvmFhtfDcxhsEvt9B
+# xw4o7t5lL+yX9qFcltgA1qFGvVnzl6UJS0gQmYAf0AApxbGbpT9Fdx41xtKiop96
+# eiL6SJUfq/tHI4D1nvi/a7dLl+LrdXga7Oo3mXkYS//WsyNodeav+vyL6wuA6mk7
+# r/ww7QRMjt/fdW1jkT3RnVZOT7+AVyKheBEyIXrvQQqxP/uozKRdwaGIm1dxVk5I
+# RcBCyZt2WwqASGv9eZ/BvW1taslScxMNelDNMYIVWzCCFVcCAQEwgZUwfjELMAkG
+# A1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQx
+# HjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEoMCYGA1UEAxMfTWljcm9z
+# b2Z0IENvZGUgU2lnbmluZyBQQ0EgMjAxMQITMwAAAVGejY9AcaMOQQAAAAABUTAN
+# BglghkgBZQMEAgEFAKCBrjAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgor
+# BgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg1fgLjilZ
+# XgZfeMHcmtu7xw7p42eNLs2abIGCLOEGUjMwQgYKKwYBBAGCNwIBDDE0MDKgFIAS
+# AE0AaQBjAHIAbwBzAG8AZgB0oRqAGGh0dHA6Ly93d3cubWljcm9zb2Z0LmNvbTAN
+# BgkqhkiG9w0BAQEFAASCAQAcmSZL6MWKoS0t3+XmHkVvSeeVtGFFM0MYZfqE2GGv
+# 5TzRwK0wOcbYIPKPTyqyscTgzCfv/fVS3EPH4MbRA/yAQXtnoDYbcQKIvJSJ/sMS
+# UkbNGGnv52Hl4DuW1Rr0JuuXjr557DE6MjHIQhGVXTfsjfDXMi33Rbh9E+g0sPI2
+# ce+XIfUwymeNtVvGBMdV53SxaE8T9r45ZsXKJwliKwT/CW9cpih895rVFgP7wB+h
+# nakSmtIzhAY+X56ukClrBS2u7e2VUFci1Aq01RDl7sFnrZN6/Y1qLxCiYlZBJc/H
+# qYgkG7kxkwqKTZQdvU9DyK1SsHFCLLPEIV5nXdQ8f5BfoYIS5TCCEuEGCisGAQQB
+# gjcDAwExghLRMIISzQYJKoZIhvcNAQcCoIISvjCCEroCAQMxDzANBglghkgBZQME
+# AgEFADCCAVEGCyqGSIb3DQEJEAEEoIIBQASCATwwggE4AgEBBgorBgEEAYRZCgMB
+# MDEwDQYJYIZIAWUDBAIBBQAEIC7lLSiDXmitBLt0I/GX/b/yBEN3Zrq2kG3j/Fsp
+# ZWZmAgZd0y8EujwYEzIwMTkxMjA1MjMyNjAxLjg4NVowBIACAfSggdCkgc0wgcox
+# CzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRt
+# b25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xJTAjBgNVBAsTHE1p
+# Y3Jvc29mdCBBbWVyaWNhIE9wZXJhdGlvbnMxJjAkBgNVBAsTHVRoYWxlcyBUU1Mg
+# RVNOOjNFN0EtRTM1OS1BMjVEMSUwIwYDVQQDExxNaWNyb3NvZnQgVGltZS1TdGFt
+# cCBTZXJ2aWNloIIOPDCCBPEwggPZoAMCAQICEzMAAAEgGjnb2WufrfIAAAAAASAw
+# DQYJKoZIhvcNAQELBQAwfDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0
+# b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3Jh
+# dGlvbjEmMCQGA1UEAxMdTWljcm9zb2Z0IFRpbWUtU3RhbXAgUENBIDIwMTAwHhcN
+# MTkxMTEzMjE0MDQyWhcNMjEwMjExMjE0MDQyWjCByjELMAkGA1UEBhMCVVMxEzAR
+# BgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1p
+# Y3Jvc29mdCBDb3Jwb3JhdGlvbjElMCMGA1UECxMcTWljcm9zb2Z0IEFtZXJpY2Eg
+# T3BlcmF0aW9uczEmMCQGA1UECxMdVGhhbGVzIFRTUyBFU046M0U3QS1FMzU5LUEy
+# NUQxJTAjBgNVBAMTHE1pY3Jvc29mdCBUaW1lLVN0YW1wIFNlcnZpY2UwggEiMA0G
+# CSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC1BOuDmpgS5mLJDPUQaEcVyH5bHBLc
+# 4Lvq5gGHF5J1yPhhbg8NSErV0fP+N5CQwe4KTLU/BROOpHlO/BV1UGOs+BavEPGR
+# iVYdhAqKmzWU+TWbAOVxkrnpa/FJ6A5Q5cvINSiOabyOfHe2dMFCQPlggBzqC3x9
+# lnnJkUxSpetfTcj6FVCwxYVPk55zz4O4UpmeiHDiWEBpC9r64VHZZOSz89Z7ML1l
+# penM2r8+WnabZLPoU2Y7p9QrPzQH7gvQiu/zgcYYMqmVIlfFTPS1iOvZbAqk1U6B
+# NRgnOKirD+0+8yujM4CY/0DlZDDlLfU7Vg8ojsGg7peVh+MnYDwlyKGxAgMBAAGj
+# ggEbMIIBFzAdBgNVHQ4EFgQUmdk2BLDfR8UfnN3pLGUCcaciVc8wHwYDVR0jBBgw
+# FoAU1WM6XIoxkPNDe3xGG8UzaFqFbVUwVgYDVR0fBE8wTTBLoEmgR4ZFaHR0cDov
+# L2NybC5taWNyb3NvZnQuY29tL3BraS9jcmwvcHJvZHVjdHMvTWljVGltU3RhUENB
+# XzIwMTAtMDctMDEuY3JsMFoGCCsGAQUFBwEBBE4wTDBKBggrBgEFBQcwAoY+aHR0
+# cDovL3d3dy5taWNyb3NvZnQuY29tL3BraS9jZXJ0cy9NaWNUaW1TdGFQQ0FfMjAx
+# MC0wNy0wMS5jcnQwDAYDVR0TAQH/BAIwADATBgNVHSUEDDAKBggrBgEFBQcDCDAN
+# BgkqhkiG9w0BAQsFAAOCAQEAYulQdnFLE5FCLMEUPpBNSy+OCJwmY7ihAF4Jye0S
+# Q8fDJ0CYhsYU/uHUl8oTTuX5JQONX6QnKSU/+/0XuezSFtuYsN+uVrvGIciGXCKP
+# uPtgFjFJBSW5y4xxurfzAuPO12wGJdVD4J+0ihF5Wr+RNUbX9MPiU+0qsIKDPs2p
+# A3KNdXCP9m4WLi/+Fb0KMGwoX6XtDCvBHVw2qXbqcItlh4JfM9vLfjCgwS6zbIt7
+# igBKOLXRWaOqpeIfqsBHVitPN5RsneeXPqHpBOT+wCsm7lkqDAOS98RDWyJe8hZA
+# geeXLHF7gL/lBgQbzScWYx0tg/4+hlPijywAAe0SBMDkmDCCBnEwggRZoAMCAQIC
+# CmEJgSoAAAAAAAIwDQYJKoZIhvcNAQELBQAwgYgxCzAJBgNVBAYTAlVTMRMwEQYD
+# VQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNy
+# b3NvZnQgQ29ycG9yYXRpb24xMjAwBgNVBAMTKU1pY3Jvc29mdCBSb290IENlcnRp
+# ZmljYXRlIEF1dGhvcml0eSAyMDEwMB4XDTEwMDcwMTIxMzY1NVoXDTI1MDcwMTIx
+# NDY1NVowfDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNV
+# BAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEmMCQG
+# A1UEAxMdTWljcm9zb2Z0IFRpbWUtU3RhbXAgUENBIDIwMTAwggEiMA0GCSqGSIb3
+# DQEBAQUAA4IBDwAwggEKAoIBAQCpHQ28dxGKOiDs/BOX9fp/aZRrdFQQ1aUKAIKF
+# ++18aEssX8XD5WHCdrc+Zitb8BVTJwQxH0EbGpUdzgkTjnxhMFmxMEQP8WCIhFRD
+# DNdNuDgIs0Ldk6zWczBXJoKjRQ3Q6vVHgc2/JGAyWGBG8lhHhjKEHnRhZ5FfgVSx
+# z5NMksHEpl3RYRNuKMYa+YaAu99h/EbBJx0kZxJyGiGKr0tkiVBisV39dx898Fd1
+# rL2KQk1AUdEPnAY+Z3/1ZsADlkR+79BL/W7lmsqxqPJ6Kgox8NpOBpG2iAg16Hgc
+# sOmZzTznL0S6p/TcZL2kAcEgCZN4zfy8wMlEXV4WnAEFTyJNAgMBAAGjggHmMIIB
+# 4jAQBgkrBgEEAYI3FQEEAwIBADAdBgNVHQ4EFgQU1WM6XIoxkPNDe3xGG8UzaFqF
+# bVUwGQYJKwYBBAGCNxQCBAweCgBTAHUAYgBDAEEwCwYDVR0PBAQDAgGGMA8GA1Ud
+# EwEB/wQFMAMBAf8wHwYDVR0jBBgwFoAU1fZWy4/oolxiaNE9lJBb186aGMQwVgYD
+# VR0fBE8wTTBLoEmgR4ZFaHR0cDovL2NybC5taWNyb3NvZnQuY29tL3BraS9jcmwv
+# cHJvZHVjdHMvTWljUm9vQ2VyQXV0XzIwMTAtMDYtMjMuY3JsMFoGCCsGAQUFBwEB
+# BE4wTDBKBggrBgEFBQcwAoY+aHR0cDovL3d3dy5taWNyb3NvZnQuY29tL3BraS9j
+# ZXJ0cy9NaWNSb29DZXJBdXRfMjAxMC0wNi0yMy5jcnQwgaAGA1UdIAEB/wSBlTCB
+# kjCBjwYJKwYBBAGCNy4DMIGBMD0GCCsGAQUFBwIBFjFodHRwOi8vd3d3Lm1pY3Jv
+# c29mdC5jb20vUEtJL2RvY3MvQ1BTL2RlZmF1bHQuaHRtMEAGCCsGAQUFBwICMDQe
+# MiAdAEwAZQBnAGEAbABfAFAAbwBsAGkAYwB5AF8AUwB0AGEAdABlAG0AZQBuAHQA
+# LiAdMA0GCSqGSIb3DQEBCwUAA4ICAQAH5ohRDeLG4Jg/gXEDPZ2joSFvs+umzPUx
+# vs8F4qn++ldtGTCzwsVmyWrf9efweL3HqJ4l4/m87WtUVwgrUYJEEvu5U4zM9GAS
+# inbMQEBBm9xcF/9c+V4XNZgkVkt070IQyK+/f8Z/8jd9Wj8c8pl5SpFSAK84Dxf1
+# L3mBZdmptWvkx872ynoAb0swRCQiPM/tA6WWj1kpvLb9BOFwnzJKJ/1Vry/+tuWO
+# M7tiX5rbV0Dp8c6ZZpCM/2pif93FSguRJuI57BlKcWOdeyFtw5yjojz6f32WapB4
+# pm3S4Zz5Hfw42JT0xqUKloakvZ4argRCg7i1gJsiOCC1JeVk7Pf0v35jWSUPei45
+# V3aicaoGig+JFrphpxHLmtgOR5qAxdDNp9DvfYPw4TtxCd9ddJgiCGHasFAeb73x
+# 4QDf5zEHpJM692VHeOj4qEir995yfmFrb3epgcunCaw5u+zGy9iCtHLNHfS4hQEe
+# gPsbiSpUObJb2sgNVZl6h3M7COaYLeqN4DMuEin1wC9UJyH3yKxO2ii4sanblrKn
+# QqLJzxlBTeCG+SqaoxFmMNO7dDJL32N79ZmKLxvHIa9Zta7cRDyXUHHXodLFVeNp
+# 3lfB0d4wwP3M5k37Db9dT+mdHhk4L7zPWAUu7w2gUDXa7wknHNWzfjUeCLraNtvT
+# X4/edIhJEqGCAs4wggI3AgEBMIH4oYHQpIHNMIHKMQswCQYDVQQGEwJVUzETMBEG
+# A1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWlj
+# cm9zb2Z0IENvcnBvcmF0aW9uMSUwIwYDVQQLExxNaWNyb3NvZnQgQW1lcmljYSBP
+# cGVyYXRpb25zMSYwJAYDVQQLEx1UaGFsZXMgVFNTIEVTTjozRTdBLUUzNTktQTI1
+# RDElMCMGA1UEAxMcTWljcm9zb2Z0IFRpbWUtU3RhbXAgU2VydmljZaIjCgEBMAcG
+# BSsOAwIaAxUAv1r8uFykxw2Ng0e88GallxNnXkyggYMwgYCkfjB8MQswCQYDVQQG
 # EwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwG
 # A1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSYwJAYDVQQDEx1NaWNyb3NvZnQg
-# VGltZS1TdGFtcCBQQ0EgMjAxMAITMwAAANpIVQJkSJo0ZgAAAAAA2jAiBCAWw1n6
-# U5Lhq9X287Q9VDYgGzvE5w0OMmHpOi9UQBbD7TANBgkqhkiG9w0BAQsFAASCAQAU
-# m5eJRvdoLP0/6Q01DC0efoSRGTupIrJCPQ+XY9n9wRO+v4oYDboHZ/vBK9W7v4r0
-# 0ALAC8t12PBO5IpaH7+Eimu+lNghTYK16sDmi1z1EJZLk7DWrdRIjuMsS9cDMKo1
-# 3hBvASJvzsnZS7CihkHBYFJnhYahbEyoBd9HLtJ+bDw8F6xhholC2m0n9Pgvw0gJ
-# EjcZDfc2E5kLItYoGtbBNH1Q+i0KqAy7boxqMiYskU/566T3RoLHv2xl9eRCLiTU
-# dP7a7AmucXgB0O8SWPrpX/YxfaOOarFbK7PFkIw9mwj9BtHzpx9KwUwfmwNwOM2G
-# M2vY/6ecMqK0CwlaBnHO
+# VGltZS1TdGFtcCBQQ0EgMjAxMDANBgkqhkiG9w0BAQUFAAIFAOGTbi8wIhgPMjAx
+# OTEyMDUxOTUzMTlaGA8yMDE5MTIwNjE5NTMxOVowdzA9BgorBgEEAYRZCgQBMS8w
+# LTAKAgUA4ZNuLwIBADAKAgEAAgIjZQIB/zAHAgEAAgIRszAKAgUA4ZS/rwIBADA2
+# BgorBgEEAYRZCgQCMSgwJjAMBgorBgEEAYRZCgMCoAowCAIBAAIDB6EgoQowCAIB
+# AAIDAYagMA0GCSqGSIb3DQEBBQUAA4GBAA8yR0XzZk09LGr99FToQ01A6rPgHIcp
+# wa4ffuwW2ckPMvHi6i9w0bIxAQuj6AuH5flDAVjXr9P6HPm85J+kMViwn3k3/Hw5
+# FkqhwCYP2UvbDre87n0KmyHVD//zgrVOJP8sbHrlZR7r/V8ZU8Se39U+uQwKPriy
+# W6XG7vxAhv1sMYIDDTCCAwkCAQEwgZMwfDELMAkGA1UEBhMCVVMxEzARBgNVBAgT
+# Cldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29m
+# dCBDb3Jwb3JhdGlvbjEmMCQGA1UEAxMdTWljcm9zb2Z0IFRpbWUtU3RhbXAgUENB
+# IDIwMTACEzMAAAEgGjnb2WufrfIAAAAAASAwDQYJYIZIAWUDBAIBBQCgggFKMBoG
+# CSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAvBgkqhkiG9w0BCQQxIgQg4D5bs3gJ
+# PmQqwzvDAVr3Rx+t1fXlPrKL98kXWzjsYwIwgfoGCyqGSIb3DQEJEAIvMYHqMIHn
+# MIHkMIG9BCAcDFBrFJx21/VR4TsFktJBSYQgHP7GymOt92ieZ8AaVTCBmDCBgKR+
+# MHwxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdS
+# ZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xJjAkBgNVBAMT
+# HU1pY3Jvc29mdCBUaW1lLVN0YW1wIFBDQSAyMDEwAhMzAAABIBo529lrn63yAAAA
+# AAEgMCIEIGgg7aToiQaqsZxjAggsifKDHiCw8VcXXkrtORz1CtL1MA0GCSqGSIb3
+# DQEBCwUABIIBAD1PLNahui++K7EyeRMtMn2JfNdm+WFktu4zlJCFnJ76SPk5Wn8s
+# 0Yxxn8lGjM9ezrSDwr9POJnnXymEETLMCojUSeZkncpK81ev0kiQ1zX6Kzo0sLjt
+# wSYu7Oa+YJ3k3gAKKOoV8VHTtV6lU6qUUZ36WY+EZM6id/DI1tcLqzFGlm7wNLPi
+# zwt8SxNu8SOlUInSqF9xBSQaKoaf9wVFqeS9Cd5iwJ/7Qf1wZwoArY9DZv7iR38Y
+# MpR0cKaE5tTHwAEdwqCBA9kSX2BLXNTbi2xLu/OVSX8IiBamyZGjrPPOCIOc8KI3
+# iMj+Snro9FVcuZgkqUW4ugSSu+/pgt4qlE0=
 # SIG # End signature block
