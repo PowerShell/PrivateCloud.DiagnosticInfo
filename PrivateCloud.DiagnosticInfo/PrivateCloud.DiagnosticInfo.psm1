@@ -39,8 +39,6 @@ $CommonFuncBlock = {
     Import-Module SmbWitness
     Import-Module Storage
 
-    Add-Type -Assembly System.IO.Compression.FileSystem
-
     #
     # Shows error, cancels script
     #
@@ -293,7 +291,7 @@ $CommonFuncBlock = {
                         'Microsoft-Windows-ResumeKeyFilter',
                         'Microsoft-Windows-SMB',
                         'Microsoft-Windows-Storage',
-						'Microsoft-Windows-StorageReplica',
+                        'Microsoft-Windows-StorageReplica',
                         'Microsoft-Windows-TCPIP',
                         'Microsoft-Windows-VHDMP',
                         'Microsoft-Windows-SDDC-Management',
@@ -660,8 +658,15 @@ function Check-ExtractZip(
 
         Show-Update "Extracting $Path -> $ExtractToPath"
 
-        try { [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $ExtractToPath) }
-        catch { Show-Error("Can't extract results as Zip file from '$Path' to '$ExtractToPath'") }
+        try 
+        { 
+            Add-Type -Assembly System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $ExtractToPath) 
+        }
+        catch 
+        {
+            Show-Error("Can't extract results as Zip file from '$Path' to '$ExtractToPath'")
+        }
 
         return $ExtractToPath
     }
@@ -730,7 +735,8 @@ function Invoke-SddcCommonCommand (
     [scriptblock] $InitBlock,
     [scriptblock] $ScriptBlock,
     # If session configuration name is $null, it connect to default powershell
-    [string] $SessionConfigurationName
+    [string] $SessionConfigurationName,
+    [Object[]] $ArgumentList
     )
 {
 	$Job        = @()
@@ -747,7 +753,7 @@ function Invoke-SddcCommonCommand (
 	}
 
     Invoke-Command -Session $Sessions $InitBlock
-    $Job = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock
+    $Job = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList
     $SessionIds = $Sessions.Id
 
 	$Job | Add-Member -NotePropertyName ActiveSessions -NotePropertyValue $SessionIds
@@ -1672,7 +1678,7 @@ function Get-SddcDiagnosticInfo
         #
 
         $DedupEnabled = $true
-        if ($(Invoke-Command -ComputerName $AccessNode {(-not (Get-Command -Module Deduplication))} )) {
+        if ($(Invoke-Command -ComputerName $AccessNode -ConfigurationName $SessionConfigurationName {(-not (Get-Command -Module Deduplication))} )) {
             $DedupEnabled = $false
         }
 
@@ -1711,10 +1717,6 @@ function Get-SddcDiagnosticInfo
                 $j = Invoke-SddcCommonCommand -ClusterNodes $ClusterNodes.Name -JobName SddcDiagnosticArchive -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
                     Import-Module $using:Module -ErrorAction SilentlyContinue
-
-                    # note we only receive module exports from the import, must ...
-                    # import common functions
-                    . ([scriptblock]::Create($using:CommonFunc))
 
                     if (Test-SddcModulePresence) {
 
@@ -1850,9 +1852,6 @@ function Get-SddcDiagnosticInfo
 
         $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName Verifier -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
-            # import common functions
-            . ([scriptblock]::Create($using:CommonFunc))
-
             # Verifier
 
             $LocalFile = Join-Path $env:temp "verifier-query.txt"
@@ -1868,9 +1867,6 @@ function Get-SddcDiagnosticInfo
 
         $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Filesystem Filter Manager' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
-            # import common functions
-            . ([scriptblock]::Create($using:CommonFunc))
-
             # Filter Manager
 
             $LocalFile = Join-Path $env:temp "fltmc.txt"
@@ -1884,14 +1880,11 @@ function Get-SddcDiagnosticInfo
 
         if ($IncludeProcessDump) {
 
-            $JobCopyOut += Invoke-Command -ComputerName $($ClusterNodes).Name -JobName ProcessDumps -ArgumentList $ProcessLists {
+            $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName ProcessDumps -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -ArgumentList $ProcessLists {
 
                 Param($ProcessLists)
 
-                # import common functions
-                . ([scriptblock]::Create($using:CommonFunc))
-
-                $NodePath = [System.IO.Path]::GetTempPath()
+                $NodePath = $env:Temp
                 $Node = $env:COMPUTERNAME
 
                 #Default dump processes.
@@ -1968,56 +1961,50 @@ function Get-SddcDiagnosticInfo
 
             Show-Update "Start gather of Get-NetView ..."
 
-            $ClusterNodes.Name |% {
+            $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'GetNetView' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
-                $JobCopyOut += Invoke-Command -ComputerName $_ -AsJob -JobName GetNetView {
+                $NodePath = $env:Temp
 
-                    # import common functions
-                    . ([scriptblock]::Create($using:CommonFunc))
+                # create a directory to capture GNV
 
-                    $NodePath = [System.IO.Path]::GetTempPath()
+                $gnvDir = Join-Path $NodePath 'GetNetView'
+                Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
+                $null = md $gnvDir -Force -ErrorAction SilentlyContinue
 
-                    # create a directory to capture GNV
+                # run inside a child session so we can sink output to the transcript
+                # we must pass the GNV dir since $using is statically evaluated in the
+                # outermost scope and $gnvDir is inside the Invoke call.
 
-                    $gnvDir = Join-Path $NodePath 'GetNetView'
-                    Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
-                    $null = md $gnvDir -Force -ErrorAction SilentlyContinue
+                $j = Start-Job -ArgumentList $gnvDir {
 
-                    # run inside a child session so we can sink output to the transcript
-                    # we must pass the GNV dir since $using is statically evaluated in the
-                    # outermost scope and $gnvDir is inside the Invoke call.
+                    param($gnvDir)
 
-                    $j = Start-Job -ArgumentList $gnvDir {
+                    # start gather transcript to the GNV directory
 
-                        param($gnvDir)
+                    $transcriptFile = Join-Path $gnvDir "0_GetNetViewGatherTranscript.log"
+                    Start-Transcript -Path $transcriptFile -Force
 
-                        # start gather transcript to the GNV directory
-
-                        $transcriptFile = Join-Path $gnvDir "0_GetNetViewGatherTranscript.log"
-                        Start-Transcript -Path $transcriptFile -Force
-
-                        if (Get-Command Get-NetView -ErrorAction SilentlyContinue) {
-                            Get-NetView -OutputDirectory $gnvDir
-                        } else {
-                            Write-Host "Get-NetView command not available"
-                        }
-
-                        Stop-Transcript
+                    if (Get-Command Get-NetView -ErrorAction SilentlyContinue) {
+                        Get-NetView -OutputDirectory $gnvDir
+                    } else {
+                        Write-Host "Get-NetView command not available"
                     }
 
-                    # do not receive job - sunk to transcript for offline analysis
-                    # gnv produces a very large quantity of host output
-                    $null = $j | Wait-Job
-                    $j | Remove-Job
-
-                    # wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
-                    dir $gnvDir -Directory |% {
-                        Remove-Item -Recurse -Force $_.FullName
-                    }
-
-                    # gather all remaining content (will be the zip + transcript) in GNV directory
-                    Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $gnvDir)
+                    Stop-Transcript
                 }
+
+                # do not receive job - sunk to transcript for offline analysis
+                # gnv produces a very large quantity of host output
+                $null = $j | Wait-Job
+                $j | Remove-Job
+
+                # wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
+                dir $gnvDir -Directory |% {
+                    Remove-Item -Recurse -Force $_.FullName
+                }
+
+                # gather all remaining content (will be the zip + transcript) in GNV directory
+                Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $gnvDir)
             }
         }
 
@@ -2121,13 +2108,13 @@ function Get-SddcDiagnosticInfo
                     }
                 }
 
-                $NodeSystemRootPath = Invoke-Command -ComputerName $using:NodeName { $env:SystemRoot }
+                $NodeSystemRootPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { $env:SystemRoot }
 
                 # Avoid to use 'Join-Path' because the drive of path may not exist on the local machine.
                 if ($using:IncludeDumps -eq $true) {
 
-                    $NodeMinidumpsPath = Invoke-Command -ComputerName $using:NodeName { (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl').MinidumpDir } -ErrorAction SilentlyContinue
-                    $NodeLiveKernelReportsPath = Invoke-Command -ComputerName $using:NodeName { (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl\LiveKernelReports').LiveKernelReportsPath } -ErrorAction SilentlyContinue
+                    $NodeMinidumpsPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl').MinidumpDir } -ErrorAction SilentlyContinue
+                    $NodeLiveKernelReportsPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl\LiveKernelReports').LiveKernelReportsPath } -ErrorAction SilentlyContinue
                     ##
                     # Minidumps
                     ##
@@ -2193,15 +2180,12 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Starting export diagnostic log and live dump ..."
 
-        $JobCopyOut += Invoke-Command -ArgumentList $IncludeLiveDump,$IncludeStorDiag -ComputerName $AccessNode -AsJob -JobName StorageDiagnosticInfoAndLiveDump {
+        $JobCopyOut += Invoke-SddcCommonCommand -ArgumentList $IncludeLiveDump,$IncludeStorDiag -ClusterNodes $AccessNode -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName StorageDiagnosticInfoAndLiveDump {
 
             Param($IncludeLiveDump,$IncludeStorDiag)
 
-            # import common functions
-            . ([scriptblock]::Create($using:CommonFunc))
-
             $Node = $env:COMPUTERNAME
-            $NodePath = [System.IO.Path]::GetTempPath()
+            $NodePath = $env:Temp
 
             $destinationPath = Join-Path -Path $NodePath -ChildPath 'StorageDiagnosticDump'
 
@@ -2227,15 +2211,12 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Starting export of events ..."
 
-        $JobCopyOut += Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob -JobName Events {
+        $JobCopyOut += Invoke-SddcCommonCommand -ArgumentList $HoursOfEvents -ClusterNodes $($ClusterNodes).Name -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName Events {
 
             Param([int] $Hours)
 
-            # import common functions
-            . ([scriptblock]::Create($using:CommonFunc))
-
             $Node = $env:COMPUTERNAME
-            $NodePath = [System.IO.Path]::GetTempPath()
+            $NodePath = $env:Temp
 
             Get-SddcCapturedEvents $NodePath $Hours |% {
 
@@ -2453,7 +2434,7 @@ function Get-SddcDiagnosticInfo
             Show-Update "Dedup Volume Status"
 
             try {
-                $DedupVolumes = Invoke-Command -ComputerName $AccessNode { Get-DedupStatus }
+                $DedupVolumes = Invoke-Command -ComputerName $AccessNode -ConfigurationName $SessionConfigurationName { Get-DedupStatus }
                 $DedupVolumes | Export-Clixml ($Path + "GetDedupVolume.XML") }
             catch { Show-Error("Unable to get Dedup Volumes.`nError="+$_.Exception.Message) }
 
@@ -2487,7 +2468,7 @@ function Get-SddcDiagnosticInfo
 
         try {
             # cannot subsystem scope Get-StorageJob at this time
-            icm $AccessNode { Get-StorageJob } |
+            icm $AccessNode -ConfigurationName $SessionConfigurationName { Get-StorageJob } |
                 Export-Clixml ($Path + "GetStorageJob.XML") }
         catch { Show-Warning("Unable to get Storage Jobs. `nError="+$_.Exception.Message) }
 
@@ -2965,7 +2946,7 @@ function Get-SddcDiagnosticInfo
     $ZipPath = $ZipPrefix + $ZipSuffix
 
     try {
-
+        Add-Type -Assembly System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
         $ZipPath = Convert-Path $ZipPath
         Show-Update "Zip File Name : $ZipPath"
@@ -3366,6 +3347,7 @@ function Update-SddcDiagnosticArchive
     $ZipPath = (join-path $ArchivePath $ZipFile)
 
     try {
+        Add-Type -Assembly System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::CreateFromDirectory($CapturePath, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
         Show-Update "Zip File Name : $ZipPath"
     } catch {
@@ -3600,7 +3582,7 @@ function Show-SddcDiagnosticArchiveJob
             Import-Module $using:Module -ErrorAction SilentlyContinue
 
             # import common functions
-            . ([scriptblock]::Create($using:CommonFunc))
+             . ([scriptblock]::Create($using:CommonFunc))
 
             if (Test-SddcModulePresence) {
 
