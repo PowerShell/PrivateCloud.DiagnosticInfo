@@ -3582,7 +3582,7 @@ function Show-SddcDiagnosticArchiveJob
             Import-Module $using:Module -ErrorAction SilentlyContinue
 
             # import common functions
-             . ([scriptblock]::Create($using:CommonFunc))
+            . ([scriptblock]::Create($using:CommonFunc))
 
             if (Test-SddcModulePresence) {
 
