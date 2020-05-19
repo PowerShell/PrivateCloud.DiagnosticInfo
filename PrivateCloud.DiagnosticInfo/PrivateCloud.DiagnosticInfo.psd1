@@ -10,7 +10,7 @@
 RootModule = 'PrivateCloud.DiagnosticInfo.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.1.26'
+ModuleVersion = '1.1.27'
 
 # ID used to uniquely identify this module
 GUID = '7e0bc824-c371-4936-98e6-b7216ba5f348'
