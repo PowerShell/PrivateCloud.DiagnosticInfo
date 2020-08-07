@@ -273,33 +273,6 @@ $CommonFuncBlock = {
             $QTime = "*[System[TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
         }
 
-        # Log prefixes to gather. Note that this is a simple pattern match; for instance, there are a number of
-        # different providers that match *Microsoft-Windows-Storage*: Storage, StorageManagement, StorageSpaces, etc.
-        # NOTE: please keep this list sorted to avoid accidental dups.
-        $LogPatterns = 'Microsoft-Windows-ClusterAwareUpdating',
-                        'Microsoft-Windows-EnhancedStorage-EhStorClass',
-                        'Microsoft-Windows-DataIntegrityScan',
-                        'Microsoft-Windows-FailoverClustering',
-                        'Microsoft-Windows-HostGuardian',
-                        'Microsoft-Windows-Hyper-V',
-                        'Microsoft-Windows-Kernel',
-                        'Microsoft-Windows-NDIS',
-                        'Microsoft-Windows-Network',
-                        'Microsoft-Windows-NTFS',
-                        'Microsoft-Windows-Partition',
-                        'Microsoft-Windows-REFS',
-                        'Microsoft-Windows-ResumeKeyFilter',
-                        'Microsoft-Windows-SMB',
-                        'Microsoft-Windows-Storage',
-                        'Microsoft-Windows-StorageReplica',
-                        'Microsoft-Windows-TCPIP',
-                        'Microsoft-Windows-VHDMP',
-                        'Microsoft-Windows-SDDC-Management',
-						'Microsoft-Windows-Windows Defender',
-                        'Microsoft-Windows-BitLocker/BitLocker Management',
-                        'Microsoft-Windows-ServiceForNFS',
-                        'Microsoft-Windows-WMI-Activity' |% { "$_*" }
-
         # Exclude verbose/lower value channels
         # The FailoverClustering Diagnostics are reflected in the cluster logs, already gathered (and large)
         # StorageSpaces Performance is very expensive to export and not usually needed
@@ -309,10 +282,7 @@ $CommonFuncBlock = {
 						'Microsoft-Windows-StorageReplica/Performance',
                         'Microsoft-Windows-StorageSpaces-Driver/Performance'
 
-        # Core logs to gather, by explicit names.
-        $LogPatterns += 'System','Application'
-
-        Get-WinEvent -ListLog $LogPatterns -Force -ErrorAction Ignore -WarningAction Ignore |? { $LogToExclude -notcontains $_.LogName } |% {
+        Get-WinEvent -ListLog *  -Force -ErrorAction Ignore -WarningAction Ignore | ? {if ($_.RecordCount) {$_.LogName}} |? { $LogToExclude -notcontains $_.LogName } |% {
 
             $EventFile = Join-Path $Path ($_.LogName.Replace("/","-")+".EVTX")
 
@@ -6007,8 +5977,8 @@ Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
 # SIG # Begin signature block
 # MIIjkgYJKoZIhvcNAQcCoIIjgzCCI38CAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCOVUhjxeHuKrQw
-# VbUhhwto8mMKuSqEBs9UuofcLz06D6CCDYEwggX/MIID56ADAgECAhMzAAABh3IX
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCr00UQCi0jhq0m
+# 8NBFeGD2MfJJGBBRc09CnC9PDTecW6CCDYEwggX/MIID56ADAgECAhMzAAABh3IX
 # chVZQMcJAAAAAAGHMA0GCSqGSIb3DQEBCwUAMH4xCzAJBgNVBAYTAlVTMRMwEQYD
 # VQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNy
 # b3NvZnQgQ29ycG9yYXRpb24xKDAmBgNVBAMTH01pY3Jvc29mdCBDb2RlIFNpZ25p
@@ -6085,50 +6055,50 @@ Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
 # HjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEoMCYGA1UEAxMfTWljcm9z
 # b2Z0IENvZGUgU2lnbmluZyBQQ0EgMjAxMQITMwAAAYdyF3IVWUDHCQAAAAABhzAN
 # BglghkgBZQMEAgEFAKCBrjAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgor
-# BgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgU1GyNaSB
-# 818Liz1yxPNFgb0Pz31kenHc2mbtr6hYLu8wQgYKKwYBBAGCNwIBDDE0MDKgFIAS
+# BgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgg8MMadnk
+# ggvX424XlOIrhOk0XdOqjI0nOP+OeZITyHUwQgYKKwYBBAGCNwIBDDE0MDKgFIAS
 # AE0AaQBjAHIAbwBzAG8AZgB0oRqAGGh0dHA6Ly93d3cubWljcm9zb2Z0LmNvbTAN
-# BgkqhkiG9w0BAQEFAASCAQBKOhAavWtFjxshIj7XyORT/j0uK2v8Vur94Z4wEROP
-# pl2KM9/vgnL1MaC+K9zbR7mcU2P9NfD23vgp69YU70giXdMhvqWfIhrCWs+av56y
-# UB6F9+EULeYFzTqMK0C1x3dsDwF51FPpK1mMdaib0GrtrA9BITYfCftpU6ZEBHil
-# WX/vRD5yGwEdgMz1JTml1OZO/ikgVIWqYYvpd0robfp68nasCWgaJFo6tW/itnbN
-# vJfynT0ZP1nm7ZoJ18LM1ue82swEl6meihOqT/1a4B8JGnME8J4DgYrfYxWSRJ+W
-# n+z4hCQFTNaiq3M1By+M2SySFD6+8tu4B+BokzxaOW3QoYIS8TCCEu0GCisGAQQB
+# BgkqhkiG9w0BAQEFAASCAQCTNkMqeSIsdeEaVhzhtB9H2LG3ofTwJB8/JJpxDGwO
+# wvZLraex5UDoDZ4rFeGd+BxeMWCtpTpGSQTCFJzL5o17QY8AAoqdr/70Xin/Malw
+# 8ja9Jj5/5MOd7zJpvZGmo6ZL57ItLzX8Sy0UxWnmnWtZCqbKEbqsqOdiPo3BHxym
+# YiW3uWk9k1XwBjhf2fjMFWcHJFSplNLe5ldF725tMl1nMamPOGlmVk1TZjzHAsRi
+# XzodoKYqalbpk0nBrkklnokdcpwbaF5yYVb9C9tA8OyhfwSHg8jD5P113feA2jTz
+# upEyj/kpHkTh2eC0ByciunSP2muXLxwNLebnitG00KpyoYIS8TCCEu0GCisGAQQB
 # gjcDAwExghLdMIIS2QYJKoZIhvcNAQcCoIISyjCCEsYCAQMxDzANBglghkgBZQME
 # AgEFADCCAVUGCyqGSIb3DQEJEAEEoIIBRASCAUAwggE8AgEBBgorBgEEAYRZCgMB
-# MDEwDQYJYIZIAWUDBAIBBQAEIK3zxolibJMszcXdCPSnHVs45LQw1ZVFXNE2guEC
-# TeIuAgZe8ijLLnwYEzIwMjAwNzE2MjE1MTMyLjQyMlowBIACAfSggdSkgdEwgc4x
+# MDEwDQYJYIZIAWUDBAIBBQAEIN8pYpy67L82EFg4hHVXgECek24QkrcgJztK9nd7
+# opDoAgZfFzxhqNcYEzIwMjAwODA2MjMxNjI2LjE3N1owBIACAfSggdSkgdEwgc4x
 # CzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRt
 # b25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xKTAnBgNVBAsTIE1p
 # Y3Jvc29mdCBPcGVyYXRpb25zIFB1ZXJ0byBSaWNvMSYwJAYDVQQLEx1UaGFsZXMg
-# VFNTIEVTTjo0RDJGLUUzREQtQkVFRjElMCMGA1UEAxMcTWljcm9zb2Z0IFRpbWUt
-# U3RhbXAgU2VydmljZaCCDkQwggT1MIID3aADAgECAhMzAAABK5PQ7Y4K9/BHAAAA
-# AAErMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNo
+# VFNTIEVTTjpGODdBLUUzNzQtRDdCOTElMCMGA1UEAxMcTWljcm9zb2Z0IFRpbWUt
+# U3RhbXAgU2VydmljZaCCDkQwggT1MIID3aADAgECAhMzAAABL7GnF3lWlBeHAAAA
+# AAEvMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNo
 # aW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29y
 # cG9yYXRpb24xJjAkBgNVBAMTHU1pY3Jvc29mdCBUaW1lLVN0YW1wIFBDQSAyMDEw
-# MB4XDTE5MTIxOTAxMTUwMloXDTIxMDMxNzAxMTUwMlowgc4xCzAJBgNVBAYTAlVT
+# MB4XDTE5MTIxOTAxMTUwNloXDTIxMDMxNzAxMTUwNlowgc4xCzAJBgNVBAYTAlVT
 # MRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQK
 # ExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xKTAnBgNVBAsTIE1pY3Jvc29mdCBPcGVy
-# YXRpb25zIFB1ZXJ0byBSaWNvMSYwJAYDVQQLEx1UaGFsZXMgVFNTIEVTTjo0RDJG
-# LUUzREQtQkVFRjElMCMGA1UEAxMcTWljcm9zb2Z0IFRpbWUtU3RhbXAgU2Vydmlj
-# ZTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAJb6i4/AWVpXjQAludgA
-# NHARSFyzEjltq7Udsw5sSZo68N8oWkL+QKz842RqIiggTltm6dHYFcmB1YRRqMdX
-# 6Y7gJT9Sp8FVI10FxGF5I6d6BtQCjDBc2/s1ih0E111SANl995D8FgY8ea5u1nqE
-# omlCBbjdoqYy3APET2hABpIM6hcwIaxCvd+ugmJnHSP+PxI/8RxJh8jT/GFRzkL1
-# wy/kD2iMl711Czg3DL/yAHXusqSw95hZmW2mtL7HNvSz04rifjZw3QnYPwIi46CS
-# i34Kr9p9dB1VV7++Zo9SmgdjmvGeFjH2Jth3xExPkoULaWrvIbqcpOs9E7sAUJTB
-# sB0CAwEAAaOCARswggEXMB0GA1UdDgQWBBQi72h0uFIDuXSWYWPz0HeSiMCTBTAf
+# YXRpb25zIFB1ZXJ0byBSaWNvMSYwJAYDVQQLEx1UaGFsZXMgVFNTIEVTTjpGODdB
+# LUUzNzQtRDdCOTElMCMGA1UEAxMcTWljcm9zb2Z0IFRpbWUtU3RhbXAgU2Vydmlj
+# ZTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAKh8VkvVIwXD8sn0zT2n
+# EdyEZ9UNHY7ACbOZA4obAHvD1hauw9K1Z2lRWG+m8Ars9l35GoMXdPgshM3hZKQW
+# fhrLnF9/GDZoilhc2LhMqNPXs06rAJ8YODB6i0Cg1CFCYnyOYvywXKY3xGJN09Dg
+# PXWfczEm2P/a3rmrXMrK5EFc3ahxrC51c+UuAMKV9xJyzJVLShPwPBJl+CjdMDPJ
+# f24DZXIYec3gCN2xean1DFCI0gaqJprMeL4Om1KY2AZMIgBPEkoY1N7AI5e7ybkI
+# L8+Mz3inijb4rDTkXk86ztUwy4bdc1MyKe2j2odT+QIDA2+M8cMTIGlKn7EyD2NN
+# XU8CAwEAAaOCARswggEXMB0GA1UdDgQWBBSml/VRpBNFkAMDiqcoqWi85j/qljAf
 # BgNVHSMEGDAWgBTVYzpcijGQ80N7fEYbxTNoWoVtVTBWBgNVHR8ETzBNMEugSaBH
 # hkVodHRwOi8vY3JsLm1pY3Jvc29mdC5jb20vcGtpL2NybC9wcm9kdWN0cy9NaWNU
 # aW1TdGFQQ0FfMjAxMC0wNy0wMS5jcmwwWgYIKwYBBQUHAQEETjBMMEoGCCsGAQUF
 # BzAChj5odHRwOi8vd3d3Lm1pY3Jvc29mdC5jb20vcGtpL2NlcnRzL01pY1RpbVN0
 # YVBDQV8yMDEwLTA3LTAxLmNydDAMBgNVHRMBAf8EAjAAMBMGA1UdJQQMMAoGCCsG
-# AQUFBwMIMA0GCSqGSIb3DQEBCwUAA4IBAQBnP/nYpaY+bpVs4jJlH7SsElV4cOvd
-# pnCng+XoxtZnNhVboQQlpLr7OQ/m4Oc78707RF8onyXTSWJMvHDVhBD74qGuY3KF
-# mqWGw4MGqGLqECUnUH//xtfhZPMdixuMDBmY7StqkUUuX5TRRVh7zNdVqS7mE+Gz
-# EUedzI2ndTVGJtBUI73cU7wUe8lefIEnXzKfxsycTxUos0nUI2YoKGn89ZWPKS/Y
-# 4m35WE3YirmTMjK57B5A6KEGSBk9vqyrGNivEGoqJN+mMN8ZULJJKOtFLzgxVg7m
-# z5c/JgsMRPvFwZU96hWcLgrNV5D3fNAnWmiCLCMjiI8N8IQszZvAEpzIMIIGcTCC
+# AQUFBwMIMA0GCSqGSIb3DQEBCwUAA4IBAQB4q6ilv2SlGvJD/7dbfoIKZBO2i6YA
+# wckw57TpCrt2+SAx2dcF7JvRMCPhLCSgqjyNcJRs40cEXPbLdzZMJHzcv73AF7L6
+# mWZXg2aBjG1Sc5qM4jjE/nwIX+C6/odm5/asU4JIlFCuUZjzqdir18HkRVQve2Hw
+# V0lCXHQs+V3m9DyyA9b6LSIk3GOFZu7F11Wyx/5dVXisPPTPwh9JXfMD9W173M1+
+# ZZycmO03lUc4G1FilgpxWNdgWn/DO9ZhoW5yN6+BUddnJ4cCcCjcg8sB5rktPP8p
+# VZAQ7aUqkAeqo+FuCkAUAdJRESCpR5wgSPtVvFPMjONE36DbKtfzkfiHMIIGcTCC
 # BFmgAwIBAgIKYQmBKgAAAAAAAjANBgkqhkiG9w0BAQsFADCBiDELMAkGA1UEBhMC
 # VVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNV
 # BAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEyMDAGA1UEAxMpTWljcm9zb2Z0IFJv
@@ -6166,33 +6136,33 @@ Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
 # NR4Iuto229Nfj950iEkSoYIC0jCCAjsCAQEwgfyhgdSkgdEwgc4xCzAJBgNVBAYT
 # AlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYD
 # VQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xKTAnBgNVBAsTIE1pY3Jvc29mdCBP
-# cGVyYXRpb25zIFB1ZXJ0byBSaWNvMSYwJAYDVQQLEx1UaGFsZXMgVFNTIEVTTjo0
-# RDJGLUUzREQtQkVFRjElMCMGA1UEAxMcTWljcm9zb2Z0IFRpbWUtU3RhbXAgU2Vy
-# dmljZaIjCgEBMAcGBSsOAwIaAxUARAw2kg/n/0n60D7eGy96WYdDT6aggYMwgYCk
+# cGVyYXRpb25zIFB1ZXJ0byBSaWNvMSYwJAYDVQQLEx1UaGFsZXMgVFNTIEVTTjpG
+# ODdBLUUzNzQtRDdCOTElMCMGA1UEAxMcTWljcm9zb2Z0IFRpbWUtU3RhbXAgU2Vy
+# dmljZaIjCgEBMAcGBSsOAwIaAxUAM/CZCUpclQ9qfr/r3y9osIIPSmSggYMwgYCk
 # fjB8MQswCQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMH
 # UmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSYwJAYDVQQD
 # Ex1NaWNyb3NvZnQgVGltZS1TdGFtcCBQQ0EgMjAxMDANBgkqhkiG9w0BAQUFAAIF
-# AOK6+SgwIhgPMjAyMDA3MTYyMDA0NTZaGA8yMDIwMDcxNzIwMDQ1NlowdzA9Bgor
-# BgEEAYRZCgQBMS8wLTAKAgUA4rr5KAIBADAKAgEAAgIjhwIB/zAHAgEAAgIRpjAK
-# AgUA4rxKqAIBADA2BgorBgEEAYRZCgQCMSgwJjAMBgorBgEEAYRZCgMCoAowCAIB
-# AAIDB6EgoQowCAIBAAIDAYagMA0GCSqGSIb3DQEBBQUAA4GBAFZMX6Afmugvez3G
-# iyWag4OTAF43BK7DXyLWA1xLwcvdewuFs+gDGyJQO0gKm5WkmuE5LqpLAVkZSl0n
-# H/C86VFRt4gpzStfz8ExO9g+fftBcA0bFWi3B+FUXtDOtbM5Pqn1dv0GVkO1d4NW
-# v1Mqr4ETgome0+u4zqxofm51+j2tMYIDDTCCAwkCAQEwgZMwfDELMAkGA1UEBhMC
+# AOLW0mMwIhgPMjAyMDA4MDYyMzAyNTlaGA8yMDIwMDgwNzIzMDI1OVowdzA9Bgor
+# BgEEAYRZCgQBMS8wLTAKAgUA4tbSYwIBADAKAgEAAgILEAIB/zAHAgEAAgITKTAK
+# AgUA4tgj4wIBADA2BgorBgEEAYRZCgQCMSgwJjAMBgorBgEEAYRZCgMCoAowCAIB
+# AAIDB6EgoQowCAIBAAIDAYagMA0GCSqGSIb3DQEBBQUAA4GBABxMiFs7wxHaGvmm
+# VbpCNbi5uwQWnprBCNaR+rvYKK1tdA835mHv+v0sINsaGqrkBmIrQsXR95AKoWQ0
+# x+WR+wy2nJQ84nL9UqWI40w/dk46Cuw6zxDZyhXc50Xo3708YAkX6oQ4OyvKDhA2
+# DZsPUkIGzpZkAK9M+uEBbVf+uJDlMYIDDTCCAwkCAQEwgZMwfDELMAkGA1UEBhMC
 # VVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNV
 # BAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEmMCQGA1UEAxMdTWljcm9zb2Z0IFRp
-# bWUtU3RhbXAgUENBIDIwMTACEzMAAAErk9Dtjgr38EcAAAAAASswDQYJYIZIAWUD
+# bWUtU3RhbXAgUENBIDIwMTACEzMAAAEvsacXeVaUF4cAAAAAAS8wDQYJYIZIAWUD
 # BAIBBQCgggFKMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAvBgkqhkiG9w0B
-# CQQxIgQg+h9vrzfTI9YutY7p/2ujM+8BsRlyzN9mU1l97gSLqfowgfoGCyqGSIb3
-# DQEJEAIvMYHqMIHnMIHkMIG9BCBkJznmSoXCUyxc3HvYjOIqWMdG6L6tTAg3KsLa
-# XRvPXzCBmDCBgKR+MHwxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9u
+# CQQxIgQgY4fUfBOTq5lEWcpIEZxo0DfcYk8ozQNQ1/2LlJFESKYwgfoGCyqGSIb3
+# DQEJEAIvMYHqMIHnMIHkMIG9BCBC5RecGZvugnvVXg80zlrGv1uV35LNk+H9dBj3
+# ChFPvTCBmDCBgKR+MHwxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9u
 # MRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRp
 # b24xJjAkBgNVBAMTHU1pY3Jvc29mdCBUaW1lLVN0YW1wIFBDQSAyMDEwAhMzAAAB
-# K5PQ7Y4K9/BHAAAAAAErMCIEIGzndUnhTVVEV594uP78RnTAdV6eSRFtzFScIkMD
-# mYj1MA0GCSqGSIb3DQEBCwUABIIBAF0sxK0lPCIb4yCKtkuXRhpIFkC9BWanpf0F
-# Ioy907aTrQ3EO2yC6U6oHs7wKGG13OQA39y+g5QEhNGKHCMiueSCqbhQtO6GYRIl
-# GTclIjum1O09qOA3U0W/NCcdLDLEfWHC3USs6hoS84m7m9qzVpGmqSjJq9lNBcyb
-# GINMvK7GwSwcVXoiThmQLl1OBNxb7NBl5tUZoo4kg4FGKmobTFIRudadxQljdLqS
-# 23s0zJ7SXoUluJZJdhr3u8Y6a4NSxd9nE0JHiQ/ue7JAK4aBv8xpqm43q7ic86TH
-# oe4bGVDPZKXgdRtaD+H+0DFpkZg5lqvIOQ+MzjK9MhBkhHJNjL0=
+# L7GnF3lWlBeHAAAAAAEvMCIEILqmtDt5TADvNY7MiRidA2nBSEHa3FR3XNS0c1zm
+# 2j7LMA0GCSqGSIb3DQEBCwUABIIBAH5iHdsgoP6YXx+F3yqPtubE8vnSJjPCnNSd
+# Kc5z+Rl5WKkYxmTSV/Tl7fNJUCbHQSS9V/25jVGgNXG800brkiFKP2mMjTMhY2ZA
+# 7BV4/BKbCD4AwfWuwZPJmlK/wDm9gf0lzIu7HBmwymZrWlpce5a9K2MY/ymtI75b
+# z952FC0ud8BZ7vx6g0EFRGUWXmCz3VAJdXeEkouZ9UpBNTqTCvZmglxAux+JqO5R
+# EaZGbplpuQLGsYrkoElSXWwGVBhLovUbOY64+RDrIJtfZz7BYoEb4yuOj+FRhZxG
+# USP0rH0YQSdyvK4YNB1Yszb57RyeuwJUeqwHOWEXIoTuPszF95U=
 # SIG # End signature block
