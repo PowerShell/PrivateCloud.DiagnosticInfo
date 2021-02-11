@@ -5,7 +5,7 @@
  ##################################################>
 
 $Module = 'PrivateCloud.DiagnosticInfo'
-
+get-i	
 <############################################################
 #  Common helper functions/modules for main/child sessions  #
 ############################################################>
@@ -1905,10 +1905,29 @@ function Get-SddcDiagnosticInfo
                 # Text-only conventional commands
                 #
                 # Gather SYSTEMINFO.EXE output for a given node
-                #SystemInfo.exe /S $using:NodeName > (Join-Path (Get-NodePath $using:Path $using:NodeName) "SystemInfo.TXT")
-		$SysInfoOut=(Join-Path (Get-NodePath $using:Path $using:NodeName) "SystemInfo.TXT")
-		Start-Process -FilePath "$env:comspec" -ArgumentList "/c SystemInfo.exe /S $using:NodeName > $SysInfoOut" -WindowStyle Hidden -Wait
+			$SysInfoOut=(Join-Path (Get-NodePath $using:Path $using:NodeName) "SystemInfo.TXT")
+			Start-Process -FilePath "$env:comspec" -ArgumentList "/c SystemInfo.exe /S $using:NodeName > $SysInfoOut" -WindowStyle Hidden -Wait
+		
+		# Gather Registery Keys
+			$RegsToLog ='spacePort;HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters'
 
+			ForEach($Reg in $RegsToLog){
+				$LocalFile = (Join-Path $LocalNodeDir ($Reg -split ";")[0])
+				$Reg2Find = ($Reg -split ";")[1]	
+				try {
+					$regout = Invoke-Command -ComputerName $Node -ScriptBlock{Get-ItemProperty -Path $useing:$Reg2Find}'
+
+					If($regout){
+						$regout | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt" -Force
+						$regout | Export-Clixml -Path "$LocalFile.xml" -Force
+					}
+			    	}
+				catch {
+					Show-Warning "'$Reg2Find' failed for node $Node ($($_.Exception.Message))"
+			      	}
+			}
+			#'Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters'
+		
                 # Cmdlets to drop in TXT and XML forms
                 #
                 # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
@@ -1944,8 +1963,8 @@ function Get-SddcDiagnosticInfo
                                 'Get-NetTcpSetting -CimSession _C_',
                                 'Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_',
                                 'Get-SmbServerNetworkInterface -CimSession _C_',
-                                'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_',
-				'"spacePort" ;Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters'
+                                'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'
+				
 
                 # These commands are specific to optional modules, add only if present
                 #   - DcbQos: RoCE environments primarily
