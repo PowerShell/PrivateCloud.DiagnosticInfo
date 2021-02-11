@@ -1908,26 +1908,6 @@ function Get-SddcDiagnosticInfo
 			$SysInfoOut=(Join-Path (Get-NodePath $using:Path $using:NodeName) "SystemInfo.TXT")
 			Start-Process -FilePath "$env:comspec" -ArgumentList "/c SystemInfo.exe /S $using:NodeName > $SysInfoOut" -WindowStyle Hidden -Wait
 		
-		# Gather Registery Keys
-			$RegsToLog ='spacePort;HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters'
-
-			ForEach($Reg in $RegsToLog){
-				$LocalFile = (Join-Path $LocalNodeDir ($Reg -split ";")[0])
-				$Reg2Find = ($Reg -split ";")[1]	
-				try {
-					$regout = Invoke-Command -ComputerName $Node {Get-ItemProperty -Path $useing:Reg2Find}
-
-					If($regout){
-						$regout | Out-File -FilePath "$LocalFile.txt" -Force
-						$regout | Export-Clixml -Path "$LocalFile.xml" -Force
-					}
-			    	}
-				catch {
-					Show-Warning "'$Reg2Find' failed for node $Node ($($_.Exception.Message))"
-			      	}
-			}
-			#'Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters'
-		
                 # Cmdlets to drop in TXT and XML forms
                 #
                 # cmd is of the form "cmd arbitraryConstantArgs -argForComputerOrSessionSpecification"
@@ -1957,13 +1937,16 @@ function Get-SddcDiagnosticInfo
                                 'Get-NetPrefixPolicy -CimSession _C_',
                                 'Get-NetQosPolicy -CimSession _C_',
                                 'Get-NetRoute -CimSession _C_',
-                                'Invoke-Command -ComputerName _C_ {Get-ComputerInfo}',
 				'Get-Disk -CimSession _C_',
                                 'Get-NetTcpConnection -CimSession _C_',
                                 'Get-NetTcpSetting -CimSession _C_',
                                 'Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_',
                                 'Get-SmbServerNetworkInterface -CimSession _C_',
                                 'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_',
+				'Get-NetFirewallProfile -CimSession _C_',
+				'Get-NetFirewallRule -CimSession _C_',
+				'Get-NetConnectionProfile -CimSession _C_',
+				'Invoke-Command -ComputerName _C_ {Get-ComputerInfo}',
 				'Invoke-Command -ComputerName _C_ {Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters}'
 				
 
@@ -1979,7 +1962,11 @@ function Get-SddcDiagnosticInfo
                 if (Get-Module Hyper-V -ErrorAction SilentlyContinue) {
                     $CmdsToLog += 'Get-VM -CimSession _C_ -ErrorAction SilentlyContinue',
                                     'Get-VMNetworkAdapter -All -CimSession _C_ -ErrorAction SilentlyContinue',
-                                    'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue'
+                                    'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue',
+				    'Get-VMSwitchTeam -CimSession _C_ -SwitchName ((Get-VMSwitch -CimSession _C_ | Where-Object {$_.EmbeddedTeamingEnabled -eq $true}).Name) -ErrorAction SilentlyContinue',
+				    'Get-VMHost -CimSession _C_ -ErrorAction SilentlyContinue',
+                                    'Get-VMNetworkAdapterVlan -CimSession _C_ -ManagementOS -ErrorAction SilentlyContinue',
+                                    'Get-VMNetworkAdapterTeamMapping -CimSession _C_ -ManagementOS -ErrorAction SilentlyContinue'
                 }
 
                 foreach ($cmd in $CmdsToLog) {
@@ -1988,7 +1975,7 @@ function Get-SddcDiagnosticInfo
                     try {
 
                         $cmdex = $cmd -replace '_C_',$using:NodeName -replace '_N_',$using:NodeName -replace '_A_',$using:AccessNode
-                        $out = iex $cmdex
+                        $out = Invoke-Expression $cmdex
 
                         # capture as txt and xml for quick analysis according to taste
                         $out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
