@@ -1915,10 +1915,10 @@ function Get-SddcDiagnosticInfo
 				$LocalFile = (Join-Path $LocalNodeDir ($Reg -split ";")[0])
 				$Reg2Find = ($Reg -split ";")[1]	
 				try {
-					$regout = Invoke-Command -ComputerName $Node -ConfigurationName $using:SessionConfigurationName {Get-ItemProperty -Path $useing:Reg2Find}
+					$regout = Invoke-Command -ComputerName $Node {Get-ItemProperty -Path $useing:Reg2Find}
 
 					If($regout){
-						$regout | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt" -Force
+						$regout | Out-File -FilePath "$LocalFile.txt" -Force
 						$regout | Export-Clixml -Path "$LocalFile.xml" -Force
 					}
 			    	}
