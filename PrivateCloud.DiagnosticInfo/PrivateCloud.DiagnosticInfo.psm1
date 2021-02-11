@@ -1942,7 +1942,8 @@ function Get-SddcDiagnosticInfo
                                 'Get-NetTcpSetting -CimSession _C_',
                                 'Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_',
                                 'Get-SmbServerNetworkInterface -CimSession _C_',
-                                'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'
+                                'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_',
+				'Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters'
 
                 # These commands are specific to optional modules, add only if present
                 #   - DcbQos: RoCE environments primarily
