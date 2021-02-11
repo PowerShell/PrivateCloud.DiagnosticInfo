@@ -1946,6 +1946,7 @@ function Get-SddcDiagnosticInfo
 				'Get-NetFirewallProfile -CimSession _C_',
 				'Get-NetFirewallRule -CimSession _C_',
 				'Get-NetConnectionProfile -CimSession _C_',
+				'Get-SmbMultichannelConnection -CimSession _C_ -SmbInstance SBL',
 				'Invoke-Command -ComputerName _C_ {Get-ComputerInfo}',
 				'Invoke-Command -ComputerName _C_ {Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters}'
 				
@@ -1967,7 +1968,6 @@ function Get-SddcDiagnosticInfo
 				    'Get-VMHost -CimSession _C_ -ErrorAction SilentlyContinue',
                                     'Get-VMNetworkAdapterVlan -CimSession _C_ -ManagementOS -ErrorAction SilentlyContinue',
                                     'Get-VMNetworkAdapterTeamMapping -CimSession _C_ -ManagementOS -ErrorAction SilentlyContinue'
-				    'Get-SmbMultichannelConnection -CimSession _C_ -SmbInstance SBL'
                 }
 
                 foreach ($cmd in $CmdsToLog) {
