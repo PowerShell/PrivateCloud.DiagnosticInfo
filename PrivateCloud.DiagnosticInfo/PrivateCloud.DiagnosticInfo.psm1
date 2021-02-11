@@ -39,8 +39,6 @@ $CommonFuncBlock = {
     Import-Module SmbWitness
     Import-Module Storage
 
-    Add-Type -Assembly System.IO.Compression.FileSystem
-
     #
     # Shows error, cancels script
     #
@@ -270,32 +268,12 @@ $CommonFuncBlock = {
     {
         # Calculate number of milliseconds and prepare the WEvtUtil parameter to filter based on date/time
         $QTime = $null
+		$ExcludeBigEvtx = $true
+		
         if ($Hours -ne -1) {
             $MSecs = $Hours * 60 * 60 * 1000
             $QTime = "*[System[TimeCreated[timediff(@SystemTime) <= "+$MSecs+"]]]"
         }
-
-        # Log prefixes to gather. Note that this is a simple pattern match; for instance, there are a number of
-        # different providers that match *Microsoft-Windows-Storage*: Storage, StorageManagement, StorageSpaces, etc.
-        # NOTE: please keep this list sorted to avoid accidental dups.
-        $LogPatterns = 'Microsoft-Windows-ClusterAwareUpdating',
-                        'Microsoft-Windows-DataIntegrityScan',
-                        'Microsoft-Windows-FailoverClustering',
-                        'Microsoft-Windows-HostGuardian',
-                        'Microsoft-Windows-Hyper-V',
-                        'Microsoft-Windows-Kernel',
-                        'Microsoft-Windows-NDIS',
-                        'Microsoft-Windows-Network',
-                        'Microsoft-Windows-NTFS',
-                        'Microsoft-Windows-Partition',
-                        'Microsoft-Windows-REFS',
-                        'Microsoft-Windows-ResumeKeyFilter',
-                        'Microsoft-Windows-SMB',
-                        'Microsoft-Windows-Storage',
-                        'Microsoft-Windows-TCPIP',
-                        'Microsoft-Windows-VHDMP',
-                        'Microsoft-Windows-SDDC-Management',
-                        'Microsoft-Windows-WMI-Activity' |% { "$_*" }
 
         # Exclude verbose/lower value channels
         # The FailoverClustering Diagnostics are reflected in the cluster logs, already gathered (and large)
@@ -303,12 +281,25 @@ $CommonFuncBlock = {
         $LogToExclude = 'Microsoft-Windows-FailoverClustering/Diagnostic',
                         'Microsoft-Windows-FailoverClustering/DiagnosticVerbose',
                         'Microsoft-Windows-FailoverClustering-Client/Diagnostic',
+						'Microsoft-Windows-StorageReplica/Performance',
                         'Microsoft-Windows-StorageSpaces-Driver/Performance'
+		
+		$GetWinEventDumpFilePath = Join-Path $Path "getwinevent.json"
+		$GetWinEventDumpXmlPath  = Join-Path $Path "getwinevent.xml"
+		
+		Get-WinEvent -ListLog * -Force > $GetWinEventDumpFilePath
+		Get-WinEvent -ListLog * -Force | Export-Clixml $GetWinEventDumpXmlPath
+		
+		Write-Output $GetWinEventDumpFilePath
+		Write-Output $GetWinEventDumpXmlPath
+		
+		if ($ExcludeBigEvtx) {
+				$LogToExclude += 'Security',
+								 'Microsoft-Windows-SystemDataArchiver/Diagnostic',
+								 'Microsoft-Windows-Health/Diagnostic'
+		}
 
-        # Core logs to gather, by explicit names.
-        $LogPatterns += 'System','Application'
-
-        Get-WinEvent -ListLog $LogPatterns -Force -ErrorAction Ignore -WarningAction Ignore |? { $LogToExclude -notcontains $_.LogName } |% {
+        Get-WinEvent -ListLog * -Force -ErrorAction Ignore -WarningAction Ignore |? { $LogToExclude -notcontains $_.LogName } |% {
 
             $EventFile = Join-Path $Path ($_.LogName.Replace("/","-")+".EVTX")
 
@@ -330,12 +321,16 @@ $CommonFuncBlock = {
             if ($directChannel -eq $true) {
                 echo y | wevtutil sl /e:true $_.LogName | out-null
             }
+			
+			if ($directChannel -eq $true -or 
+				$_.RecordCount -ne 0) {
 
-            # Create locale metadata for off-system rendering
-            wevtutil al $EventFile /l:$PSCulture
+				# Create locale metadata for off-system rendering
+				wevtutil al $EventFile /l:$PSCulture
 
-            # Emit filename for capture
-            Write-Output $EventFile
+				# Emit filename for capture
+				Write-Output $EventFile
+			}
         }
 
         # work around temp file leak re: archive-log/wevtsvc
@@ -655,8 +650,15 @@ function Check-ExtractZip(
 
         Show-Update "Extracting $Path -> $ExtractToPath"
 
-        try { [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $ExtractToPath) }
-        catch { Show-Error("Can't extract results as Zip file from '$Path' to '$ExtractToPath'") }
+        try 
+        { 
+            Add-Type -Assembly System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $ExtractToPath) 
+        }
+        catch 
+        {
+            Show-Error("Can't extract results as Zip file from '$Path' to '$ExtractToPath'")
+        }
 
         return $ExtractToPath
     }
@@ -695,11 +697,11 @@ function Start-CopyJob(
                         $null = md $Destination -Force -ErrorAction Continue
                     }
                 }
-				
+
                 start-job -Name "Copy $($parent.Name) $($_.Location)" -ArgumentList $logs,$Destination,$Delete {
 
                     param($logs,$Destination,$Delete)
-					
+
                     $logs |% {
                         # allow errors to propagte for triage
                         Copy-Item -Recurse $_ $Destination -Force -ErrorAction Continue
@@ -707,45 +709,48 @@ function Start-CopyJob(
                             Remove-Item -Recurse $_ -Force -ErrorAction Continue
                         }
                     }
-                }				
+                }
             }
         }
     }
 }
 
-# 
-# Utility wrapper for invoking commands by opening sessions  
-# for each of the cluster nodes and preserving the session  
-# to be deleted after use. 
-# 
+#
+# Utility wrapper for invoking commands by opening sessions
+# for each of the cluster nodes and preserving the session
+# to be deleted after use.
+#
 
-function Invoke-SddcCommonCommand ( 
-    [string[]] $ClusterNodes = @(), 
+function Invoke-SddcCommonCommand (
+    [string[]] $ClusterNodes = @(),
     [string] $JobName,
-    [scriptblock] $InitBlock, 
-    [scriptblock] $ScriptBlock 
-    ) 
-{ 
-	$Job        = @() 
-	$Sessions   = @() 
-	$SessionIds = @() 
+    [scriptblock] $InitBlock,
+    [scriptblock] $ScriptBlock,
+    # If session configuration name is $null, it connect to default powershell
+    [string] $SessionConfigurationName,
+    [Object[]] $ArgumentList
+    )
+{
+	$Job        = @()
+	$Sessions   = @()
+	$SessionIds = @()
 
 	if ($ClusterNodes.Count -eq 0)
 	{
-		$Sessions = New-PSSession -Cn localhost -EnableNetworkAccess
+		$Sessions = New-PSSession -Cn localhost -EnableNetworkAccess -ConfigurationName $SessionConfigurationName
 	}
 	else
 	{
-		$Sessions = New-PSSession -ComputerName $ClusterNodes
+		$Sessions = New-PSSession -ComputerName $ClusterNodes -ConfigurationName $SessionConfigurationName
 	}
-	
+
     Invoke-Command -Session $Sessions $InitBlock
-    $Job = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock 
+    $Job = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList
     $SessionIds = $Sessions.Id
 
-	$Job | Add-Member -NotePropertyName ActiveSessions -NotePropertyValue $SessionIds  
-	
-	return $Job 
+	$Job | Add-Member -NotePropertyName ActiveSessions -NotePropertyValue $SessionIds
+
+	return $Job
 }
 
 #
@@ -785,26 +790,26 @@ function Get-NodeList(
     if ($Nodes.Count) {
         $NodesToPing += $Nodes |% { New-Object -TypeName PSObject -Property @{ "Name" = $_; "State" = "Down"; "Type" = "ManuallySpecifiedMachine" }}
     }
-	
-	
+
+
 	# Now try to contact the cluster - first via name then by every name from $Nodes.Count above if that fails, until we succesfully contact cluster
-	# Add any nodes missing from $NodesToPing / Replace objects in the list with their real objects 
+	# Add any nodes missing from $NodesToPing / Replace objects in the list with their real objects
 	$ClusterNodes = $null
-	
+
 	if ($Cluster -ne "" -and $Cluster -ne $null)
 	{
 		$ClusterNodes = Get-ClusterNode -Cluster $Cluster -ErrorAction SilentlyContinue
 	}
-	
+
 	$NodeIdx = 0;
 	while ($ClusterNodes -eq $null -and $NodeIdx -lt $NodesToPing.Count)
 	{
-		# we failed to get it, iterate through the nodes 
+		# we failed to get it, iterate through the nodes
 		$ClusterNodes = Get-ClusterNode -Cluster $NodesToPing[$NodeIdx].Name -ErrorAction SilentlyContinue
-		
+
 		$NodeIdx++
 	}
-	
+
 	if ($ClusterNodes -ne $null)
 	{
 		if ($Nodes.Count)
@@ -813,7 +818,7 @@ function Get-NodeList(
 			for ($i = 0; $i -lt $ClusterNodes.Count; $i++)
 			{
 				$found = $false
-				
+
 				for ($j = 0; $j -lt $NodesToPing.Count; $j++)
 				{
 					if ($NodesToPing[$j].Name -eq $ClusterNodes[$i].Name)
@@ -823,7 +828,7 @@ function Get-NodeList(
 						break
 					}
 				}
-				
+
 				if ($found -ne $true)
 				{
 					$NodesToPing += @($ClusterNodes[$i])
@@ -835,9 +840,9 @@ function Get-NodeList(
 			$NodesToPing = @($ClusterNodes)
 		}
 	}
-    
-	
-	# Try to ping the nodes 
+
+
+	# Try to ping the nodes
 
 	if ($NodesToPing.Count) {
 
@@ -856,30 +861,30 @@ function Get-NodeList(
 		$null = Wait-Job $j
 		$PingResults += $j | Receive-Job
 		$j | Remove-Job
-		
+
 		# For any notes that are "fake objects" (Type=Machine instead of Type=Node) mark them up
 		# Copy from NodesToPing to SuccesfullyPingedNodes if they're contained in PingResults
-		# Doing this because the job mutates the object 
+		# Doing this because the job mutates the object
 		for ($i = 0; $i -lt $PingResults.Count; $i++)
-		{ 				
+		{
 			for ($j = 0; $j -lt $NodesToPing.Count; $j++)
 			{
 				if ($NodesToPing[$j].Name -eq $PingResults[$i].Name)
-				{					
+				{
 					$SuccesfullyPingedNodes += @($NodesToPing[$j])
 				}
-			}		
+			}
 		}
-		
+
 	}
-	
+
     if ($Filter) {
 		$NodesToReturn = $SuccesfullyPingedNodes
     } else {
         # unfiltered, return all
         $NodesToReturn = $NodesToPing
     }
-	
+
 
     return $NodesToReturn
 }
@@ -1016,8 +1021,23 @@ Include content from the Get-NetView (NetDiagnosticInfo module) command, if pres
 .PARAMETER IncludeHealthReport
 Include an additional health report (deprecated)
 
+.PARAMETER IncludeClusterPerformanceHistory
+Include an Cluster Performance History report
+
+.PARAMETER PerformanceHistoryTimeFrame
+If Cluster Performance History is collected what is the time frame of collection.
+
 .PARAMETER IncludeLiveDump
-Include a live dump of the target systems (not valid in S2D clusters)
+Include a live dump of the target systems
+
+.PARAMETER IncludeStorDiag
+Include a storage diagnostic log of the target systems
+
+.PARAMETER IncludeProcessDump
+Include the process dump of the default process and processlists, if present.
+
+.PARAMETER ProcessLists
+Include the process dump for these processlists (comma seperated), if present.
 
 .PARAMETER IncludePerformance
 Include a performance counter capture.
@@ -1025,6 +1045,10 @@ Include a performance counter capture.
 .PARAMETER IncludeReliabilityCounters
 Include Storage Reliability counters. This may incur a short but observable latency cost on the
 physical disks due to varying overhead in their internal handling of SMART queries.
+
+.PARAMETER SessionConfigurationName
+SessionConfigurationName to connect to other nodes in cluster.
+Null if default configuration is to be used.
 
 #>
 
@@ -1140,6 +1164,10 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [switch] $IncludeGetNetView,
+	
+		[parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [switch] $SkipVM,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
@@ -1147,11 +1175,36 @@ function Get-SddcDiagnosticInfo
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [switch] $IncludeLiveDump,
+        [switch] $IncludeClusterPerformanceHistory,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [switch] $IncludeReliabilityCounters
+        [ValidateSet('LastHour','LastDay','LastWeek','LastMonth','LastYear')]
+        [string] $PerformanceHistoryTimeFrame = "LastDay",
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [switch] $IncludeLiveDump,
+		
+		[parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [switch] $IncludeStorDiag,
+
+		[parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [switch] $IncludeProcessDump,
+
+		[parameter(ParameterSetName="WriteC", Mandatory=$false)]
+		[parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [string] $Processlists = "",
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [switch] $IncludeReliabilityCounters,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [string] $SessionConfigurationName = $null
         )
 
     #
@@ -1375,11 +1428,11 @@ function Get-SddcDiagnosticInfo
         $NodeList = Get-NodeList -Cluster $ClusterName -Filter
 
         $AccessNode = Get-ClusterAccessNode @($NodeList)
-		
-		if ($AccessNode -ne $null)
-		{
-			$AccessNode = $AccessNode + "." + (Get-Cluster -Name $AccessNode).Domain
-		}
+
+        if ($AccessNode -ne $null)
+        {
+            $AccessNode = $AccessNode + "." + (Get-Cluster -Name $AccessNode).Domain
+        }
 
         try { $Volumes = Get-Volume -CimSession $AccessNode  }
         catch { Show-Error("Unable to get Volumes. `nError="+$_.Exception.Message) }
@@ -1496,7 +1549,7 @@ function Get-SddcDiagnosticInfo
 
     # Note: this should be unnecessary as soon as we have the discipline of Join-Path flushed through
     if (-not $Path.EndsWith("\")) { $Path = $Path + "\" }
-	
+
     ###
     # Now handle read case
     #
@@ -1621,7 +1674,7 @@ function Get-SddcDiagnosticInfo
         #
 
         $DedupEnabled = $true
-        if ($(Invoke-Command -ComputerName $AccessNode {(-not (Get-Command -Module Deduplication))} )) {
+        if ($(Invoke-Command -ComputerName $AccessNode -ConfigurationName $SessionConfigurationName {(-not (Get-Command -Module Deduplication))} )) {
             $DedupEnabled = $false
         }
 
@@ -1657,13 +1710,9 @@ function Get-SddcDiagnosticInfo
                     $null = Confirm-SddcDiagnosticModule -Cluster $using:Cluster 3> $o
                 }
 
-                $j = Invoke-SddcCommonCommand -ClusterNodes $ClusterNodes.Name -JobName SddcDiagnosticArchive -InitBlock $CommonFunc {
+                $j = Invoke-SddcCommonCommand -ClusterNodes $ClusterNodes.Name -JobName SddcDiagnosticArchive -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
                     Import-Module $using:Module -ErrorAction SilentlyContinue
-
-                    # note we only receive module exports from the import, must ...
-                    # import common functions
-                    . ([scriptblock]::Create($using:CommonFunc))
 
                     if (Test-SddcModulePresence) {
 
@@ -1765,6 +1814,18 @@ function Get-SddcDiagnosticInfo
             Show-Update "... Skip gather of cluster configuration since cluster is not available"
         }
 
+        if ($IncludeClusterPerformanceHistory) {
+
+            Show-Update "Starting ClusterPerformanceHistory log collection ..."
+
+            $JobStatic += start-job -Name ClusterPerformanceHistory {
+                try {
+                    Get-Clusterlog -ExportClusterPerformanceHistory -Destination $using:Path -PerformanceHistoryTimeFrame $using:PerformanceHistoryTimeFrame -Node $using:ClusterNodes.Name
+                }
+                catch { Show-Warning("Could not get ClusterPerformanceHistory. `nError="+$_.Exception.Message) }
+            }
+        }
+
         Show-Update "Start gather of driver information ..."
 
         $ClusterNodes.Name |% {
@@ -1785,10 +1846,7 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Start gather of verifier ..."
 
-        $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName Verifier -InitBlock $CommonFunc {
-
-            # import common functions
-            . ([scriptblock]::Create($using:CommonFunc))
+        $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName Verifier -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
             # Verifier
 
@@ -1803,10 +1861,7 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Start gather of filesystem filter status ..."
 
-        $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Filesystem Filter Manager' -InitBlock $CommonFunc {
-
-            # import common functions
-            . ([scriptblock]::Create($using:CommonFunc))
+        $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Filesystem Filter Manager' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
             # Filter Manager
 
@@ -1818,61 +1873,157 @@ function Get-SddcDiagnosticInfo
             fltmc instances > $LocalFile
             Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
         }
+		
+		$JobCopyOutNoDelete += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Copy WER ReportArchive' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
+
+			# ReportArchive copy (one-shot, we'll recursively copy)
+
+            Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $env:ProgramData\Microsoft\Windows\WER\ReportArchive)
+        }
+		
+		if ($IncludeDumps -eq $true) {
+			
+			$JobCopyOutNoDelete += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Copy ReportQueue' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
+
+				# ReportQueue copy (one-shot, we'll recursively copy)
+
+				Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $env:ProgramData\Microsoft\Windows\WER\ReportQueue)
+			}
+		}
+
+        if ($IncludeProcessDump) {
+
+            $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName ProcessDumps -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -ArgumentList $ProcessLists {
+
+                Param($ProcessLists)
+
+                $NodePath = $env:Temp
+                $Node = $env:COMPUTERNAME
+
+                #Default dump processes.
+                $DumpProcesses = @("vmms", "vmcompute", "vmwp", "rhs", "clussvc")
+
+                #Appending user passed process lists.
+                if ($ProcessLists -ne $null) {
+                    $DumpProcesses += $ProcessLists.split(",")
+                }
+
+
+                $DumpFileFolder = Join-Path -Path $NodePath -ChildPath 'ProcessDumps'
+
+                if (Test-Path -Path $DumpFileFolder) {
+                    Remove-Item -Path $DumpFileFolder -Recurse -Force
+                }
+
+                $null = New-Item -Path $DumpFileFolder -ItemType Directory
+                $WER = [PSObject].Assembly.GetType('System.Management.Automation.WindowsErrorReporting')
+                $NativeMethods = $WER.GetNestedType('NativeMethods', 'NonPublic')
+                $MiniDump = $NativeMethods.GetMethod('MiniDumpWriteDump', ([Reflection.BindingFlags]'NonPublic, Static'))
+                $MiniDumpWithFullMemory = [UInt32] 2
+                $ProcessList = @{}
+
+                foreach ($ProcessName in $DumpProcesses) {
+
+                    $ProcessIds = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id
+
+                    if (-not $ProcessIds) {
+                        Show-Warning "Could not generate minidump for process $ProcessName"
+                        continue;
+                    }
+
+                    foreach ($ProcessId in $ProcessIds) {
+
+                        #Already collected.
+                        if ($ProcessList[$ProcessId]) {
+                            continue;
+                        }
+
+                        $ProcessList.Add($ProcessId, $ProcessName)
+
+                        $Process = Get-Process -Id $ProcessId
+                        $ProcessId = $Process.Id
+                        $ProcessHandle = $Process.Handle
+                        $DumpFileName = "$($ProcessName)_$($ProcessId).dmp"
+
+                        $DumpFilePath = Join-Path $DumpFileFolder $DumpFileName
+
+                        $DumpFile = New-Object IO.FileStream($DumpFilePath, [IO.FileMode]::Create)
+
+                        $Result = $MiniDump.Invoke($null, @($ProcessHandle,        #hProcess
+                                                            $ProcessId,                #ProcessId
+                                                            $DumpFile.SafeFileHandle,  #hFile
+                                                            $MiniDumpWithFullMemory    #DumpType
+                                                            [IntPtr]::Zero,            #ExceptionParam
+                                                            [IntPtr]::Zero,            #UserStreamParam
+                                                            [IntPtr]::Zero))           #CallbackParam
+
+                        $DumpFile.Close()
+
+                        if(-not $Result) {
+                            Show-Warning "Failed to write dump file for process $psname with PID $ProcessId."
+                            Remove-Item $DumpFilePath
+                        } else {
+                            Write-Output (Get-AdminSharePathFromLocal $Node $DumpFilePath)
+                        }
+                    }
+                }
+            }
+        }
 
         if ($IncludeGetNetView) {
 
             Show-Update "Start gather of Get-NetView ..."
 
-            $ClusterNodes.Name |% {
+            $JobCopyOut += Invoke-SddcCommonCommand -ArgumentList $SkipVm -ClusterNodes $($ClusterNodes).Name -JobName 'GetNetView' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
-                $JobCopyOut += Invoke-Command -ComputerName $_ -AsJob -JobName GetNetView {
+				Param($SkipVM)
+				
+                $NodePath = $env:Temp
 
-                    # import common functions
-                    . ([scriptblock]::Create($using:CommonFunc))
+                # create a directory to capture GNV
 
-                    $NodePath = [System.IO.Path]::GetTempPath()
+                $gnvDir = Join-Path $NodePath 'GetNetView'
+                Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
+                $null = md $gnvDir -Force -ErrorAction SilentlyContinue
 
-                    # create a directory to capture GNV
+                # run inside a child session so we can sink output to the transcript
+                # we must pass the GNV dir since $using is statically evaluated in the
+                # outermost scope and $gnvDir is inside the Invoke call.
 
-                    $gnvDir = Join-Path $NodePath 'GetNetView'
-                    Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
-                    $null = md $gnvDir -Force -ErrorAction SilentlyContinue
+                $j = Start-Job -ArgumentList $gnvDir,$SkipVM {
 
-                    # run inside a child session so we can sink output to the transcript
-                    # we must pass the GNV dir since $using is statically evaluated in the
-                    # outermost scope and $gnvDir is inside the Invoke call.
+                    param($gnvDir,$SkipVM)
 
-                    $j = Start-Job -ArgumentList $gnvDir {
+                    # start gather transcript to the GNV directory
 
-                        param($gnvDir)
+                    $transcriptFile = Join-Path $gnvDir "0_GetNetViewGatherTranscript.log"
+                    Start-Transcript -Path $transcriptFile -Force
 
-                        # start gather transcript to the GNV directory
-
-                        $transcriptFile = Join-Path $gnvDir "0_GetNetViewGatherTranscript.log"
-                        Start-Transcript -Path $transcriptFile -Force
-
-                        if (Get-Command Get-NetView -ErrorAction SilentlyContinue) {
-                            Get-NetView -OutputDirectory $gnvDir
-                        } else {
-                            Write-Host "Get-NetView command not available"
-                        }
-
-                        Stop-Transcript
+                    if (Get-Command Get-NetView -ErrorAction SilentlyContinue) {
+						if ($SkipVM) {
+							Get-NetView -OutputDirectory $gnvDir -SkipLogs -SkipVM
+						} else {
+							Get-NetView -OutputDirectory $gnvDir -SkipLogs
+						}
+                    } else {
+                        Write-Host "Get-NetView command not available"
                     }
 
-                    # do not receive job - sunk to transcript for offline analysis
-                    # gnv produces a very large quantity of host output
-                    $null = $j | Wait-Job
-                    $j | Remove-Job
-
-                    # wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
-                    dir $gnvDir -Directory |% {
-                        Remove-Item -Recurse -Force $_.FullName
-                    }
-
-                    # gather all remaining content (will be the zip + transcript) in GNV directory
-                    Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $gnvDir)
+                    Stop-Transcript
                 }
+
+                # do not receive job - sunk to transcript for offline analysis
+                # gnv produces a very large quantity of host output
+                $null = $j | Wait-Job
+                $j | Remove-Job
+
+                # wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
+                dir $gnvDir -Directory |% {
+                    Remove-Item -Recurse -Force $_.FullName
+                }
+
+                # gather all remaining content (will be the zip + transcript) in GNV directory
+                Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $gnvDir)
             }
         }
 
@@ -1888,18 +2039,18 @@ function Get-SddcDiagnosticInfo
                 $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -Health -UseLocalTime
             }
         }
-			
+
         $JobStatic += $ClusterNodes.Name |% {
-		
-			$NodeName = $_
-			
-            Invoke-SddcCommonCommand -JobName "System Info: $NodeName" -InitBlock $CommonFunc -ScriptBlock {
+
+            $NodeName = $_
+
+            Invoke-SddcCommonCommand -JobName "System Info: $NodeName" -InitBlock $CommonFunc -SessionConfigurationName $SessionConfigurationName -ScriptBlock {
 
                 $Node = "$using:NodeName"
                 if ($using:ClusterDomain.Length) {
                     $Node += ".$using:ClusterDomain"
                 }
-				
+
                 $LocalNodeDir = Get-NodePath $using:Path $using:NodeName
 
                 # Text-only conventional commands
@@ -1937,7 +2088,7 @@ function Get-SddcDiagnosticInfo
                                 'Get-NetPrefixPolicy -CimSession _C_',
                                 'Get-NetQosPolicy -CimSession _C_',
                                 'Get-NetRoute -CimSession _C_',
-				'Get-Disk -CimSession _C_',
+                                'Get-Disk -CimSession _C_',
                                 'Get-NetTcpConnection -CimSession _C_',
                                 'Get-NetTcpSetting -CimSession _C_',
                                 'Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_',
@@ -1989,17 +2140,28 @@ function Get-SddcDiagnosticInfo
                     }
                 }
 
-                $NodeSystemRootPath = Invoke-Command -ComputerName $using:NodeName { $env:SystemRoot }
+                $NodeSystemRootPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { $env:SystemRoot }
 
+                # Avoid to use 'Join-Path' because the drive of path may not exist on the local machine.
                 if ($using:IncludeDumps -eq $true) {
 
+                    $NodeMinidumpsPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl').MinidumpDir } -ErrorAction SilentlyContinue
+                    $NodeLiveKernelReportsPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl\LiveKernelReports').LiveKernelReportsPath } -ErrorAction SilentlyContinue
                     ##
                     # Minidumps
                     ##
 
                     try {
-                        $RPath = (Get-AdminSharePathFromLocal $using:NodeName (Join-Path $NodeSystemRootPath "Minidump\*.dmp"))
-                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
+                        # Use the registry key value if it exists.
+                        if ($NodeMinidumpsPath) {
+                            $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeMinidumpsPath\*.dmp")
+                        }
+                        else {
+                            $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeSystemRootPath\Minidump\*.dmp")
+                        }
+
+                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue
+                    }
                     catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $using:NodeName" }
 
                     $DmpFiles |% {
@@ -2012,8 +2174,16 @@ function Get-SddcDiagnosticInfo
                     ##
 
                     try {
-                        $RPath = (Get-AdminSharePathFromLocal $using:NodeName (Join-Path $NodeSystemRootPath "LiveKernelReports\*.dmp"))
-                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
+                        # Use the registry key value if it exists.
+                        if ($NodeLiveKernelReportsPath) {
+                            $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeLiveKernelReportsPath\*.dmp")
+                        }
+                        else {
+                            $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeSystemRootPath\LiveKernelReports\*.dmp")
+                        }
+
+                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue
+                    }
                     catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $using:NodeName" }
 
                     $DmpFiles |% {
@@ -2023,7 +2193,7 @@ function Get-SddcDiagnosticInfo
                 }
 
                 try {
-                    $RPath = (Get-AdminSharePathFromLocal $using:NodeName (Join-Path $NodeSystemRootPath "Cluster\Reports\*.*"))
+                    $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeSystemRootPath\Cluster\Reports\*.*")
                     $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
                 catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $using:NodeName" }
 
@@ -2040,17 +2210,45 @@ function Get-SddcDiagnosticInfo
             }
         }
 
+        Show-Update "Starting export diagnostic log and live dump ..."
+
+        $JobCopyOut += Invoke-SddcCommonCommand -ArgumentList $IncludeLiveDump,$IncludeStorDiag -ClusterNodes $AccessNode -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName StorageDiagnosticInfoAndLiveDump {
+
+            Param($IncludeLiveDump,$IncludeStorDiag)
+
+            $Node = $env:COMPUTERNAME
+            $NodePath = $env:Temp
+
+            $destinationPath = Join-Path -Path $NodePath -ChildPath 'StorageDiagnosticDump'
+
+            if (Test-Path -Path $destinationPath) {
+                Remove-Item -Path $destinationPath -Recurse -Force
+            }
+
+            $clusterSubsystem = (Get-StorageSubSystem |? Model -eq 'Clustered Windows Storage').FriendlyName
+
+            if ($IncludeLiveDump) {
+                Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
+            
+                # Copy storage diagnostic and live dump information (one-shot, we'll recursively copy)
+                Write-Output (Get-AdminSharePathFromLocal $Node $destinationPath)
+            }
+			elseif ($IncludeStorDiag) {
+                Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
+            
+                # Copy storage diagnostic and live dump information (one-shot, we'll recursively copy)
+                Write-Output (Get-AdminSharePathFromLocal $Node $destinationPath)
+            }
+        }
+
         Show-Update "Starting export of events ..."
 
-        $JobCopyOut += Invoke-Command -ArgumentList $HoursOfEvents -ComputerName $($ClusterNodes).Name -AsJob -JobName Events {
+        $JobCopyOut += Invoke-SddcCommonCommand -ArgumentList $HoursOfEvents -ClusterNodes $($ClusterNodes).Name -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName Events {
 
             Param([int] $Hours)
 
-            # import common functions
-            . ([scriptblock]::Create($using:CommonFunc))
-
             $Node = $env:COMPUTERNAME
-            $NodePath = [System.IO.Path]::GetTempPath()
+            $NodePath = $env:Temp
 
             Get-SddcCapturedEvents $NodePath $Hours |% {
 
@@ -2235,10 +2433,16 @@ function Get-SddcDiagnosticInfo
         if ($Subsystem.HealthStatus -notlike "Healthy" -and $ClusterName.Length) {
             Show-Update "Triage for Clustered Subsystem (HealthStatus = $($Subsystem.HealthStatus))"
             try {
-                $Subsystem | Debug-StorageSubsystem -CimSession $AccessNode |
-                    Export-Clixml (Join-Path $Path "DebugStorageSubsystem.XML")
+				$cmdlet = Get-Command Get-HealthFault -ErrorAction SilentlyContinue
+				if ($null -ne $cmdlet -and $cmdlet.Source -eq 'FailoverClusters') {
+					Get-HealthFault  -CimSession $AccessNode |
+						Export-Clixml (Join-Path $Path "HeathFault.XML")
+				} else {
+					$Subsystem | Debug-StorageSubsystem -CimSession $AccessNode |
+						Export-Clixml (Join-Path $Path "DebugStorageSubsystem.XML")
+				}
             }
-            catch { Show-Error "Unable to get Debug-StorageSubsystem for unhealthy StorageSubsystem.`nError=" $_ }
+            catch { Show-Error "Unable to get Get-HealthFault or Debug-StorageSubsystem for unhealthy StorageSubsystem.`nError=" $_ }
         }
 
         Show-Update "Volumes & Virtual Disks"
@@ -2268,7 +2472,7 @@ function Get-SddcDiagnosticInfo
             Show-Update "Dedup Volume Status"
 
             try {
-                $DedupVolumes = Invoke-Command -ComputerName $AccessNode { Get-DedupStatus }
+                $DedupVolumes = Invoke-Command -ComputerName $AccessNode -ConfigurationName $SessionConfigurationName { Get-DedupStatus }
                 $DedupVolumes | Export-Clixml ($Path + "GetDedupVolume.XML") }
             catch { Show-Error("Unable to get Dedup Volumes.`nError="+$_.Exception.Message) }
 
@@ -2309,7 +2513,7 @@ function Get-SddcDiagnosticInfo
 
         try {
             # cannot subsystem scope Get-StorageJob at this time
-            icm $AccessNode { Get-StorageJob } |
+            icm $AccessNode -ConfigurationName $SessionConfigurationName { Get-StorageJob } |
                 Export-Clixml ($Path + "GetStorageJob.XML") }
         catch { Show-Warning("Unable to get Storage Jobs. `nError="+$_.Exception.Message) }
 
@@ -2350,16 +2554,16 @@ function Get-SddcDiagnosticInfo
             Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $Subsystem |
                 Export-Clixml ($Path + "GetStorageEnclosure.XML") }
         catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
-		
-		# Undo changes as this is failing in AzureStack environment.
-		# SDDC cim objects
-		
+
+        # Undo changes as this is failing in AzureStack environment.
+        # SDDC cim objects
+
         #Show-Update "SDDC Cim Objects"
-		
+
         #foreach($objType in @("Drive","Server","Volume","Cluster","VirtualMachine","VirtualSwitch"))
         #{
         #    try {
-		#		$className = "SDDC_"+$objType;
+        #        $className = "SDDC_"+$objType;
         #        Get-CimInstance -Namespace "root\SDDC\Management" -ClassName $className  | Export-Clixml ($Path + "GetSddc"+$objType+".XML");
         #    }
         #    catch { Show-Warning("Unable to get SDDC "+$objType+". `nError="+$_.Exception.Message) }
@@ -2413,7 +2617,7 @@ function Get-SddcDiagnosticInfo
         ####
 
         if ($JobCopyOut.Count -or $JobCopyOutNoDelete.Count) {
-		
+
             Show-Update "Completing jobs with remote copyout ..." -ForegroundColor Green
             Show-WaitChildJob ($JobCopyOut + $JobCopyOutNoDelete) 120
             Show-Update "Starting remote copyout ..."
@@ -2428,7 +2632,7 @@ function Get-SddcDiagnosticInfo
             Receive-Job $JobCopy
             Remove-Job ($JobCopyOut + $JobCopyOutNoDelete)
             Remove-Job $JobCopy
-			
+
             if (Get-Member -InputObject $JobCopyOut ActiveSessions)
             {
                  Remove-PSSession -Id $JobCopyOut.ActiveSessions
@@ -2445,7 +2649,7 @@ function Get-SddcDiagnosticInfo
         Show-WaitChildJob $JobStatic 30
         Receive-Job $JobStatic
         Remove-Job $JobStatic
-		
+
         if (Get-Member -InputObject $JobStatic ActiveSessions)
         {
                 Remove-PSSession -Id $JobStatic.ActiveSessions
@@ -2787,7 +2991,7 @@ function Get-SddcDiagnosticInfo
     $ZipPath = $ZipPrefix + $ZipSuffix
 
     try {
-
+        Add-Type -Assembly System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
         $ZipPath = Convert-Path $ZipPath
         Show-Update "Zip File Name : $ZipPath"
@@ -3188,6 +3392,7 @@ function Update-SddcDiagnosticArchive
     $ZipPath = (join-path $ArchivePath $ZipFile)
 
     try {
+        Add-Type -Assembly System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::CreateFromDirectory($CapturePath, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
         Show-Update "Zip File Name : $ZipPath"
     } catch {
@@ -3541,8 +3746,7 @@ function Register-SddcDiagnosticArchiveJob
         $Module = 'PrivateCloud.DiagnosticInfo'
         Import-Module $Module
 
-        $Path = $null
-        Get-SddcDiagnosticArchiveJobParameters -Path ([ref] $Path)
+        $Path = (Get-Cluster -Name . -ErrorAction Stop | Get-ClusterParameter -Name SddcDiagnosticArchivePath -ErrorAction Stop).Value
         $null = mkdir -Force $Path -ErrorAction SilentlyContinue
 
         $LogFile = Join-Path $Path "SddcDiagnosticArchive.log"
@@ -3577,7 +3781,8 @@ function Register-SddcDiagnosticArchiveJob
                 Update-SddcDiagnosticArchive $Path
                 Limit-SddcDiagnosticArchive $Path
             } catch {
-                Show-Error "SDDC Diagnostic Archive job failed.`nError=" $_
+                Write-Error "$(Get-Date -format 's') : SDDC Diagnostic Archive job failed."
+                throw $_
             }
         }
 
@@ -3618,7 +3823,7 @@ function Show-StorageCounters
 	$cachetable=new-object System.Data.DataTable "$tabName"
 
 	#Define Columns
-	$col1 = New-Object system.Data.DataColumn Node,([string]) 
+	$col1 = New-Object system.Data.DataColumn Node,([string])
 	$col2 = New-Object system.Data.DataColumn CacheHits,([string])
 	$col3 = New-Object system.Data.DataColumn CacheMiss,([string])
 	$col4 = New-Object system.Data.DataColumn DiskReads,([string])
@@ -3631,14 +3836,14 @@ function Show-StorageCounters
 	$tabName="Error Table"
 	$errtable=new-object System.Data.DataTable "$tabName"
 
-	$col9 = New-Object system.Data.DataColumn Node,([string]) 
+	$col9 = New-Object system.Data.DataColumn Node,([string])
 	$col10 = New-Object system.Data.DataColumn WriteError,([string])
 	$col11 = New-Object system.Data.DataColumn WriteMedia,([string])
 	$col12 = New-Object system.Data.DataColumn ReadTimeout,([string])
 	$col13 = New-Object system.Data.DataColumn ReadMedia,([string])
 
 	#Add the Columns
-	$cachetable.columns.add($col1) 
+	$cachetable.columns.add($col1)
 	$cachetable.columns.add($col2)
 	$cachetable.columns.add($col3)
 	$cachetable.columns.add($col4)
@@ -3647,7 +3852,7 @@ function Show-StorageCounters
 	$cachetable.columns.add($col7)
 	$cachetable.columns.add($col8)
 
-	$errtable.columns.add($col9) 
+	$errtable.columns.add($col9)
 	$errtable.columns.add($col10)
 	$errtable.columns.add($col11)
 	$errtable.columns.add($col12)
@@ -3658,7 +3863,7 @@ function Show-StorageCounters
 	$table=new-object System.Data.DataTable "$tabName"
 
 	#Define Columns
-	$col1 = New-Object system.Data.DataColumn Node,([string]) 
+	$col1 = New-Object system.Data.DataColumn Node,([string])
 	$col2 = New-Object system.Data.DataColumn CSVReadIOPS,([string])
 	$col3 = New-Object system.Data.DataColumn CSVReadLatency,([string])
 	$col4 = New-Object system.Data.DataColumn CSVWriteIOPS,([string])
@@ -3666,7 +3871,7 @@ function Show-StorageCounters
 
 	$tabName="SBL Perf"
 	$sbltable=new-object System.Data.DataTable "$tabName"
-	$col6 = New-Object system.Data.DataColumn Node,([string]) 
+	$col6 = New-Object system.Data.DataColumn Node,([string])
 	$col7 = New-Object system.Data.DataColumn SBLReadIOPS,([string])
 	$col8 = New-Object system.Data.DataColumn SBLReadLatency,([string])
 	$col9 = New-Object system.Data.DataColumn SBLWriteIOPS,([string])
@@ -3677,13 +3882,13 @@ function Show-StorageCounters
 	$col14 = New-Object system.Data.DataColumn SBLRemoteWrite,([string])
 
 	#Add the Columns
-	$table.columns.add($col1) 
+	$table.columns.add($col1)
 	$table.columns.add($col2)
 	$table.columns.add($col3)
 	$table.columns.add($col4)
 	$table.columns.add($col5)
 
-	$sbltable.columns.add($col6) 
+	$sbltable.columns.add($col6)
 	$sbltable.columns.add($col7)
 	$sbltable.columns.add($col8)
 	$sbltable.columns.add($col9)
@@ -3697,11 +3902,11 @@ function Show-StorageCounters
 	$ioprofiletable=new-object System.Data.DataTable "$tabName"
 
 	#Define Columns
-	$col1 = New-Object system.Data.DataColumn Node,([string]) 
+	$col1 = New-Object system.Data.DataColumn Node,([string])
 	$col2 = New-Object system.Data.DataColumn IOProfileRead,([string])
 	$col3 = New-Object system.Data.DataColumn IOProfileWrites,([string])
 
-	$ioprofiletable.columns.add($col1) 
+	$ioprofiletable.columns.add($col1)
 	$ioprofiletable.columns.add($col2)
 	$ioprofiletable.columns.add($col3)
 
@@ -3718,7 +3923,7 @@ function Show-StorageCounters
 		$csvwritelat=$d[$sample].CounterSamples | where { $_.path -Like "*cluster csvfs(_total)\avg. sec/write"}
 		$csvreadlat=$d[$sample].CounterSamples | where { $_.path -Like "*cluster csvfs(_total)\avg. sec/read"}
 		$csvnodes=$csvreads.Path
-		
+
 		$sblreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\read/sec*"}
 		$sblwrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\writes/sec*"}
 		$sbllocalreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster disk counters(_total)\Local: read/sec*"}
@@ -3733,7 +3938,7 @@ function Show-StorageCounters
 		$cachemiss=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\cache miss reads/sec*"}
 		$diskreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\disk reads/sec"}
 		$directreads=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\direct reads/sec"}
-			
+
 		$diskwrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\disk writes/sec*"}
 		$directwrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\direct writes/sec*"}
 		$cachewrites=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\cache writes/sec"}
@@ -3743,12 +3948,12 @@ function Show-StorageCounters
 		$readtimeout=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\read errors timeout*"}
 		$readmedia=$d[$sample].CounterSamples | where { $_.path -Like "*cluster storage hybrid disks(_total)\read errors media*"}
 		$cachenodes=$cachehits.Path
-		
-		
+
+
 		$diskioreads=$d[$sample].CounterSamples | where { $_.path -like "*cluster storage hybrid disks io profile(_total)\reads/sec total*" }
 		$diskiowrites=$d[$sample].CounterSamples | where { $_.path -like "*cluster storage hybrid disks io profile(_total)\writes/sec total*" }
 		$ioprofilenodes = $diskioreads.Path
-		
+
 		$csvreadtotal=0
 		$csvwritetotal=0
 		$sblreadtotal=0
@@ -3780,14 +3985,14 @@ function Show-StorageCounters
 			$row.Node = $csvnodes[$index].Substring(2,$pos-2)
 			$row.CSVReadIOPS = $([math]::Round($csvreads[$index].cookedValue,0))
 			$row.CSVReadLatency = $([math]::Round($csvreadlat[$index].cookedValue*1000,2))
-			$row.CSVWriteIOPS = $([math]::Round($csvwrites[$index].cookedValue,0)) 
+			$row.CSVWriteIOPS = $([math]::Round($csvwrites[$index].cookedValue,0))
 			$row.CSVWriteLatency = $([math]::Round($csvwritelat[$index].cookedValue*1000,2))
 			$csvreadtotal += $row.CSVReadIOPS
 			$csvwritetotal+= $row.CSVWriteIOPS
 			$table.Rows.Add($row)
 			$index+=1
 		}
-		
+
 		$index=0
 		foreach($node in $sblnodes) {
 			$row = $sbltable.NewRow()
@@ -3795,13 +4000,13 @@ function Show-StorageCounters
 			$row.Node = $sblnodes[$index].Substring(2,$pos-2)
 			$row.SBLReadIOPS = $([math]::Round($sblreads[$index].cookedValue,0))
 			$row.SBLReadLatency = $([math]::Round($sblreadlat[$index].cookedValue*1000,2))
-			$row.SBLWriteIOPS = $([math]::Round($sblwrites[$index].cookedValue,0)) 
+			$row.SBLWriteIOPS = $([math]::Round($sblwrites[$index].cookedValue,0))
 			$row.SBLWriteLatency = $([math]::Round($sblwritelat[$index].cookedValue*1000,2))
-			$row.SBLLocalRead = $([math]::Round($sbllocalreads[$index].cookedValue,0)) 
-			$row.SBLLocalWrite = $([math]::Round($sbllocalwrites[$index].cookedValue,0)) 
-			$row.SBLRemoteRead = $([math]::Round($sblremotereads[$index].cookedValue,0)) 
-			$row.SBLRemoteWrite = $([math]::Round($sblremotewrites[$index].cookedValue,0)) 
-			
+			$row.SBLLocalRead = $([math]::Round($sbllocalreads[$index].cookedValue,0))
+			$row.SBLLocalWrite = $([math]::Round($sbllocalwrites[$index].cookedValue,0))
+			$row.SBLRemoteRead = $([math]::Round($sblremotereads[$index].cookedValue,0))
+			$row.SBLRemoteWrite = $([math]::Round($sblremotewrites[$index].cookedValue,0))
+
 			$sblreadtotal+=$row.SBLReadIOPS
 			$sblwritetotal+=$row.SBLWriteIOPS
 
@@ -3809,7 +4014,7 @@ function Show-StorageCounters
 			$sbltable.Rows.Add($row)
 			$index+=1
 		}
-		
+
 		$index=0
 		foreach($node in $cachenodes) {
 			$row = $cachetable.NewRow();
@@ -3818,14 +4023,14 @@ function Show-StorageCounters
 
 			$row.CacheHits = $([math]::Round($cachehits[$index].cookedValue,0))
 			$row.CacheMiss = $([math]::Round($cachemiss[$index].cookedValue,0))
-			$row.DiskReads = $([math]::Round($diskreads[$index].cookedValue,0)) 
+			$row.DiskReads = $([math]::Round($diskreads[$index].cookedValue,0))
 			$row.DirectReads = $([math]::Round($directreads[$index].cookedValue,0))
 			$row.DiskWrites = $([math]::Round($diskwrites[$index].cookedValue,0))
 			$row.DirectWrites = $([math]::Round($directwrites[$index].cookedValue,0))
-			$row.CacheWrites = $([math]::Round($cachewrites[$index].cookedValue,0)) 
+			$row.CacheWrites = $([math]::Round($cachewrites[$index].cookedValue,0))
 			#Add the row to the table
 			$cachetable.Rows.Add($row)
-			
+
 			$cachehittotal+=$row.CacheHits
 			$cachemisstotal+=$row.CacheMiss
 			$diskreadtotal+=$row.DiskReads
@@ -3848,24 +4053,24 @@ function Show-StorageCounters
 
 			$index+=1
 		}
-		
+
 		$index=0
 		foreach($node in $ioprofilenodes) {
 			$row = $ioprofiletable.NewRow()
 			$pos = $ioprofilenodes[$index].IndexOf("\",2)
 			$row.Node = $ioprofilenodes[$index].Substring(2,$pos-2)
 			$row.IOProfileRead = $([math]::Round($diskioreads[$index].cookedValue,0))
-			$row.IOProfileWrites = $([math]::Round($diskiowrites[$index].cookedValue,0)) 
+			$row.IOProfileWrites = $([math]::Round($diskiowrites[$index].cookedValue,0))
 
 			$ioprofilereadtotal+=$row.IOProfileRead
 			$ioprofilewritetotal+=$row.IOProfileWrites
-			
+
 			#Add the row to the table
 			$ioprofiletable.Rows.Add($row)
 			$index+=1
 		}
 
-		# add Total row 
+		# add Total row
 		$row = $table.NewRow()
 		$row.Node = "Total"
 		$row.CSVReadIOPS = $csvreadtotal
@@ -3893,7 +4098,7 @@ function Show-StorageCounters
 		$row.CacheWrites = $cachewritetotal
 		#Add the row to the table
 		$cachetable.Rows.Add($row)
-		
+
 		$row = $ioprofiletable.NewRow()
 		$row.Node = "Total"
 		$row.IOProfileRead = $ioprofilereadtotal
@@ -3919,7 +4124,7 @@ function Show-StorageCounters
 		if ($sample -eq $d.Count) {
 			$sample=0
 		}
-		
+
 		if ($delta -ne 0) {
 			break
 		}
@@ -3946,29 +4151,29 @@ function Get-SpacesTimeline
         [string]
 
         $Path,
-		
+
 		[parameter(Mandatory=$true)]
 
         [ValidateNotNullOrEmpty()]
 
         [string]
-		
+
 		$VirtualDiskId
-		
+
         )
- 
+
 		$VirtualDiskFilePath = Join-Path $Path "GetVirtualDisk.XML"
 		$ClusterNodeFilePath = Join-Path $Path "GetClusterNode.XML"
-		
+
 		if ((-not (Test-Path $VirtualDiskFilePath)) -or (-not (Test-Path $ClusterNodeFilePath)))
 		{
 			Write-Error "Path is not valid or collection files are not present. Please check and try again: $Path"
 			return
 		}
-		
+
         $VirtualDisks = Import-ClixmlIf ($VirtualDiskFilePath)
         $ClusterNodes = Import-ClixmlIf ($ClusterNodeFilePath)
-		
+
         $OperationalLog = "Microsoft-Windows-StorageSpaces-Driver-Operational.EVTX"
         $DiagnosticLog  = "Microsoft-Windows-StorageSpaces-Driver-Diagnostic.EVTX"
 
@@ -3982,20 +4187,20 @@ function Get-SpacesTimeline
 
             foreach ($VirtualDisk in $VirtualDisks)
             {
-                $id = $VirtualDisk.ObjectId.Split(":")[2].Split("}")[1] + "}"				
+                $id = $VirtualDisk.ObjectId.Split(":")[2].Split("}")[1] + "}"
 
 				if ($VirtualDiskId -ne $id.Trim("{}"))
 				{
 					continue;
 				}
-				
+
                 $eventFilter = "EventID=1008 or EventID=1009 or EventID=1021 or EventID=1022"
 
 			    $query = "*[System[($eventFilter)]] and *[EventData[Data[@Name='Id'] and (Data='$id')]]"
 
                 $events = Get-WinEvent -Path $DiagnosticLogPath -FilterXPath $query -ErrorAction SilentlyContinue
                 $events | % { $_ | Add-Member NodeName $nodeName}
-			
+
                 if ($events)
                 {
                     $eventshash[$id] += $events;
@@ -4005,9 +4210,9 @@ function Get-SpacesTimeline
 
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Windows.Forms.DataVisualization
-		
+
 		$Title = "Storage Spaces State Timeline"
-		
+
 		$chart = New-object Windows.Forms.DataVisualization.Charting.Chart
 		$chart.Anchor = [Windows.Forms.AnchorStyles]::Bottom -bor
 						[Windows.Forms.AnchorStyles]::Right -bor
@@ -4046,22 +4251,22 @@ function Get-SpacesTimeline
 		$chartarea.AxisY.MinorGrid.LineDashStyle = [Windows.Forms.DataVisualization.Charting.ChartDashStyle]::Dot
 
 		$chart.ChartAreas.Add($chartArea)
-			
+
 		foreach ($key in $eventshash.Keys)
-		{	
+		{
 			if ($key.Trim("{}") -ne $VirtualDiskId)
 			{
 				continue;
 			}
-			
+
 			$eventsHashSortTime = $eventshash[$key] | sort TimeCreated
-	
+
 			foreach ($i in $eventsHashSortTime)
 			{
-				
+
 				$point = New-Object Windows.Forms.DataVisualization.Charting.DataPoint
 				$point.Color = [Drawing.Color]::Green
-				
+
 				if ($i.Id -eq 1008)
 				{
 					$startTime = $i.TimeCreated
@@ -4074,7 +4279,7 @@ function Get-SpacesTimeline
 					$endTime = $i.TimeCreated
 					$startTime = $null
 				}
-				
+
 				if ($i.Id -eq 1021)
 				{
 					$value = 20
@@ -4086,7 +4291,7 @@ function Get-SpacesTimeline
 					$point.Color = [Drawing.Color]::Red
 					$chart.Series[$seriesName].Points.Add($point)
 				}
-				
+
 				if ($i.Id -eq 1021)
 				{
 					$value = 20
@@ -4098,11 +4303,11 @@ function Get-SpacesTimeline
 					$point.Color = [Drawing.Color]::Red
 					$chart.Series[$seriesName].Points.Add($point)
 				}
-				
+
 				$chart.Series[$seriesName].ChartType = [Windows.Forms.DataVisualization.Charting.SeriesChartType]::Line
 				$chart.Series[$seriesName].XValueType = [Windows.Forms.DataVisualization.Charting.ChartValueType]::DateTime
 				$chart.Series[$seriesName].MarkerStyle = [Windows.Forms.DataVisualization.Charting.MarkerStyle]::Circle
-				
+
 				if ($startTime -ne $null)
 				{
 					$value = 10
@@ -4126,7 +4331,7 @@ function Get-SpacesTimeline
 				}
 			}
 		}
-		
+
 		$form = New-Object Windows.Forms.Form
 		$form.Text = "Storage Chart plotting space timeline"
 		$form.Width = 1100
@@ -4136,7 +4341,7 @@ function Get-SpacesTimeline
 
 		[void]$form.ShowDialog()
  }
- 
+
 #######
 #######
 #######
@@ -4571,10 +4776,10 @@ function Get-StorageLatencyReport
 
         # parallelize processing of per-node event logs
 
-        $j += Invoke-SddcCommonCommand -InitBlock $CommonFunc -JobName $node -ScriptBlock {
+        $j += Invoke-SddcCommonCommand -InitBlock $CommonFunc -JobName $node -SessionConfigurationName $null -ScriptBlock {
 
 			$dofull = $false
-			
+
 			if ($using:ReportLevel -eq "Full")
 			{
 				$dofull = $true
@@ -5805,7 +6010,7 @@ function Show-SddcDiagnosticReport
     }
 }
 
-# DEPRECATED New-Alias -Value Get-SddcDiagnosticInfo -Name Test-StorageHealth # Original name when Jose started (CPSv1)
+# DEPRECATED New-Alias -Value Get-SddcDiagnosticInfo -Name Test-StorageHealth # So, Original name when Jose started (CPSv1)
 New-Alias -Value Get-SddcDiagnosticInfo -Name Get-PCStorageDiagnosticInfo # Name until 02/2018, changed for inclusiveness
 New-Alias -Value Get-SddcDiagnosticInfo -Name getpcsdi # Shorthand for Get-PCStorageDiagnosticInfo
 New-Alias -Value Get-SddcDiagnosticInfo -Name gsddcdi # New alias
@@ -5827,194 +6032,194 @@ Export-ModuleMember -Alias * -Function 'Get-SddcDiagnosticInfo',
     'Set-SddcDiagnosticArchiveJobParameters',
     'Get-SddcDiagnosticArchiveJobParameters'
 # SIG # Begin signature block
-# MIIjhQYJKoZIhvcNAQcCoIIjdjCCI3ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIjewYJKoZIhvcNAQcCoIIjbDCCI2gCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCu+ye6UUEWXcGN
-# mGpe7pU3eQ8EfI7tA0dmQVkpk6CS3aCCDYEwggX/MIID56ADAgECAhMzAAABA14l
-# HJkfox64AAAAAAEDMA0GCSqGSIb3DQEBCwUAMH4xCzAJBgNVBAYTAlVTMRMwEQYD
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCA2NZlr/uVEnJ3Z
+# a78eGe9jmCuM4h4vFzrNy/AVC4ZCP6CCDXYwggX0MIID3KADAgECAhMzAAABhk0h
+# daDZB74sAAAAAAGGMA0GCSqGSIb3DQEBCwUAMH4xCzAJBgNVBAYTAlVTMRMwEQYD
 # VQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNy
 # b3NvZnQgQ29ycG9yYXRpb24xKDAmBgNVBAMTH01pY3Jvc29mdCBDb2RlIFNpZ25p
-# bmcgUENBIDIwMTEwHhcNMTgwNzEyMjAwODQ4WhcNMTkwNzI2MjAwODQ4WjB0MQsw
+# bmcgUENBIDIwMTEwHhcNMjAwMzA0MTgzOTQ2WhcNMjEwMzAzMTgzOTQ2WjB0MQsw
 # CQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9u
 # ZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMR4wHAYDVQQDExVNaWNy
 # b3NvZnQgQ29ycG9yYXRpb24wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIB
-# AQDRlHY25oarNv5p+UZ8i4hQy5Bwf7BVqSQdfjnnBZ8PrHuXss5zCvvUmyRcFrU5
-# 3Rt+M2wR/Dsm85iqXVNrqsPsE7jS789Xf8xly69NLjKxVitONAeJ/mkhvT5E+94S
-# nYW/fHaGfXKxdpth5opkTEbOttU6jHeTd2chnLZaBl5HhvU80QnKDT3NsumhUHjR
-# hIjiATwi/K+WCMxdmcDt66VamJL1yEBOanOv3uN0etNfRpe84mcod5mswQ4xFo8A
-# DwH+S15UD8rEZT8K46NG2/YsAzoZvmgFFpzmfzS/p4eNZTkmyWPU78XdvSX+/Sj0
-# NIZ5rCrVXzCRO+QUauuxygQjAgMBAAGjggF+MIIBejAfBgNVHSUEGDAWBgorBgEE
-# AYI3TAgBBggrBgEFBQcDAzAdBgNVHQ4EFgQUR77Ay+GmP/1l1jjyA123r3f3QP8w
-# UAYDVR0RBEkwR6RFMEMxKTAnBgNVBAsTIE1pY3Jvc29mdCBPcGVyYXRpb25zIFB1
-# ZXJ0byBSaWNvMRYwFAYDVQQFEw0yMzAwMTIrNDM3OTY1MB8GA1UdIwQYMBaAFEhu
-# ZOVQBdOCqhc3NyK1bajKdQKVMFQGA1UdHwRNMEswSaBHoEWGQ2h0dHA6Ly93d3cu
-# bWljcm9zb2Z0LmNvbS9wa2lvcHMvY3JsL01pY0NvZFNpZ1BDQTIwMTFfMjAxMS0w
-# Ny0wOC5jcmwwYQYIKwYBBQUHAQEEVTBTMFEGCCsGAQUFBzAChkVodHRwOi8vd3d3
-# Lm1pY3Jvc29mdC5jb20vcGtpb3BzL2NlcnRzL01pY0NvZFNpZ1BDQTIwMTFfMjAx
-# MS0wNy0wOC5jcnQwDAYDVR0TAQH/BAIwADANBgkqhkiG9w0BAQsFAAOCAgEAn/XJ
-# Uw0/DSbsokTYDdGfY5YGSz8eXMUzo6TDbK8fwAG662XsnjMQD6esW9S9kGEX5zHn
-# wya0rPUn00iThoj+EjWRZCLRay07qCwVlCnSN5bmNf8MzsgGFhaeJLHiOfluDnjY
-# DBu2KWAndjQkm925l3XLATutghIWIoCJFYS7mFAgsBcmhkmvzn1FFUM0ls+BXBgs
-# 1JPyZ6vic8g9o838Mh5gHOmwGzD7LLsHLpaEk0UoVFzNlv2g24HYtjDKQ7HzSMCy
-# RhxdXnYqWJ/U7vL0+khMtWGLsIxB6aq4nZD0/2pCD7k+6Q7slPyNgLt44yOneFuy
-# bR/5WcF9ttE5yXnggxxgCto9sNHtNr9FB+kbNm7lPTsFA6fUpyUSj+Z2oxOzRVpD
-# MYLa2ISuubAfdfX2HX1RETcn6LU1hHH3V6qu+olxyZjSnlpkdr6Mw30VapHxFPTy
-# 2TUxuNty+rR1yIibar+YRcdmstf/zpKQdeTr5obSyBvbJ8BblW9Jb1hdaSreU0v4
-# 6Mp79mwV+QMZDxGFqk+av6pX3WDG9XEg9FGomsrp0es0Rz11+iLsVT9qGTlrEOla
-# P470I3gwsvKmOMs1jaqYWSRAuDpnpAdfoP7YO0kT+wzh7Qttg1DO8H8+4NkI6Iwh
-# SkHC3uuOW+4Dwx1ubuZUNWZncnwa6lL2IsRyP64wggd6MIIFYqADAgECAgphDpDS
-# AAAAAAADMA0GCSqGSIb3DQEBCwUAMIGIMQswCQYDVQQGEwJVUzETMBEGA1UECBMK
-# V2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0
-# IENvcnBvcmF0aW9uMTIwMAYDVQQDEylNaWNyb3NvZnQgUm9vdCBDZXJ0aWZpY2F0
-# ZSBBdXRob3JpdHkgMjAxMTAeFw0xMTA3MDgyMDU5MDlaFw0yNjA3MDgyMTA5MDla
-# MH4xCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdS
-# ZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xKDAmBgNVBAMT
-# H01pY3Jvc29mdCBDb2RlIFNpZ25pbmcgUENBIDIwMTEwggIiMA0GCSqGSIb3DQEB
-# AQUAA4ICDwAwggIKAoICAQCr8PpyEBwurdhuqoIQTTS68rZYIZ9CGypr6VpQqrgG
-# OBoESbp/wwwe3TdrxhLYC/A4wpkGsMg51QEUMULTiQ15ZId+lGAkbK+eSZzpaF7S
-# 35tTsgosw6/ZqSuuegmv15ZZymAaBelmdugyUiYSL+erCFDPs0S3XdjELgN1q2jz
-# y23zOlyhFvRGuuA4ZKxuZDV4pqBjDy3TQJP4494HDdVceaVJKecNvqATd76UPe/7
-# 4ytaEB9NViiienLgEjq3SV7Y7e1DkYPZe7J7hhvZPrGMXeiJT4Qa8qEvWeSQOy2u
-# M1jFtz7+MtOzAz2xsq+SOH7SnYAs9U5WkSE1JcM5bmR/U7qcD60ZI4TL9LoDho33
-# X/DQUr+MlIe8wCF0JV8YKLbMJyg4JZg5SjbPfLGSrhwjp6lm7GEfauEoSZ1fiOIl
-# XdMhSz5SxLVXPyQD8NF6Wy/VI+NwXQ9RRnez+ADhvKwCgl/bwBWzvRvUVUvnOaEP
-# 6SNJvBi4RHxF5MHDcnrgcuck379GmcXvwhxX24ON7E1JMKerjt/sW5+v/N2wZuLB
-# l4F77dbtS+dJKacTKKanfWeA5opieF+yL4TXV5xcv3coKPHtbcMojyyPQDdPweGF
-# RInECUzF1KVDL3SV9274eCBYLBNdYJWaPk8zhNqwiBfenk70lrC8RqBsmNLg1oiM
-# CwIDAQABo4IB7TCCAekwEAYJKwYBBAGCNxUBBAMCAQAwHQYDVR0OBBYEFEhuZOVQ
-# BdOCqhc3NyK1bajKdQKVMBkGCSsGAQQBgjcUAgQMHgoAUwB1AGIAQwBBMAsGA1Ud
-# DwQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB8GA1UdIwQYMBaAFHItOgIxkEO5FAVO
-# 4eqnxzHRI4k0MFoGA1UdHwRTMFEwT6BNoEuGSWh0dHA6Ly9jcmwubWljcm9zb2Z0
-# LmNvbS9wa2kvY3JsL3Byb2R1Y3RzL01pY1Jvb0NlckF1dDIwMTFfMjAxMV8wM18y
-# Mi5jcmwwXgYIKwYBBQUHAQEEUjBQME4GCCsGAQUFBzAChkJodHRwOi8vd3d3Lm1p
-# Y3Jvc29mdC5jb20vcGtpL2NlcnRzL01pY1Jvb0NlckF1dDIwMTFfMjAxMV8wM18y
-# Mi5jcnQwgZ8GA1UdIASBlzCBlDCBkQYJKwYBBAGCNy4DMIGDMD8GCCsGAQUFBwIB
-# FjNodHRwOi8vd3d3Lm1pY3Jvc29mdC5jb20vcGtpb3BzL2RvY3MvcHJpbWFyeWNw
-# cy5odG0wQAYIKwYBBQUHAgIwNB4yIB0ATABlAGcAYQBsAF8AcABvAGwAaQBjAHkA
-# XwBzAHQAYQB0AGUAbQBlAG4AdAAuIB0wDQYJKoZIhvcNAQELBQADggIBAGfyhqWY
-# 4FR5Gi7T2HRnIpsLlhHhY5KZQpZ90nkMkMFlXy4sPvjDctFtg/6+P+gKyju/R6mj
-# 82nbY78iNaWXXWWEkH2LRlBV2AySfNIaSxzzPEKLUtCw/WvjPgcuKZvmPRul1LUd
-# d5Q54ulkyUQ9eHoj8xN9ppB0g430yyYCRirCihC7pKkFDJvtaPpoLpWgKj8qa1hJ
-# Yx8JaW5amJbkg/TAj/NGK978O9C9Ne9uJa7lryft0N3zDq+ZKJeYTQ49C/IIidYf
-# wzIY4vDFLc5bnrRJOQrGCsLGra7lstnbFYhRRVg4MnEnGn+x9Cf43iw6IGmYslmJ
-# aG5vp7d0w0AFBqYBKig+gj8TTWYLwLNN9eGPfxxvFX1Fp3blQCplo8NdUmKGwx1j
-# NpeG39rz+PIWoZon4c2ll9DuXWNB41sHnIc+BncG0QaxdR8UvmFhtfDcxhsEvt9B
-# xw4o7t5lL+yX9qFcltgA1qFGvVnzl6UJS0gQmYAf0AApxbGbpT9Fdx41xtKiop96
-# eiL6SJUfq/tHI4D1nvi/a7dLl+LrdXga7Oo3mXkYS//WsyNodeav+vyL6wuA6mk7
-# r/ww7QRMjt/fdW1jkT3RnVZOT7+AVyKheBEyIXrvQQqxP/uozKRdwaGIm1dxVk5I
-# RcBCyZt2WwqASGv9eZ/BvW1taslScxMNelDNMYIVWjCCFVYCAQEwgZUwfjELMAkG
-# A1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQx
-# HjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEoMCYGA1UEAxMfTWljcm9z
-# b2Z0IENvZGUgU2lnbmluZyBQQ0EgMjAxMQITMwAAAQNeJRyZH6MeuAAAAAABAzAN
-# BglghkgBZQMEAgEFAKCBrjAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgor
-# BgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg4h+ua+pL
-# 8/E4vFqSIdBrsPD0JmT3Lj4283OCKtSu/qYwQgYKKwYBBAGCNwIBDDE0MDKgFIAS
-# AE0AaQBjAHIAbwBzAG8AZgB0oRqAGGh0dHA6Ly93d3cubWljcm9zb2Z0LmNvbTAN
-# BgkqhkiG9w0BAQEFAASCAQBziJ1lvx6HWtjxGy+cMkbtzO0DNFhEwReDNHwy4i77
-# uIqCuSCTL9MeT4njy+NpvnRNj0xlrkncsctqAaaDq7zCNcJD9ISalg8ZxQRnnfKv
-# X4/qfEjzZTxJBvyehR/HjLjQ70D7JDf+u1SP9cw97950WURSdE1SOcf7u4Z2Vu6y
-# atF1CWK9XOvx3eMbdf4a4lmd990QzEbYYKTC/WJJq0Yt2f759qCzht/drfIJyUWG
-# xhxAWTZcSdzVH7qpPUvL8SWb5sbFd/LEMVWNv6mkzqq8xSwH2hg9zMnM8dKaYcQZ
-# n+Sk7m2f0JhrpFuE9H9GfiZtrK3iDJEI+Yl8hQhGf1m4oYIS5DCCEuAGCisGAQQB
-# gjcDAwExghLQMIISzAYJKoZIhvcNAQcCoIISvTCCErkCAQMxDzANBglghkgBZQME
-# AgEFADCCAVEGCyqGSIb3DQEJEAEEoIIBQASCATwwggE4AgEBBgorBgEEAYRZCgMB
-# MDEwDQYJYIZIAWUDBAIBBQAEIBIEmWkNUl/bsnhS+p/3gsx82jd/ViNIDfSVgJ3b
-# 2eXNAgZcmjaDBAYYEzIwMTkwMzI2MjM0ODMyLjYwOVowBIACAfSggdCkgc0wgcox
-# CzAJBgNVBAYTAlVTMQswCQYDVQQIEwJXQTEQMA4GA1UEBxMHUmVkbW9uZDEeMBwG
-# A1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMS0wKwYDVQQLEyRNaWNyb3NvZnQg
-# SXJlbGFuZCBPcGVyYXRpb25zIExpbWl0ZWQxJjAkBgNVBAsTHVRoYWxlcyBUU1Mg
-# RVNOOjE3OUUtNEJCMC04MjQ2MSUwIwYDVQQDExxNaWNyb3NvZnQgVGltZS1TdGFt
-# cCBzZXJ2aWNloIIOOzCCBPEwggPZoAMCAQICEzMAAADbqm3jIn80ACUAAAAAANsw
-# DQYJKoZIhvcNAQELBQAwfDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0
-# b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3Jh
-# dGlvbjEmMCQGA1UEAxMdTWljcm9zb2Z0IFRpbWUtU3RhbXAgUENBIDIwMTAwHhcN
-# MTgwODIzMjAyNjUzWhcNMTkxMTIzMjAyNjUzWjCByjELMAkGA1UEBhMCVVMxCzAJ
-# BgNVBAgTAldBMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQg
-# Q29ycG9yYXRpb24xLTArBgNVBAsTJE1pY3Jvc29mdCBJcmVsYW5kIE9wZXJhdGlv
-# bnMgTGltaXRlZDEmMCQGA1UECxMdVGhhbGVzIFRTUyBFU046MTc5RS00QkIwLTgy
-# NDYxJTAjBgNVBAMTHE1pY3Jvc29mdCBUaW1lLVN0YW1wIHNlcnZpY2UwggEiMA0G
-# CSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCnoZqQDJgki0s2bs39O6xPVFz+Uwqi
-# 0RAwzqogMN6WuZEmCnUQMJ0JrwMOJRQNnE3wi4xS/c50t/ifvAlhtospxxCIq1YJ
-# A6+pxtfB9vK7xu3Y3aETqh1jZmPMsz92BfpIiL+Uau4H12AmLG/tMht+8YFug30i
-# xwTfKCatBmd3O+SeEohlYiBf97aJVD9rPSPlKWUhrDkdpUUMsQYU03Wr764ilEbL
-# Uc9zwP/z/6wtPI+RqTX837fUquU4ylD5F70/rkRh6K3WOrHWsQqi476BGGKNjQyi
-# wlxDwt5vCwUiu1ldAk0sI9wKiTQv7HobNvot2RdvZHMx9YrTsyUvqk0LAgMBAAGj
-# ggEbMIIBFzAdBgNVHQ4EFgQUsrrfHYBcc6bNtu3kHIyt3ipDA0gwHwYDVR0jBBgw
-# FoAU1WM6XIoxkPNDe3xGG8UzaFqFbVUwVgYDVR0fBE8wTTBLoEmgR4ZFaHR0cDov
-# L2NybC5taWNyb3NvZnQuY29tL3BraS9jcmwvcHJvZHVjdHMvTWljVGltU3RhUENB
-# XzIwMTAtMDctMDEuY3JsMFoGCCsGAQUFBwEBBE4wTDBKBggrBgEFBQcwAoY+aHR0
-# cDovL3d3dy5taWNyb3NvZnQuY29tL3BraS9jZXJ0cy9NaWNUaW1TdGFQQ0FfMjAx
-# MC0wNy0wMS5jcnQwDAYDVR0TAQH/BAIwADATBgNVHSUEDDAKBggrBgEFBQcDCDAN
-# BgkqhkiG9w0BAQsFAAOCAQEAFULCmp29GWB+IkeJJOmBldVebldjUZv6R+yXk1kx
-# TFhpIBUB/QCZFORPrhHy4I63UDKvzcnBOECKtHG9B1Z2Dijxp4rxQ4ZmnWR9WgUF
-# kH/w5b4shxoSA/X2qp7TzgLZudYwBr56Ox+MRs3e0s5rLwPYYMPc63bIgrZMdbOb
-# gj3FRXRABYvqEvTS5NjRQubrTyuiRzjS5BTQ6QQWLL+T3dQ9g8mNST4EobIQ0a/1
-# MVeG3DPhBxjCl0ZnrsDAHRGJPt2t6jKKTEbfbGSKyKNx+sNt0Oy0RGapXLgazF8U
-# /KTl5VKlH1hYv4976/IaD/BCcxyWUa5Kv3CZOlpUZD0hizCCBnEwggRZoAMCAQIC
-# CmEJgSoAAAAAAAIwDQYJKoZIhvcNAQELBQAwgYgxCzAJBgNVBAYTAlVTMRMwEQYD
-# VQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNy
-# b3NvZnQgQ29ycG9yYXRpb24xMjAwBgNVBAMTKU1pY3Jvc29mdCBSb290IENlcnRp
-# ZmljYXRlIEF1dGhvcml0eSAyMDEwMB4XDTEwMDcwMTIxMzY1NVoXDTI1MDcwMTIx
-# NDY1NVowfDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNV
-# BAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEmMCQG
-# A1UEAxMdTWljcm9zb2Z0IFRpbWUtU3RhbXAgUENBIDIwMTAwggEiMA0GCSqGSIb3
-# DQEBAQUAA4IBDwAwggEKAoIBAQCpHQ28dxGKOiDs/BOX9fp/aZRrdFQQ1aUKAIKF
-# ++18aEssX8XD5WHCdrc+Zitb8BVTJwQxH0EbGpUdzgkTjnxhMFmxMEQP8WCIhFRD
-# DNdNuDgIs0Ldk6zWczBXJoKjRQ3Q6vVHgc2/JGAyWGBG8lhHhjKEHnRhZ5FfgVSx
-# z5NMksHEpl3RYRNuKMYa+YaAu99h/EbBJx0kZxJyGiGKr0tkiVBisV39dx898Fd1
-# rL2KQk1AUdEPnAY+Z3/1ZsADlkR+79BL/W7lmsqxqPJ6Kgox8NpOBpG2iAg16Hgc
-# sOmZzTznL0S6p/TcZL2kAcEgCZN4zfy8wMlEXV4WnAEFTyJNAgMBAAGjggHmMIIB
-# 4jAQBgkrBgEEAYI3FQEEAwIBADAdBgNVHQ4EFgQU1WM6XIoxkPNDe3xGG8UzaFqF
-# bVUwGQYJKwYBBAGCNxQCBAweCgBTAHUAYgBDAEEwCwYDVR0PBAQDAgGGMA8GA1Ud
-# EwEB/wQFMAMBAf8wHwYDVR0jBBgwFoAU1fZWy4/oolxiaNE9lJBb186aGMQwVgYD
-# VR0fBE8wTTBLoEmgR4ZFaHR0cDovL2NybC5taWNyb3NvZnQuY29tL3BraS9jcmwv
-# cHJvZHVjdHMvTWljUm9vQ2VyQXV0XzIwMTAtMDYtMjMuY3JsMFoGCCsGAQUFBwEB
-# BE4wTDBKBggrBgEFBQcwAoY+aHR0cDovL3d3dy5taWNyb3NvZnQuY29tL3BraS9j
-# ZXJ0cy9NaWNSb29DZXJBdXRfMjAxMC0wNi0yMy5jcnQwgaAGA1UdIAEB/wSBlTCB
-# kjCBjwYJKwYBBAGCNy4DMIGBMD0GCCsGAQUFBwIBFjFodHRwOi8vd3d3Lm1pY3Jv
-# c29mdC5jb20vUEtJL2RvY3MvQ1BTL2RlZmF1bHQuaHRtMEAGCCsGAQUFBwICMDQe
-# MiAdAEwAZQBnAGEAbABfAFAAbwBsAGkAYwB5AF8AUwB0AGEAdABlAG0AZQBuAHQA
-# LiAdMA0GCSqGSIb3DQEBCwUAA4ICAQAH5ohRDeLG4Jg/gXEDPZ2joSFvs+umzPUx
-# vs8F4qn++ldtGTCzwsVmyWrf9efweL3HqJ4l4/m87WtUVwgrUYJEEvu5U4zM9GAS
-# inbMQEBBm9xcF/9c+V4XNZgkVkt070IQyK+/f8Z/8jd9Wj8c8pl5SpFSAK84Dxf1
-# L3mBZdmptWvkx872ynoAb0swRCQiPM/tA6WWj1kpvLb9BOFwnzJKJ/1Vry/+tuWO
-# M7tiX5rbV0Dp8c6ZZpCM/2pif93FSguRJuI57BlKcWOdeyFtw5yjojz6f32WapB4
-# pm3S4Zz5Hfw42JT0xqUKloakvZ4argRCg7i1gJsiOCC1JeVk7Pf0v35jWSUPei45
-# V3aicaoGig+JFrphpxHLmtgOR5qAxdDNp9DvfYPw4TtxCd9ddJgiCGHasFAeb73x
-# 4QDf5zEHpJM692VHeOj4qEir995yfmFrb3epgcunCaw5u+zGy9iCtHLNHfS4hQEe
-# gPsbiSpUObJb2sgNVZl6h3M7COaYLeqN4DMuEin1wC9UJyH3yKxO2ii4sanblrKn
-# QqLJzxlBTeCG+SqaoxFmMNO7dDJL32N79ZmKLxvHIa9Zta7cRDyXUHHXodLFVeNp
-# 3lfB0d4wwP3M5k37Db9dT+mdHhk4L7zPWAUu7w2gUDXa7wknHNWzfjUeCLraNtvT
-# X4/edIhJEqGCAs0wggI2AgEBMIH4oYHQpIHNMIHKMQswCQYDVQQGEwJVUzELMAkG
-# A1UECBMCV0ExEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBD
-# b3Jwb3JhdGlvbjEtMCsGA1UECxMkTWljcm9zb2Z0IElyZWxhbmQgT3BlcmF0aW9u
-# cyBMaW1pdGVkMSYwJAYDVQQLEx1UaGFsZXMgVFNTIEVTTjoxNzlFLTRCQjAtODI0
-# NjElMCMGA1UEAxMcTWljcm9zb2Z0IFRpbWUtU3RhbXAgc2VydmljZaIjCgEBMAcG
-# BSsOAwIaAxUAW6UpTq8YrPhwPCRPakRbrW/H2zCggYMwgYCkfjB8MQswCQYDVQQG
+# AQC49eyyaaieg3Xb7ew+/hA34gqzRuReb9svBF6N3+iLD5A0iMddtunnmbFVQ+lN
+# Wphf/xOGef5vXMMMk744txo/kT6CKq0GzV+IhAqDytjH3UgGhLBNZ/UWuQPgrnhw
+# afQ3ZclsXo1lto4pyps4+X3RyQfnxCwqtjRxjCQ+AwIzk0vSVFnId6AwbB73w2lJ
+# +MC+E6nVmyvikp7DT2swTF05JkfMUtzDosktz/pvvMWY1IUOZ71XqWUXcwfzWDJ+
+# 96WxBH6LpDQ1fCQ3POA3jCBu3mMiB1kSsMihH+eq1EzD0Es7iIT1MlKERPQmC+xl
+# K+9pPAw6j+rP2guYfKrMFr39AgMBAAGjggFzMIIBbzAfBgNVHSUEGDAWBgorBgEE
+# AYI3TAgBBggrBgEFBQcDAzAdBgNVHQ4EFgQUhTFTFHuCaUCdTgZXja/OAQ9xOm4w
+# RQYDVR0RBD4wPKQ6MDgxHjAcBgNVBAsTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEW
+# MBQGA1UEBRMNMjMwMDEyKzQ1ODM4NDAfBgNVHSMEGDAWgBRIbmTlUAXTgqoXNzci
+# tW2oynUClTBUBgNVHR8ETTBLMEmgR6BFhkNodHRwOi8vd3d3Lm1pY3Jvc29mdC5j
+# b20vcGtpb3BzL2NybC9NaWNDb2RTaWdQQ0EyMDExXzIwMTEtMDctMDguY3JsMGEG
+# CCsGAQUFBwEBBFUwUzBRBggrBgEFBQcwAoZFaHR0cDovL3d3dy5taWNyb3NvZnQu
+# Y29tL3BraW9wcy9jZXJ0cy9NaWNDb2RTaWdQQ0EyMDExXzIwMTEtMDctMDguY3J0
+# MAwGA1UdEwEB/wQCMAAwDQYJKoZIhvcNAQELBQADggIBAEDkLXWKDtJ8rLh3d7XP
+# 1xU1s6Gt0jDqeHoIpTvnsREt9MsKriVGKdVVGSJow1Lz9+9bINmPZo7ZdMhNhWGQ
+# QnEF7z/3czh0MLO0z48cxCrjLch0P2sxvtcaT57LBmEy+tbhlUB6iz72KWavxuhP
+# 5zxKEChtLp8gHkp5/1YTPlvRYFrZr/iup2jzc/Oo5N4/q+yhOsRT3KJu62ekQUUP
+# sPU2bWsaF/hUPW/L2O1Fecf+6OOJLT2bHaAzr+EBAn0KAUiwdM+AUvasG9kHLX+I
+# XXlEZvfsXGzzxFlWzNbpM99umWWMQPTGZPpSCTDDs/1Ci0Br2/oXcgayYLaZCWsj
+# 1m/a0V8OHZGbppP1RrBeLQKfATjtAl0xrhMr4kgfvJ6ntChg9dxy4DiGWnsj//Qy
+# wUs1UxVchRR7eFaP3M8/BV0eeMotXwTNIwzSd3uAzAI+NSrN5pVlQeC0XXTueeDu
+# xDch3S5UUdDOvdlOdlRAa+85Si6HmEUgx3j0YYSC1RWBdEhwsAdH6nXtXEshAAxf
+# 8PWh2wCsczMe/F4vTg4cmDsBTZwwrHqL5krX++s61sLWA67Yn4Db6rXV9Imcf5UM
+# Cq09wJj5H93KH9qc1yCiJzDCtbtgyHYXAkSHQNpoj7tDX6ko9gE8vXqZIGj82mwD
+# TAY9ofRH0RSMLJqpgLrBPCKNMIIHejCCBWKgAwIBAgIKYQ6Q0gAAAAAAAzANBgkq
+# hkiG9w0BAQsFADCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24x
+# EDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlv
+# bjEyMDAGA1UEAxMpTWljcm9zb2Z0IFJvb3QgQ2VydGlmaWNhdGUgQXV0aG9yaXR5
+# IDIwMTEwHhcNMTEwNzA4MjA1OTA5WhcNMjYwNzA4MjEwOTA5WjB+MQswCQYDVQQG
+# EwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwG
+# A1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSgwJgYDVQQDEx9NaWNyb3NvZnQg
+# Q29kZSBTaWduaW5nIFBDQSAyMDExMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIIC
+# CgKCAgEAq/D6chAcLq3YbqqCEE00uvK2WCGfQhsqa+laUKq4BjgaBEm6f8MMHt03
+# a8YS2AvwOMKZBrDIOdUBFDFC04kNeWSHfpRgJGyvnkmc6Whe0t+bU7IKLMOv2akr
+# rnoJr9eWWcpgGgXpZnboMlImEi/nqwhQz7NEt13YxC4Ddato88tt8zpcoRb0Rrrg
+# OGSsbmQ1eKagYw8t00CT+OPeBw3VXHmlSSnnDb6gE3e+lD3v++MrWhAfTVYoonpy
+# 4BI6t0le2O3tQ5GD2Xuye4Yb2T6xjF3oiU+EGvKhL1nkkDstrjNYxbc+/jLTswM9
+# sbKvkjh+0p2ALPVOVpEhNSXDOW5kf1O6nA+tGSOEy/S6A4aN91/w0FK/jJSHvMAh
+# dCVfGCi2zCcoOCWYOUo2z3yxkq4cI6epZuxhH2rhKEmdX4jiJV3TIUs+UsS1Vz8k
+# A/DRelsv1SPjcF0PUUZ3s/gA4bysAoJf28AVs70b1FVL5zmhD+kjSbwYuER8ReTB
+# w3J64HLnJN+/RpnF78IcV9uDjexNSTCnq47f7Fufr/zdsGbiwZeBe+3W7UvnSSmn
+# Eyimp31ngOaKYnhfsi+E11ecXL93KCjx7W3DKI8sj0A3T8HhhUSJxAlMxdSlQy90
+# lfdu+HggWCwTXWCVmj5PM4TasIgX3p5O9JawvEagbJjS4NaIjAsCAwEAAaOCAe0w
+# ggHpMBAGCSsGAQQBgjcVAQQDAgEAMB0GA1UdDgQWBBRIbmTlUAXTgqoXNzcitW2o
+# ynUClTAZBgkrBgEEAYI3FAIEDB4KAFMAdQBiAEMAQTALBgNVHQ8EBAMCAYYwDwYD
+# VR0TAQH/BAUwAwEB/zAfBgNVHSMEGDAWgBRyLToCMZBDuRQFTuHqp8cx0SOJNDBa
+# BgNVHR8EUzBRME+gTaBLhklodHRwOi8vY3JsLm1pY3Jvc29mdC5jb20vcGtpL2Ny
+# bC9wcm9kdWN0cy9NaWNSb29DZXJBdXQyMDExXzIwMTFfMDNfMjIuY3JsMF4GCCsG
+# AQUFBwEBBFIwUDBOBggrBgEFBQcwAoZCaHR0cDovL3d3dy5taWNyb3NvZnQuY29t
+# L3BraS9jZXJ0cy9NaWNSb29DZXJBdXQyMDExXzIwMTFfMDNfMjIuY3J0MIGfBgNV
+# HSAEgZcwgZQwgZEGCSsGAQQBgjcuAzCBgzA/BggrBgEFBQcCARYzaHR0cDovL3d3
+# dy5taWNyb3NvZnQuY29tL3BraW9wcy9kb2NzL3ByaW1hcnljcHMuaHRtMEAGCCsG
+# AQUFBwICMDQeMiAdAEwAZQBnAGEAbABfAHAAbwBsAGkAYwB5AF8AcwB0AGEAdABl
+# AG0AZQBuAHQALiAdMA0GCSqGSIb3DQEBCwUAA4ICAQBn8oalmOBUeRou09h0ZyKb
+# C5YR4WOSmUKWfdJ5DJDBZV8uLD74w3LRbYP+vj/oCso7v0epo/Np22O/IjWll11l
+# hJB9i0ZQVdgMknzSGksc8zxCi1LQsP1r4z4HLimb5j0bpdS1HXeUOeLpZMlEPXh6
+# I/MTfaaQdION9MsmAkYqwooQu6SpBQyb7Wj6aC6VoCo/KmtYSWMfCWluWpiW5IP0
+# wI/zRive/DvQvTXvbiWu5a8n7dDd8w6vmSiXmE0OPQvyCInWH8MyGOLwxS3OW560
+# STkKxgrCxq2u5bLZ2xWIUUVYODJxJxp/sfQn+N4sOiBpmLJZiWhub6e3dMNABQam
+# ASooPoI/E01mC8CzTfXhj38cbxV9Rad25UAqZaPDXVJihsMdYzaXht/a8/jyFqGa
+# J+HNpZfQ7l1jQeNbB5yHPgZ3BtEGsXUfFL5hYbXw3MYbBL7fQccOKO7eZS/sl/ah
+# XJbYANahRr1Z85elCUtIEJmAH9AAKcWxm6U/RXceNcbSoqKfenoi+kiVH6v7RyOA
+# 9Z74v2u3S5fi63V4GuzqN5l5GEv/1rMjaHXmr/r8i+sLgOppO6/8MO0ETI7f33Vt
+# Y5E90Z1WTk+/gFcioXgRMiF670EKsT/7qMykXcGhiJtXcVZOSEXAQsmbdlsKgEhr
+# /Xmfwb1tbWrJUnMTDXpQzTGCFVswghVXAgEBMIGVMH4xCzAJBgNVBAYTAlVTMRMw
+# EQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVN
+# aWNyb3NvZnQgQ29ycG9yYXRpb24xKDAmBgNVBAMTH01pY3Jvc29mdCBDb2RlIFNp
+# Z25pbmcgUENBIDIwMTECEzMAAAGGTSF1oNkHviwAAAAAAYYwDQYJYIZIAWUDBAIB
+# BQCgga4wGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEO
+# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEIEGQDugApF/JbCPuv7S2eeY8
+# oxV2Ih36KCdvxr0MbUPSMEIGCisGAQQBgjcCAQwxNDAyoBSAEgBNAGkAYwByAG8A
+# cwBvAGYAdKEagBhodHRwOi8vd3d3Lm1pY3Jvc29mdC5jb20wDQYJKoZIhvcNAQEB
+# BQAEggEARArLMYjB1Ln0Gpl3NrF4Ydy3GjrehDqfqai3mwqHgAmM1WFQQdpKv7CN
+# BIXJHSkTSfY4IAL2QV76LAYtW6wzBZzPZqsPQpqQvkbEI8sv19BXQaRQH6anSAWL
+# XNIUBellbyt60izshYrBiMdb106QIHUplNP3jEhcJ7pnXuuOJDjKooIalarPxNEZ
+# 8ub3YJKseYKJroFdKeiu/o4K93wY9BXYniXGNZmDrCd8H5zCvr1MAbS68EY6XScA
+# mQXUus3kbRc9n2oSqPC1/ziUbbP+VByUkqTaCNq964vohFyzgkFelg3/5JUp4aH+
+# dmXRn0nDYmbQdhlbIPKgOql1oN0I6KGCEuUwghLhBgorBgEEAYI3AwMBMYIS0TCC
+# Es0GCSqGSIb3DQEHAqCCEr4wghK6AgEDMQ8wDQYJYIZIAWUDBAIBBQAwggFRBgsq
+# hkiG9w0BCRABBKCCAUAEggE8MIIBOAIBAQYKKwYBBAGEWQoDATAxMA0GCWCGSAFl
+# AwQCAQUABCCfEPGC+537cDhz+mIEiYBR62wau42jU02tviz7PGnzcwIGX1/7ewj7
+# GBMyMDIwMDkyNDAwNTMzNy4wODRaMASAAgH0oIHQpIHNMIHKMQswCQYDVQQGEwJV
+# UzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UE
+# ChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSUwIwYDVQQLExxNaWNyb3NvZnQgQW1l
+# cmljYSBPcGVyYXRpb25zMSYwJAYDVQQLEx1UaGFsZXMgVFNTIEVTTjoyMjY0LUUz
+# M0UtNzgwQzElMCMGA1UEAxMcTWljcm9zb2Z0IFRpbWUtU3RhbXAgU2VydmljZaCC
+# DjwwggTxMIID2aADAgECAhMzAAABGP4699kb1LEzAAAAAAEYMA0GCSqGSIb3DQEB
+# CwUAMHwxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQH
+# EwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xJjAkBgNV
+# BAMTHU1pY3Jvc29mdCBUaW1lLVN0YW1wIFBDQSAyMDEwMB4XDTE5MTExMzIxNDAz
+# NVoXDTIxMDIxMTIxNDAzNVowgcoxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNo
+# aW5ndG9uMRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29y
+# cG9yYXRpb24xJTAjBgNVBAsTHE1pY3Jvc29mdCBBbWVyaWNhIE9wZXJhdGlvbnMx
+# JjAkBgNVBAsTHVRoYWxlcyBUU1MgRVNOOjIyNjQtRTMzRS03ODBDMSUwIwYDVQQD
+# ExxNaWNyb3NvZnQgVGltZS1TdGFtcCBTZXJ2aWNlMIIBIjANBgkqhkiG9w0BAQEF
+# AAOCAQ8AMIIBCgKCAQEAwvgDXBF/PzUY9beWJF2AdWRz8UEsK4Tjn119XOWnrNLd
+# oEyOjnh+J7XMKck70pO/vQQVaKk7x8H2w2Zm9eZ0PeKvlD3wamv/JtbXrP+hW7dQ
+# HlR8uActQFRYumItb1nd21UcmNkgHlaJyMxBRhrUL3kb9mI+o2whxNvsT90PgHIM
+# cHhPJev5wDeUv5kwyldn5RzUIPneV/UkjezHSwuTgCYEst++CIvwJ2BCsiIJzhSV
+# ZCMZCw8Tsq51f4DkZaGsclRpQ3ppywTWocLMZ5pK6QoXMLw4ngMeIP2dXydPgvsH
+# QPhLQO664J0ZI4Sh31pGY+NG5seBqUHSZhdcwGdBcQIDAQABo4IBGzCCARcwHQYD
+# VR0OBBYEFPFb5bAuD2AJ2DlP9OYj6/i0xyg+MB8GA1UdIwQYMBaAFNVjOlyKMZDz
+# Q3t8RhvFM2hahW1VMFYGA1UdHwRPME0wS6BJoEeGRWh0dHA6Ly9jcmwubWljcm9z
+# b2Z0LmNvbS9wa2kvY3JsL3Byb2R1Y3RzL01pY1RpbVN0YVBDQV8yMDEwLTA3LTAx
+# LmNybDBaBggrBgEFBQcBAQROMEwwSgYIKwYBBQUHMAKGPmh0dHA6Ly93d3cubWlj
+# cm9zb2Z0LmNvbS9wa2kvY2VydHMvTWljVGltU3RhUENBXzIwMTAtMDctMDEuY3J0
+# MAwGA1UdEwEB/wQCMAAwEwYDVR0lBAwwCgYIKwYBBQUHAwgwDQYJKoZIhvcNAQEL
+# BQADggEBAHMlnb4OnILP/wJsaEGZvlgEqSc1FxD4TKd9G1nOR8gsEAfjGumD53Eq
+# BXXLf+VdSuKf6zHDCwZ+S8xC1R/rs7YOhESuPGLWyW/QOyafnyWY+5aF2j/ZlT+7
+# SbNrRrrm3F6Rm4KORxgo5+4MzAR2OOUPC0nH2tSRUBAIktoAiikZayjLBmiG4vlL
+# gbbG0PCZJ75ohMAgsEpkU19L4gGbrJuJiVaigXtwZo/sgQyVVnL9DMqxGEO+KGtF
+# UltyQXPsUq6k9iYJtgnOiJUm5vALIlRP1XOMmoX5i3nhR303KytH5bulRs439RjQ
+# NUg10eG1Ip6wZYt5X4cLSoceseXkbEowggZxMIIEWaADAgECAgphCYEqAAAAAAAC
+# MA0GCSqGSIb3DQEBCwUAMIGIMQswCQYDVQQGEwJVUzETMBEGA1UECBMKV2FzaGlu
+# Z3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0IENvcnBv
+# cmF0aW9uMTIwMAYDVQQDEylNaWNyb3NvZnQgUm9vdCBDZXJ0aWZpY2F0ZSBBdXRo
+# b3JpdHkgMjAxMDAeFw0xMDA3MDEyMTM2NTVaFw0yNTA3MDEyMTQ2NTVaMHwxCzAJ
+# BgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9uMRAwDgYDVQQHEwdSZWRtb25k
+# MR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRpb24xJjAkBgNVBAMTHU1pY3Jv
+# c29mdCBUaW1lLVN0YW1wIFBDQSAyMDEwMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
+# MIIBCgKCAQEAqR0NvHcRijog7PwTl/X6f2mUa3RUENWlCgCChfvtfGhLLF/Fw+Vh
+# wna3PmYrW/AVUycEMR9BGxqVHc4JE458YTBZsTBED/FgiIRUQwzXTbg4CLNC3ZOs
+# 1nMwVyaCo0UN0Or1R4HNvyRgMlhgRvJYR4YyhB50YWeRX4FUsc+TTJLBxKZd0WET
+# bijGGvmGgLvfYfxGwScdJGcSchohiq9LZIlQYrFd/XcfPfBXday9ikJNQFHRD5wG
+# Pmd/9WbAA5ZEfu/QS/1u5ZrKsajyeioKMfDaTgaRtogINeh4HLDpmc085y9Euqf0
+# 3GS9pAHBIAmTeM38vMDJRF1eFpwBBU8iTQIDAQABo4IB5jCCAeIwEAYJKwYBBAGC
+# NxUBBAMCAQAwHQYDVR0OBBYEFNVjOlyKMZDzQ3t8RhvFM2hahW1VMBkGCSsGAQQB
+# gjcUAgQMHgoAUwB1AGIAQwBBMAsGA1UdDwQEAwIBhjAPBgNVHRMBAf8EBTADAQH/
+# MB8GA1UdIwQYMBaAFNX2VsuP6KJcYmjRPZSQW9fOmhjEMFYGA1UdHwRPME0wS6BJ
+# oEeGRWh0dHA6Ly9jcmwubWljcm9zb2Z0LmNvbS9wa2kvY3JsL3Byb2R1Y3RzL01p
+# Y1Jvb0NlckF1dF8yMDEwLTA2LTIzLmNybDBaBggrBgEFBQcBAQROMEwwSgYIKwYB
+# BQUHMAKGPmh0dHA6Ly93d3cubWljcm9zb2Z0LmNvbS9wa2kvY2VydHMvTWljUm9v
+# Q2VyQXV0XzIwMTAtMDYtMjMuY3J0MIGgBgNVHSABAf8EgZUwgZIwgY8GCSsGAQQB
+# gjcuAzCBgTA9BggrBgEFBQcCARYxaHR0cDovL3d3dy5taWNyb3NvZnQuY29tL1BL
+# SS9kb2NzL0NQUy9kZWZhdWx0Lmh0bTBABggrBgEFBQcCAjA0HjIgHQBMAGUAZwBh
+# AGwAXwBQAG8AbABpAGMAeQBfAFMAdABhAHQAZQBtAGUAbgB0AC4gHTANBgkqhkiG
+# 9w0BAQsFAAOCAgEAB+aIUQ3ixuCYP4FxAz2do6Ehb7Prpsz1Mb7PBeKp/vpXbRkw
+# s8LFZslq3/Xn8Hi9x6ieJeP5vO1rVFcIK1GCRBL7uVOMzPRgEop2zEBAQZvcXBf/
+# XPleFzWYJFZLdO9CEMivv3/Gf/I3fVo/HPKZeUqRUgCvOA8X9S95gWXZqbVr5MfO
+# 9sp6AG9LMEQkIjzP7QOllo9ZKby2/QThcJ8ySif9Va8v/rbljjO7Yl+a21dA6fHO
+# mWaQjP9qYn/dxUoLkSbiOewZSnFjnXshbcOco6I8+n99lmqQeKZt0uGc+R38ONiU
+# 9MalCpaGpL2eGq4EQoO4tYCbIjggtSXlZOz39L9+Y1klD3ouOVd2onGqBooPiRa6
+# YacRy5rYDkeagMXQzafQ732D8OE7cQnfXXSYIghh2rBQHm+98eEA3+cxB6STOvdl
+# R3jo+KhIq/fecn5ha293qYHLpwmsObvsxsvYgrRyzR30uIUBHoD7G4kqVDmyW9rI
+# DVWZeodzOwjmmC3qjeAzLhIp9cAvVCch98isTtoouLGp25ayp0Kiyc8ZQU3ghvkq
+# mqMRZjDTu3QyS99je/WZii8bxyGvWbWu3EQ8l1Bx16HSxVXjad5XwdHeMMD9zOZN
+# +w2/XU/pnR4ZOC+8z1gFLu8NoFA12u8JJxzVs341Hgi62jbb01+P3nSISRKhggLO
+# MIICNwIBATCB+KGB0KSBzTCByjELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hp
+# bmd0b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jw
+# b3JhdGlvbjElMCMGA1UECxMcTWljcm9zb2Z0IEFtZXJpY2EgT3BlcmF0aW9uczEm
+# MCQGA1UECxMdVGhhbGVzIFRTUyBFU046MjI2NC1FMzNFLTc4MEMxJTAjBgNVBAMT
+# HE1pY3Jvc29mdCBUaW1lLVN0YW1wIFNlcnZpY2WiIwoBATAHBgUrDgMCGgMVAM3X
+# m9cgL2tpCSdphXw3XknxSTHcoIGDMIGApH4wfDELMAkGA1UEBhMCVVMxEzARBgNV
+# BAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1JlZG1vbmQxHjAcBgNVBAoTFU1pY3Jv
+# c29mdCBDb3Jwb3JhdGlvbjEmMCQGA1UEAxMdTWljcm9zb2Z0IFRpbWUtU3RhbXAg
+# UENBIDIwMTAwDQYJKoZIhvcNAQEFBQACBQDjFlc3MCIYDzIwMjAwOTI0MDcyMjMx
+# WhgPMjAyMDA5MjUwNzIyMzFaMHcwPQYKKwYBBAGEWQoEATEvMC0wCgIFAOMWVzcC
+# AQAwCgIBAAICJMkCAf8wBwIBAAICEbgwCgIFAOMXqLcCAQAwNgYKKwYBBAGEWQoE
+# AjEoMCYwDAYKKwYBBAGEWQoDAqAKMAgCAQACAwehIKEKMAgCAQACAwGGoDANBgkq
+# hkiG9w0BAQUFAAOBgQAGF41q68X8dpaNvKaGpobD6fcHxf4awgdRC1697Ohz2r9A
+# VF1wk1uCok3Kc6tVM9BUKnMJ3xyHRXXBNbDAXqOmWe9D1DmA5/PpAOE22q+F6q47
+# /Xx2VZwkeRXbSN6cLne+v1LOEBLkSVnGZJqVUFKGq/seBsM0qWg46qqIPcLx+TGC
+# Aw0wggMJAgEBMIGTMHwxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpXYXNoaW5ndG9u
+# MRAwDgYDVQQHEwdSZWRtb25kMR4wHAYDVQQKExVNaWNyb3NvZnQgQ29ycG9yYXRp
+# b24xJjAkBgNVBAMTHU1pY3Jvc29mdCBUaW1lLVN0YW1wIFBDQSAyMDEwAhMzAAAB
+# GP4699kb1LEzAAAAAAEYMA0GCWCGSAFlAwQCAQUAoIIBSjAaBgkqhkiG9w0BCQMx
+# DQYLKoZIhvcNAQkQAQQwLwYJKoZIhvcNAQkEMSIEICIwFg1DSfPnEnj5Skuy0dLC
+# YuTmcXUne0HWjTx0HfmBMIH6BgsqhkiG9w0BCRACLzGB6jCB5zCB5DCBvQQgoM8H
+# FJuqUgOPAFUvvZuWfpOnBx+1sjY7z4pdKDINB/cwgZgwgYCkfjB8MQswCQYDVQQG
 # EwJVUzETMBEGA1UECBMKV2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwG
 # A1UEChMVTWljcm9zb2Z0IENvcnBvcmF0aW9uMSYwJAYDVQQDEx1NaWNyb3NvZnQg
-# VGltZS1TdGFtcCBQQ0EgMjAxMDANBgkqhkiG9w0BAQUFAAIFAOBEtQAwIhgPMjAx
-# OTAzMjYyMjI2MDhaGA8yMDE5MDMyNzIyMjYwOFowdjA8BgorBgEEAYRZCgQBMS4w
-# LDAKAgUA4ES1AAIBADAJAgEAAgENAgH/MAcCAQACAhFkMAoCBQDgRgaAAgEAMDYG
-# CisGAQQBhFkKBAIxKDAmMAwGCisGAQQBhFkKAwKgCjAIAgEAAgMHoSChCjAIAgEA
-# AgMBhqAwDQYJKoZIhvcNAQEFBQADgYEAJq6J8MMylAdPRB8u4VnlQ6dWunWhrByZ
-# xjOqr3QCCvuSNiz04lx5ZC8O2cV3q1Oe07cNuS9RWDWMou+JWYRHBA9+H5z6KR1R
-# 9VGyY19Y0ii8AXXGMQEwC4VPPbsuEn4NprtGPFtBlTxgo7kh+eAVwgMW6trh+ggL
-# Zy3pFv4mHgUxggMNMIIDCQIBATCBkzB8MQswCQYDVQQGEwJVUzETMBEGA1UECBMK
-# V2FzaGluZ3RvbjEQMA4GA1UEBxMHUmVkbW9uZDEeMBwGA1UEChMVTWljcm9zb2Z0
-# IENvcnBvcmF0aW9uMSYwJAYDVQQDEx1NaWNyb3NvZnQgVGltZS1TdGFtcCBQQ0Eg
-# MjAxMAITMwAAANuqbeMifzQAJQAAAAAA2zANBglghkgBZQMEAgEFAKCCAUowGgYJ
-# KoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEEMC8GCSqGSIb3DQEJBDEiBCB1So3mRkJe
-# R/bf0TRusiqiLMDeO7shnanisydkuiS39TCB+gYLKoZIhvcNAQkQAi8xgeowgecw
-# geQwgb0EIAJTHbHTmAEtIrVqIyVjsIt9R7biILf8sPry650hjP6qMIGYMIGApH4w
-# fDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCldhc2hpbmd0b24xEDAOBgNVBAcTB1Jl
-# ZG1vbmQxHjAcBgNVBAoTFU1pY3Jvc29mdCBDb3Jwb3JhdGlvbjEmMCQGA1UEAxMd
-# TWljcm9zb2Z0IFRpbWUtU3RhbXAgUENBIDIwMTACEzMAAADbqm3jIn80ACUAAAAA
-# ANswIgQgT9BwpKlByG3L6rLDIcbWSxLTvZrCGUjg8pxAf9NX/J4wDQYJKoZIhvcN
-# AQELBQAEggEAYymwXfwg7IHLrJuMCoKw4EHOGsEFE+F8CFLveJsAAd148ds5K2bs
-# 6LraL/DedLqnZepqQfQtDBlOIYCYHJlOEM7qgEGhAmw6+0o2oNBuD0VIFp8Oxc8l
-# fH52ZFcp5xIgFkbWdI7OfjJjjj+JXKcScHR3q3AcYtXR2sk+xQ9ezpdadrTz9F8B
-# V9GnmWN5KsPgmvJkRKBETjT+UdUqyMM+tt9nIzn8pBZSi+FzT9eXcoZn+wSYt1S7
-# kJOof1gU1exLaWa/SH6WMbMLvoUmdva98IJKM7mGVvquwffZfbQuuKkmAED9kfzX
-# UE0hCfIuUu+YtB3h7xhYiilw5UloGGRiVA==
+# VGltZS1TdGFtcCBQQ0EgMjAxMAITMwAAARj+OvfZG9SxMwAAAAABGDAiBCDwGwfz
+# fXfOndIcCCuWJajX91YXoLooUMVnvaHBILmTUjANBgkqhkiG9w0BAQsFAASCAQBc
+# bycdPKqrsBeIUYvTeYDrOQ5JDw5FM9Rxtfc1QMiDhJHI0CV34IZI70c18LzsZ2yd
+# XDImyv9fkNKURrwYxXiUsfdbCoJ0K9rei/JRbc87JgmGstakM63ps5FA62j8mOht
+# NIcxZv7CbeUnIw7NYFhkg07sVUFRzuJJ4ueKtwMVMJo9olSNcHw4WFcHB44QWuA8
+# ypS0AcsZxmpwbwis0NW8pUqx868CXPT/lsy2axUrhljcyKgIgdsZsqYpDnd+1cqU
+# 66HQJE50k/4J5HrIFDq2KofuMS6dcIaIwHI/uPBR5hpCtLgrfjUjQ/kOH9fLkcdE
+# bYItcrbSX2eBjDThcLWg
 # SIG # End signature block
