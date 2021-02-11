@@ -1957,13 +1957,14 @@ function Get-SddcDiagnosticInfo
                                 'Get-NetPrefixPolicy -CimSession _C_',
                                 'Get-NetQosPolicy -CimSession _C_',
                                 'Get-NetRoute -CimSession _C_',
-                                'Get-ComputerInfo -CimSession _C_',
-								'Get-Disk -CimSession _C_',
+                                'Invoke-Command -ComputerName _C_ {Get-ComputerInfo}',
+				'Get-Disk -CimSession _C_',
                                 'Get-NetTcpConnection -CimSession _C_',
                                 'Get-NetTcpSetting -CimSession _C_',
                                 'Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_',
                                 'Get-SmbServerNetworkInterface -CimSession _C_',
-                                'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'
+                                'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_',
+				'Invoke-Command -ComputerName _C_ {Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters}'
 				
 
                 # These commands are specific to optional modules, add only if present
@@ -1982,9 +1983,8 @@ function Get-SddcDiagnosticInfo
                 }
 
                 foreach ($cmd in $CmdsToLog) {
-
                     # truncate cmd string to the cmd itself
-                    $LocalFile = (Join-Path $LocalNodeDir (($cmd.split(' '))[0] -replace "-",""))
+                    	$LocalFile = (Join-Path $LocalNodeDir ([regex]::match(($cmd.split() | Where-Object {$_ -imatch 'Get-'}),'Get-[a-zA-Z0-9]*').value -replace "-",""))
                     try {
 
                         $cmdex = $cmd -replace '_C_',$using:NodeName -replace '_N_',$using:NodeName -replace '_A_',$using:AccessNode
