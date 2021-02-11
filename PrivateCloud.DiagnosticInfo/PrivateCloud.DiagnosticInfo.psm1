@@ -2283,7 +2283,14 @@ function Get-SddcDiagnosticInfo
         }
 
         Show-Update "Storage Pool & Tiers"
+        
+	# Storage Node information
 
+        try {
+            Get-StorageNode -CimSession $AccessNode |
+                Export-Clixml ($Path + "GetStorageNode.XML") }
+        catch { Show-Warning("Unable to get Storage Nodes. `nError="+$_.Exception.Message) }
+	
         # Storage tier information
 
         try {
