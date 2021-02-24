@@ -2093,7 +2093,7 @@ function Get-SddcDiagnosticInfo
                                 'Get-NetTcpSetting -CimSession _C_',
                                 'Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_',
                                 'Get-SmbServerNetworkInterface -CimSession _C_',
-                                'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'
+                                'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_',
 				'Get-NetFirewallProfile -CimSession _C_',
 				'Get-NetFirewallRule -CimSession _C_',
 				'Get-NetConnectionProfile -CimSession _C_',
@@ -2115,7 +2115,7 @@ function Get-SddcDiagnosticInfo
                 if (Get-Module Hyper-V -ErrorAction SilentlyContinue) {
                     $CmdsToLog += 'Get-VM -CimSession _C_ -ErrorAction SilentlyContinue',
                                     'Get-VMNetworkAdapter -All -CimSession _C_ -ErrorAction SilentlyContinue',
-                                    'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue'
+                                    'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue',
 				    'Get-VMSwitchTeam -CimSession _C_ -SwitchName ((Get-VMSwitch -CimSession _C_ | Where-Object {$_.EmbeddedTeamingEnabled -eq $true}).Name) -ErrorAction SilentlyContinue',
 				    'Get-VMHost -CimSession _C_ -ErrorAction SilentlyContinue',
                                     'Get-VMNetworkAdapterVlan -CimSession _C_ -ManagementOS -ErrorAction SilentlyContinue',
