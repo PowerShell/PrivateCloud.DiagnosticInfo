@@ -1783,7 +1783,15 @@ function Get-SddcDiagnosticInfo
                     $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
                 }
                 catch { Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
-            }
+            }	    
+
+            $JobStatic += start-job -Name ClusterNetworkLiveMigrationInformation {
+                try {
+                    $o = Get-ClusterResourceType -Name 'Virtual Machine' -Cluster $using:AccessNode | Get-ClusterParameter
+                    $o | Export-Clixml ($using:Path + "ClusterNetworkLiveMigration.XML")
+                }
+                catch { Show-Warning("Could not get Cluster Network Live Migration Information. `nError="+$_.Exception.Message) }
+            }	
 
             $JobStatic += start-job -Name ClusterResource {
                 try {
