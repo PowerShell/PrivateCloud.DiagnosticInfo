@@ -2109,7 +2109,7 @@ function Get-SddcDiagnosticInfo
 				'Get-SmbClientConfiguration -CimSession _C_',
 				'Get-SmbServerConfiguration -CimSession _C_',
 				'Invoke-Command -ComputerName _C_ {Get-ComputerInfo}',
-				'Invoke-Command -ComputerName _C_ {Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters}'				
+				'Invoke-Command -ComputerName _C_ {Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters,HKLM:\System\CurrentControlSet\Services\LanManServer\Parameters}'				
 
                 # These commands are specific to optional modules, add only if present
                 #   - DcbQos: RoCE environments primarily
