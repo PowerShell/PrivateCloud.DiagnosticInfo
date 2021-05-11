@@ -2068,8 +2068,8 @@ function Get-SddcDiagnosticInfo
 			Start-Process -FilePath "$env:comspec" -ArgumentList "/c SystemInfo.exe /S $using:NodeName > $SysInfoOut" -WindowStyle Hidden -Wait
 		
 		# Gather MSINFO32.EXE output for a given node
-			$MSINFO32Out=(Join-Path (Get-NodePath $using:Path $using:NodeName) "MSINFO32.NFO")
-			Start-Process -FilePath "$env:comspec" -ArgumentList "/c MSINFO32.exe /nfo $MSINFO32Out /Computer $using:NodeName" -WindowStyle Hidden -Wait
+			#$MSINFO32Out=(Join-Path (Get-NodePath $using:Path $using:NodeName) "MSINFO32.NFO")
+			#Start-Process -FilePath "$env:comspec" -ArgumentList "/c MSINFO32.exe /nfo $MSINFO32Out /Computer $using:NodeName" -WindowStyle Hidden -Wait
 
                 # Cmdlets to drop in TXT and XML forms
                 #
