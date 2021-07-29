@@ -2032,7 +2032,10 @@ function Get-SddcDiagnosticInfo
 
         $JobStatic += Start-Job -Name ClusterLogs {
             $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime
-            $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime -Netft
+            if ((Get-Command Get-ClusterLog).Parameters.ContainsKey("NetFt")) 
+            {
+                $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime -Netft
+            }  
         }
 
         if ($S2DEnabled) {
