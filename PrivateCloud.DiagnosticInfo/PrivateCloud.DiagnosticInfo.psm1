@@ -2028,10 +2028,14 @@ function Get-SddcDiagnosticInfo
         }
 
         # Events, cmd, reports, et.al.
-        Show-Update "Start gather of system info, cluster/health logs, reports and dump files ..."
+        Show-Update "Start gather of system info, cluster/netft/health logs, reports and dump files ..."
 
         $JobStatic += Start-Job -Name ClusterLogs {
             $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime
+            if ((Get-Command Get-ClusterLog).Parameters.ContainsKey("NetFt")) 
+            {
+                $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime -Netft
+            }  
         }
 
         if ($S2DEnabled) {
