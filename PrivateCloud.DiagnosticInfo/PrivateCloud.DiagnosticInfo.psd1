@@ -25,7 +25,7 @@ CompanyName = 'Microsoft Corporation'
 Copyright = '(c) 2016 Microsoft Corporation. All rights reserved.'
 
 # Description of the functionality provided by this module
-Description = 'Evaluates and Reports Windows Server Software Defined Data Center (SDDC) & Hyper-Converged Infrastrucure (HCI) Health'
+Description = 'Evaluates and Reports Windows Server Software Defined Data Center (SDDC) and Hyper-Converged Infrastrucure (HCI) Health'
 
 # Minimum version of the Windows PowerShell engine required by this module
 # PowerShellVersion = ''

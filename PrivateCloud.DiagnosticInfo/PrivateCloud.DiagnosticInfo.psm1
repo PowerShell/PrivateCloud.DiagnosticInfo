@@ -299,17 +299,17 @@ $CommonFuncBlock = {
         }
 
         # Exclude verbose/lower value channels and ones which are captured in different ways (e.g., cluster log)
-        # The StorageSpaces-Driver and StorageReplica Performance channels are ery expensive to export and not
-        # usually needed.
         $LogToExclude = 'Microsoft-Windows-FailoverClustering/Diagnostic',          # cluster log
                         'Microsoft-Windows-FailoverClustering/DiagnosticVerbose',   # cluster log
+                        'Microsoft-Windows-FailoverClustering-Client/Diagnostic',
                         'Microsoft-Windows-Health/Diagnostic',                      # cluster log -health
                         'Microsoft-Windows-Health/DiagnosticVerbose',               # cluster log -health
-                        'Microsoft-Windows-FailoverClustering-Client/Diagnostic',
-                        'Microsoft-Windows-StorageReplica/Performance',
-                        'Microsoft-Windows-StorageSpaces-Driver/Performance',
-                        'Security',                                                 # potentially large/sensitive / not needed
-                        'Microsoft-Windows-SystemDataArchiver/Diagnostic'           # large / not needed
+                        'Microsoft-Windows-PowerShell/Operational',                 # temporary 210930 (archive inflation)
+                        'Microsoft-Windows-StorageReplica/Performance',             # large / not needed
+                        'Microsoft-Windows-StorageSpaces-Driver/Performance',       # large / not needed
+                        'Microsoft-Windows-SystemDataArchiver/Diagnostic',          # large / not needed
+                        'Security'                                                  # potentially large/sensitive / not needed
+
 
         $providers = Get-WinEvent -ListLog * -ErrorAction Ignore -WarningAction Ignore
 
@@ -739,32 +739,39 @@ function Check-ExtractZip(
     [string] $Path
     )
 {
-    if ($Path.ToUpper().EndsWith(".ZIP")) {
-
-        $ExtractToPath = $Path.Substring(0, $Path.Length - 4)
-
-        # Already done?
-        $f = gi $ExtractToPath -ErrorAction SilentlyContinue
-        if ($f) {
-            return $f.FullName
-        }
-
-        Show-Update "Extracting $Path -> $ExtractToPath"
-
-        try
-        {
-            Add-Type -Assembly System.IO.Compression.FileSystem
-            [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $ExtractToPath)
-        }
-        catch
-        {
-            Show-Error("Can't extract results as Zip file from '$Path' to '$ExtractToPath'")
-        }
-
-        return $ExtractToPath
+    # If path is not a ZIP, assume it is a directory to use as-is
+    if (-not $Path.ToUpper().EndsWith(".ZIP")) {
+        return $Path
     }
 
-    return $Path
+    $ExtractToPath = $Path.Substring(0, $Path.Length - 4)
+
+    # Already extracted?
+    $f = gi $ExtractToPath -ErrorAction SilentlyContinue
+    if ($f) {
+        return $f.FullName
+    }
+
+    Show-Update "Extracting $Path -> $ExtractToPath"
+
+    # Create - use compression to minimize temp footprint
+    if (-not (New-Item -ItemType Directory -ErrorAction SilentlyContinue $ExtractToPath))
+    {
+        Show-Error("Can't create directory for extraction")
+    }
+    compact /c $ExtractToPath | Out-Null
+
+    try
+    {
+        Add-Type -Assembly System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $ExtractToPath)
+    }
+    catch
+    {
+        Show-Error("Can't extract results as Zip file from '$Path' to '$ExtractToPath'")
+    }
+
+    return $ExtractToPath
 }
 
 #
@@ -1640,13 +1647,15 @@ function Get-SddcDiagnosticInfo
     if ($Read) {
         $Path = Check-ExtractZip $Path
     } else {
+        # Scrub any existing and create new - use compression to minimize temp footprint
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse | Out-Null
-        md -ErrorAction SilentlyContinue $Path | Out-Null
+        New-Item -ItemType Directory -ErrorAction SilentlyContinue $Path | Out-Null
+        compact /c $Path | Out-Null
     }
 
     $PathObject = Get-Item $Path
     if ($null -eq $PathObject) { Show-Error ("Path not found: $Path") }
-    $Path     = $PathObject.FullName
+    $Path = $PathObject.FullName
 
     # Note: this should be unnecessary as soon as we have the discipline of Join-Path flushed through
     if (-not $Path.EndsWith("\")) { $Path = $Path + "\" }
