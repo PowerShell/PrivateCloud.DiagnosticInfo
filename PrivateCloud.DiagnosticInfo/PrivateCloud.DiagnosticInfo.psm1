@@ -2242,7 +2242,7 @@ function Get-SddcDiagnosticInfo
                     $CmdsToLog += 'Get-VM -CimSession _C_ -ErrorAction SilentlyContinue',
                                     'Get-VMNetworkAdapter -All -CimSession _C_ -ErrorAction SilentlyContinue',
                                     'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue',
-				    'Get-VMSwitchTeam -CimSession _C_ -SwitchName ((Get-VMSwitch -CimSession _C_ | Where-Object {$_.EmbeddedTeamingEnabled -eq $true}).Name) -ErrorAction SilentlyContinue',
+				    '((Get-VMSwitch  -CimSession _C_  | Where-Object {$_.EmbeddedTeamingEnabled -eq $true}).Name) | %{Get-VMSwitchTeam  -CimSession _C_ -SwitchName $_ -ErrorAction SilentlyContinue}',
 				    'Get-VMHost -CimSession _C_ -ErrorAction SilentlyContinue',
                                     'Get-VMNetworkAdapterVlan -CimSession _C_ -ManagementOS -ErrorAction SilentlyContinue',
                                     'Get-VMNetworkAdapterTeamMapping -CimSession _C_ -ManagementOS -ErrorAction SilentlyContinue'				    
