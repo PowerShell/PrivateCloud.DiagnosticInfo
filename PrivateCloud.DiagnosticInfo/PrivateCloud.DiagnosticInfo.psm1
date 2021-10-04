@@ -2175,57 +2175,80 @@ function Get-SddcDiagnosticInfo
                 # _A_ token will be replaced with the chosen cluster access node
                 # _C_ token will be replaced with node fqdn for cimsession/computername callouts
                 # _N_ token will be replaced with node non-fqdn
-                $CmdsToLog = 'Get-HotFix -ComputerName _C_',
-                                'Get-NetAdapter -CimSession _C_',
-                                'Get-NetAdapterAdvancedProperty -CimSession _C_',
-                                'Get-NetAdapterBinding -CimSession _C_',
-                                'Get-NetAdapterChecksumOffload -CimSession _C_',
-                                'Get-NetAdapterIPsecOffload -CimSession _C_',
-                                'Get-NetAdapterLso -CimSession _C_',
-                                'Get-NetAdapterPacketDirect -CimSession _C_',
-                                'Get-NetAdapterRdma -CimSession _C_',
-                                'Get-NetAdapterRsc -CimSession _C_',
-                                'Get-NetAdapterRss -CimSession _C_',
-                                'Get-NetAdapterVmq -CimSession _C_',
-                                'Get-NetIPv4Protocol -CimSession _C_',
-                                'Get-NetIPv6Protocol -CimSession _C_',
-                                'Get-NetIpAddress -CimSession _C_',
-                                'Get-NetLbfoTeam -CimSession _C_',
-                                'Get-NetLbfoTeamMember -CimSession _C_',
-                                'Get-NetLbfoTeamNic -CimSession _C_',
-                                'Get-NetOffloadGlobalSetting -CimSession _C_',
-                                'Get-NetPrefixPolicy -CimSession _C_',
-                                'Get-NetQosPolicy -CimSession _C_',
-                                'Get-NetRoute -CimSession _C_',
-                                'Get-Disk -CimSession _C_',
-                                'Get-NetTcpConnection -CimSession _C_',
-                                'Get-NetTcpSetting -CimSession _C_',
-                                'Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_',
-                                'Get-SmbServerNetworkInterface -CimSession _C_',
-                                'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'
+                $CmdsToLog =
+                            @{ C = 'Get-CimInstance Win32_Bios'; F = 'Win32_Bios' },
+                            @{ C = 'Get-CimInstance Win32_ComputerSystem'; F = 'Win32_ComputerSystem' },
+                            @{ C = 'Get-CimInstance Win32_OperatingSystem'; F = 'Win32_OperatingSystem' },
+                            @{ C = 'Get-CimInstance Win32_PhysicalMemory'; F = 'Win32_PhysicalMemory' },
+                            @{ C = 'Get-CimInstance Win32_Processor'; F = 'Win32_Processor' },
+                            @{ C = 'Get-HotFix -ComputerName _C_'; F = $null },
+                            @{ C = 'Get-NetAdapter -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetAdapterAdvancedProperty -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetAdapterBinding -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetAdapterChecksumOffload -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetAdapterIPsecOffload -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetAdapterLso -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetAdapterPacketDirect -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetAdapterRdma -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetAdapterRsc -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetAdapterRss -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetAdapterVmq -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetIPv4Protocol -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetIPv6Protocol -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetIpAddress -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetLbfoTeam -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetLbfoTeamMember -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetLbfoTeamNic -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetOffloadGlobalSetting -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetPrefixPolicy -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetQosPolicy -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetRoute -CimSession _C_'; F = $null },
+                            @{ C = 'Get-Disk -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetTcpConnection -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetTcpSetting -CimSession _C_'; F = $null },
+                            @{ C = 'Get-ScheduledTask -CimSession _C_ | Get-ScheduledTaskInfo -CimSession _C_'; F = $null },
+                            @{ C = 'Get-SmbClientConfiguration -CimSession _C_'; F = $null },
+                            @{ C = 'Get-SmbClientNetworkInterface -CimSession _C_'; F = $null },
+                            @{ C = 'Get-SmbMultichannelConnection -IncludeNotSelected -SmbInstance Default -CimSession _C_'; F = 'GetSmbMultichannelConnection-Default' },
+                            @{ C = 'Get-SmbMultichannelConnection -IncludeNotSelected -SmbInstance CSV -CimSession _C_'; F = 'GetSmbMultichannelConnection-CSV' },
+                            @{ C = 'Get-SmbMultichannelConnection -IncludeNotSelected -SmbInstance SBL -CimSession _C_'; F = 'GetSmbMultichannelConnection-SBL' },
+                            @{ C = 'Get-SmbMultichannelConnection -IncludeNotSelected -SmbInstance SR -CimSession _C_'; F = 'GetSmbMultichannelConnection-SR' },
+                            @{ C = 'Get-SmbServerConfiguration -CimSession _C_'; F = $null },
+                            @{ C = 'Get-SmbServerNetworkInterface -CimSession _C_'; F = $null },
+                            @{ C = 'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'; ; F = $null }
 
                 # These commands are specific to optional modules, add only if present
                 #   - DcbQos: RoCE environments primarily
                 #   - Hyper-V: may be ommitted in SOFS-only cases
                 if (Get-Module DcbQos -ErrorAction SilentlyContinue) {
-                    $CmdsToLog += 'Get-NetQosDcbxSetting -CimSession _C_',
-                                    'Get-NetQosFlowControl -CimSession _C_',
-                                    'Get-NetQosTrafficClass -CimSession _C_'
+                    $CmdsToLog +=
+                            @{ C = 'Get-NetQosDcbxSetting -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetQosFlowControl -CimSession _C_'; F = $null },
+                            @{ C = 'Get-NetQosTrafficClass -CimSession _C_'; F = $null }
                 }
 
                 if (Get-Module Hyper-V -ErrorAction SilentlyContinue) {
-                    $CmdsToLog += 'Get-VM -CimSession _C_ -ErrorAction SilentlyContinue',
-                                    'Get-VMNetworkAdapter -All -CimSession _C_ -ErrorAction SilentlyContinue',
-                                    'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue'
+                    $CmdsToLog +=
+                            @{ C = 'Get-VM -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null },
+                            @{ C = 'Get-VMNetworkAdapter -All -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null },
+                            @{ C = 'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null }
                 }
 
                 foreach ($cmd in $CmdsToLog) {
 
-                    # truncate cmd string to the cmd itself
-                    $LocalFile = (Join-Path $LocalNodeDir (($cmd.split(' '))[0] -replace "-",""))
+                    $cmdstr = $cmd.C
+                    $file = $cmd.F
+
+                    # Default rule: base cmdlet name no dash
+                    if ($null -eq $file) {
+                        $LocalFile = (Join-Path $LocalNodeDir (($cmdstr.split(' '))[0] -replace "-",""))
+                    } else {
+                        $LocalFile = (Join-Path $LocalNodeDir $file)
+                    }
+
                     try {
 
-                        $cmdex = $cmd -replace '_C_',$using:NodeName -replace '_N_',$using:NodeName -replace '_A_',$using:AccessNode
+                        $cmdex = $cmdstr -replace '_C_',$using:NodeName -replace '_N_',$using:NodeName -replace '_A_',$using:AccessNode
                         $out = iex $cmdex
 
                         # capture as txt and xml for quick analysis according to taste
@@ -2617,7 +2640,7 @@ function Get-SddcDiagnosticInfo
         catch { Show-Error("Unable to get Physical Disks. `nError="+$_.Exception.Message) }
 
         try {
-            $PhysicalDiskSNV = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $Subsystem | Get-PhysicalDiskSNV -CimSession $AccessNode |
+            Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $Subsystem | Get-PhysicalDiskSNV -CimSession $AccessNode |
                 Export-Clixml ($Path + "GetPhysicalDiskSNV.XML") }
         catch { Show-Error("Unable to get Physical Disk Storage Node View. `nError="+$_.Exception.Message) }
 
