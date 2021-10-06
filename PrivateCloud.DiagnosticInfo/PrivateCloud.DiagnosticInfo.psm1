@@ -123,15 +123,14 @@ $CommonFuncBlock = {
     function Show-JobRuntime(
         [object[]] $jobs,
         [hashtable] $namehash,
-        [switch] $IncludeDone = $true,
-        [switch] $IncludeRunning = $true
+        [switch] $Running
         )
     {
         # accumulate status lines as we go
         $job_running = @()
         $job_done = @()
 
-        $jobs | sort Name,Location |% {
+        $jobs | Sort-Object Name,Location |% {
 
             $this = $_
 
@@ -141,7 +140,7 @@ $CommonFuncBlock = {
 
                 'PSRemotingJob' {
                     $jobname = $this.Name
-                    $j = $this.ChildJobs | sort Location
+                    $j = $this.ChildJobs | Sort-Object Location
                 }
 
                 'PSRemotingChildJob' {
@@ -156,17 +155,17 @@ $CommonFuncBlock = {
                 default { throw "unexpected job type $_" }
             }
 
-            if ($IncludeDone) {
+            # Only show running jobs? Skip non-running.
+            if (-not $Running) {
                 $j |? State -ne Running |% {
                     $job_done += "$($_.State): $($jobname) [$($_.Name) $($_.Location)]: $(TimespanToString ($_.PSEndTime - $_.PSBeginTime)) : Start $($_.PSBeginTime.ToString('s')) - Stop $($_.PSEndTime.ToString('s'))"
                 }
             }
 
-            if ($IncludeRunning) {
-                $t = get-date
-                $j |? State -eq Running |% {
-                    $job_running += "Running: $($jobname) [$($_.Name) $($_.Location)]: $(TimespanToString ($t - $_.PSBeginTime)) : Start $($_.PSBeginTime.ToString('s'))"
-                }
+            # And now running jobs (always).
+            $t = get-date
+            $j |? State -eq Running |% {
+                $job_running += "Running: $($jobname) [$($_.Name) $($_.Location)]: $(TimespanToString ($t - $_.PSBeginTime)) : Start $($_.PSBeginTime.ToString('s'))"
             }
         }
 
@@ -228,7 +227,7 @@ $CommonFuncBlock = {
                 $tout_c = $tick
 
                 # exclude jobs which may be racing to done, we'll get them in the next tick
-                Show-JobRuntime $jwait $jhash -IncludeDone:$false
+                Show-JobRuntime $jwait $jhash -Running
             }
 
         } while ($jwait)
@@ -439,8 +438,8 @@ $CommonFuncBlock = {
         # after sleeping a few seconds must be stale, so we do not stomp other
         # tools using the same functionality.
         $t = Get-Date
-        sleep 5
-        dir $env:WINDIR\ServiceProfiles\LocalService\AppData\Local\Temp |? {
+        Start-Sleep 5
+        Get-ChildItem $env:WINDIR\ServiceProfiles\LocalService\AppData\Local\Temp |? {
             ($_.Name -like 'MSG*.tmp' -or
              $_.Name -like 'EVT*.tmp' -or
              $_.Name -like 'PUB*.tmp') -and
@@ -605,25 +604,50 @@ $CommonFuncBlock = {
             $gli.numberOfLogRecords
 
         } finally {
-            del -Force $f
+            Remove-Item -Force $f
         }
     }
 
     function Get-EventDataHash
     {
-
         param(
-            [System.Diagnostics.Eventing.Reader.EventLogRecord] $event
+            [System.Diagnostics.Eventing.Reader.EventLogRecord] $ev
         )
 
         # must cast through the XML representation of the event to get named properties
         # insert text into hash and return
         $xh = @{}
-        $x = ([xml]$event.ToXml()).Event.EventData.Data
+        $x = ([xml]$ev.ToXml()).Event.EventData.Data
         $x |% {
             $xh[$_.Name] = $_.'#text'
         }
         $xh
+    }
+
+    function NewCopyTask {
+        param (
+            [Parameter(Mandatory = $true)]
+            [ValidateNotNullOrEmpty()]
+            [string]
+            $Source,
+
+            [Parameter(Mandatory = $true)]
+            [switch]
+            $Delete,
+
+            [switch]
+            $NoCopy
+        )
+
+        # Describe a single copy task. This is emitted by gather jobs to indicate results which
+        # the gathering node should retrieve. Source paths must be UNC. NoCopy + Delete is used
+        # to scrub away a capture directory.
+
+        [PSCustomObject] @{
+            Source = $Source
+            NoCopy = $NoCopy
+            Delete = $Delete
+        }
     }
 }
 
@@ -759,7 +783,7 @@ function Check-ExtractZip(
     {
         Show-Error("Can't create directory for extraction")
     }
-    compact /c $ExtractToPath | Out-Null
+    $null = compact /c $ExtractToPath
 
     try
     {
@@ -780,42 +804,50 @@ function Check-ExtractZip(
 # content (like archive logs)
 #
 
-function Start-CopyJob(
-    [string] $Path,
-    [switch] $Delete,
-    [object[]] $j
-    )
+function Start-CopyJob
 {
-    $j |% {
+    [CmdletBinding()]
+    param(
+        [string]
+        $Path,
 
-        $parent = $_
-        $parent.ChildJobs |% {
+        [Parameter(ValueFromPipeline = $true)]
+        [object]
+        $Job
+    )
 
-            $logs = Receive-Job $_
+    process {
 
-            # avoid the job if not needed, no content
-            if (@($logs).Count) {
+        foreach ($childJob in $Job.ChildJobs)
+        {
+            # Receive set of copy tasks from job - these are built by NewCopyTask
+            $copy = @(Receive-Job $childJob)
+            if ($copy.Count -eq 0) { continue }
 
-                # create/use a specific job destination if present
-                # ex: "foo" -> \node_xxx\foo\<rest> v. the default \node_xxx\<rest>
-                $Destination = (Get-NodePath $Path $_.Location)
-                if (Get-Member -InputObject $_ -Name Destination) {
-                    $Destination = Join-Path $Destination $_.Destination
-                    if (-not (Test-Path $Destination)) {
-                        $null = md $Destination -Force -ErrorAction Continue
-                    }
+            # create/use a specific job destination if present
+            # ex: "foo" -> \node_xxx\foo\<rest> v. the default \node_xxx\<rest>
+            $Destination = (Get-NodePath $Path $childJob.Location)
+            if (Get-Member -InputObject $_ -Name Destination) {
+                $Destination = Join-Path $Destination $childJob.Destination
+                if (-not (Test-Path $Destination)) {
+                    $null = mkdir $Destination -Force -ErrorAction Continue
                 }
+            }
 
-                start-job -Name "Copy $($parent.Name) $($_.Location)" -ArgumentList $logs,$Destination,$Delete {
+            $jobName = "Copy $($Job.Name) $($childjob.Location)"
+            start-job -Name $jobName -ArgumentList $copy,$Destination {
 
-                    param($logs,$Destination,$Delete)
+                param($copy,$Destination)
 
-                    $logs |% {
-                        # allow errors to propagte for triage
-                        Copy-Item -Recurse $_ $Destination -Force -ErrorAction Continue
-                        if ($Delete) {
-                            Remove-Item -Recurse $_ -Force -ErrorAction Continue
-                        }
+                $copy |% {
+
+                    # allow errors to propagte for triage
+                    if (-not $_.NoCopy)
+                    {
+                        Copy-Item -Recurse $_.Source $Destination -Force -ErrorAction Continue
+                    }
+                    if ($_.Delete) {
+                        Remove-Item -Recurse $_.Source -Force -ErrorAction Continue
                     }
                 }
             }
@@ -829,19 +861,17 @@ function Start-CopyJob(
 # to be deleted after use.
 #
 
-function Invoke-SddcCommonCommand (
+function Invoke-CommonCommand (
     [string[]] $ClusterNodes = @(),
     [string] $JobName,
     [scriptblock] $InitBlock,
     [scriptblock] $ScriptBlock,
-    # If session configuration name is $null, it connect to default powershell
+    # If session configuration name is $null, it connects to default powershell
     [string] $SessionConfigurationName,
     [Object[]] $ArgumentList
     )
 {
-    $Job        = @()
-    $Sessions   = @()
-    $SessionIds = @()
+    $Sessions = @()
 
     if ($ClusterNodes.Count -eq 0)
     {
@@ -853,12 +883,26 @@ function Invoke-SddcCommonCommand (
     }
 
     Invoke-Command -Session $Sessions $InitBlock
-    $Job = Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList
-    $SessionIds = $Sessions.Id
+    Invoke-Command -Session $Sessions -AsJob -JobName $JobName -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList |
+        Add-Member -NotePropertyName ActiveSession -NotePropertyValue $Sessions.Id -PassThru
+}
 
-    $Job | Add-Member -NotePropertyName ActiveSessions -NotePropertyValue $SessionIds
+function RemoveCommonJobSession
+{
+    param (
+        [Parameter(ValueFromPipeline = $true)]
+        [object]
+        $j
+        )
 
-    return $Job
+    # Remove sessions from completed CommonCommand jobs
+
+    process {
+        if (Get-Member -InputObject $j ActiveSession)
+        {
+             Remove-PSSession -Id $j.ActiveSession
+        }
+    }
 }
 
 #
@@ -873,7 +917,7 @@ function Get-ClusterAccessNode(
     for ($i = 0; $i -lt $Nodes.count; $i++)
     {
         $Cluster = Get-Cluster $Nodes[$i].Name -ErrorAction SilentlyContinue
-        if ($Cluster -ne $null)
+        if ($null -ne $Cluster)
         {
             return $Nodes[$i].Name
         }
@@ -910,7 +954,7 @@ function Get-NodeList(
     }
 
     $NodeIdx = 0;
-    while ($ClusterNodes -eq $null -and $NodeIdx -lt $NodesToPing.Count)
+    while ($null -eq $ClusterNodes -and $NodeIdx -lt $NodesToPing.Count)
     {
         # we failed to get it, iterate through the nodes
         $ClusterNodes = Get-ClusterNode -Cluster $NodesToPing[$NodeIdx].Name -ErrorAction SilentlyContinue
@@ -918,7 +962,7 @@ function Get-NodeList(
         $NodeIdx++
     }
 
-    if ($ClusterNodes -ne $null)
+    if ($null -ne $ClusterNodes)
     {
         if ($Nodes.Count)
         {
@@ -1537,7 +1581,7 @@ function Get-SddcDiagnosticInfo
 
         $AccessNode = Get-ClusterAccessNode @($NodeList)
 
-        if ($AccessNode -ne $null)
+        if ($null -ne $AccessNode)
         {
             $AccessNode = $AccessNode + "." + (Get-Cluster -Name $AccessNode).Domain
         }
@@ -1650,7 +1694,7 @@ function Get-SddcDiagnosticInfo
         # Scrub any existing and create new - use compression to minimize temp footprint
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse | Out-Null
         New-Item -ItemType Directory -ErrorAction SilentlyContinue $Path | Out-Null
-        compact /c $Path | Out-Null
+        $null = compact /c $Path
     }
 
     $PathObject = Get-Item $Path
@@ -1685,6 +1729,10 @@ function Get-SddcDiagnosticInfo
         Show-Error "Unable to start transcript at $transcriptFile" $_
         throw $_
     }
+
+    # Asynch gather job lists
+    $JobStatic = @()
+    $JobGather = @()
 
     try {
 
@@ -1744,7 +1792,7 @@ function Get-SddcDiagnosticInfo
                 foreach ($cn in $ClusterNodes)
                 {
                     $Cluster = Get-Cluster -Name $cn.Name -ErrorAction SilentlyContinue
-                    if ($Cluster -ne $null) { break }
+                    if ($null -ne $Cluster) { break }
                 }
             } else {
                 $Cluster = Get-Cluster -Name $ClusterName
@@ -1752,7 +1800,7 @@ function Get-SddcDiagnosticInfo
         }
         catch { Show-Error("Cluster could not be contacted. `nError="+$_.Exception.Message) }
 
-        if ($Cluster -ne $null)
+        if ($null -ne $Cluster)
         {
             $Cluster | Export-Clixml ($Path + "GetCluster.XML")
             $ClusterName = $Cluster.Name + "." + $Cluster.Domain
@@ -1790,12 +1838,7 @@ function Get-SddcDiagnosticInfo
 
         ####
         # Begin paralellized captures.
-        # Start accumulating static jobs which self-contain their gather.
-        # These are pulled in close to the end. Consider how to regularize this down the line.
         ####
-        $JobStatic = @()
-        $JobCopyOut = @()
-        $JobCopyOutNoDelete = @()
 
         # capture Sddc Diagnostic Archive if requested and active on the target cluster
         if ($Cluster -and
@@ -1820,7 +1863,7 @@ function Get-SddcDiagnosticInfo
                     $null = Confirm-SddcDiagnosticModule -Cluster $using:Cluster 3> $o
                 }
 
-                $j = Invoke-SddcCommonCommand -ClusterNodes $ClusterNodes.Name -JobName SddcDiagnosticArchive -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
+                $j = Invoke-CommonCommand -ClusterNodes $ClusterNodes.Name -JobName SddcDiagnosticArchive -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
                     Import-Module $using:Module -ErrorAction SilentlyContinue
 
@@ -1853,7 +1896,8 @@ function Get-SddcDiagnosticInfo
                             }
                         } |% {
 
-                            Get-AdminSharePathFromLocal $env:COMPUTERNAME $_
+                            # Copy but do not scrub the archive!
+                            NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $_)
                         }
                     }
                 }
@@ -1861,17 +1905,11 @@ function Get-SddcDiagnosticInfo
                 # since the archive directory is configurable, we always need to specify the
                 # destination within the capture - it may be \some\dir\foo, but we want it to be
                 # node_xxx\SddcDiagnosticArchive in the capture.
-                #
-                # we add a member to the jobs to indicate this. also rename them to indicate the
-                # activity in these jobs, so we report runtime in a more useful way.
                 $j.ChildJobs |% {
                     $_ | Add-Member -NotePropertyName Destination -NotePropertyValue SddcDiagnosticArchive
                 }
 
-                # and add to the copyout-nodelete set
-                # we do not want to scrub away the archive, unlike content we generate on the target node
-                # and then do want to delete after capture.
-                $JobCopyOutNoDelete += $j
+                $JobGather += $j
             }
         }
 
@@ -1881,45 +1919,52 @@ function Get-SddcDiagnosticInfo
 
             $JobStatic += start-job -Name ClusterGroup {
                 try {
-                    $o = Get-ClusterGroup -Cluster $using:AccessNode
-                    $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
+                    Get-ClusterGroup -Cluster $using:AccessNode |
+                    Export-Clixml ($using:Path + "GetClusterGroup.XML")
                 }
                 catch { Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
             }
 
             $JobStatic += start-job -Name ClusterNetwork {
                 try {
-                    $o = Get-ClusterNetwork -Cluster $using:AccessNode
-                    $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
+                    Get-ClusterNetwork -Cluster $using:AccessNode |
+                    Export-Clixml ($using:Path + "GetClusterNetwork.XML")
                 }
                 catch { Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
             }
 
             $JobStatic += start-job -Name ClusterResource {
                 try {
-                    $o = Get-ClusterResource -Cluster $using:AccessNode
-                    $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
+                    Get-ClusterResource -Cluster $using:AccessNode |
+                    Export-Clixml ($using:Path + "GetClusterResource.XML")
                 }
                 catch { Show-Warning("Unable to get Cluster Resources.  `nError="+$_.Exception.Message) }
-
             }
 
             $JobStatic += start-job -Name ClusterResourceParameter {
                 try {
-                    $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
-                    $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
+                    Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter |
+                    Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
                 }
                 catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
             }
 
             $JobStatic += start-job -Name ClusterSharedVolume {
                 try {
-                    $o = Get-ClusterSharedVolume -Cluster $using:AccessNode
-                    $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
+                    Get-ClusterSharedVolume -Cluster $using:AccessNode |
+                    Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
                 }
                 catch { Show-Warning("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
-
             }
+
+            $JobStatic += start-job -Name ClusterQuorum {
+                try {
+                    Get-ClusterQuorum -Cluster $using:AccessNode |
+                    Export-Clixml ($using:Path + "GetClusterQuorum.XML")
+                }
+                catch { Show-Warning("Unable to get Cluster Quorum.  `nError="+$_.Exception.Message) }
+            }
+
         } else {
             Show-Update "... Skip gather of cluster configuration since cluster is not available"
         }
@@ -1956,54 +2001,54 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Start gather of verifier ..."
 
-        $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName Verifier -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
+        $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName Verifier -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
             # Verifier
 
             $LocalFile = Join-Path $env:temp "verifier-query.txt"
             verifier /query > $LocalFile
-            Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+            NewCopyTask -Delete (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
 
             $LocalFile = Join-Path $env:temp "verifier-querysettings.txt"
             verifier /querysettings > $LocalFile
-            Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+            NewCopyTask -Delete  (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
         }
 
         Show-Update "Start gather of filesystem filter status ..."
 
-        $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Filesystem Filter Manager' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
+        $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Filesystem Filter Manager' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
             # Filter Manager
 
             $LocalFile = Join-Path $env:temp "fltmc.txt"
             fltmc > $LocalFile
-            Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+            NewCopyTask -Delete  (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
 
             $LocalFile = Join-Path $env:temp "fltmc-instances.txt"
             fltmc instances > $LocalFile
-            Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+            NewCopyTask -Delete  (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
         }
 
-        $JobCopyOutNoDelete += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Copy WER ReportArchive' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
+        $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Copy WER ReportArchive' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
             # ReportArchive copy (one-shot, we'll recursively copy)
 
-            Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $env:ProgramData\Microsoft\Windows\WER\ReportArchive)
+            NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $env:ProgramData\Microsoft\Windows\WER\ReportArchive)
         }
 
         if ($IncludeDumps -eq $true) {
 
-            $JobCopyOutNoDelete += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Copy ReportQueue' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
+            $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Copy ReportQueue' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
                 # ReportQueue copy (one-shot, we'll recursively copy)
 
-                Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $env:ProgramData\Microsoft\Windows\WER\ReportQueue)
+                NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $env:ProgramData\Microsoft\Windows\WER\ReportQueue)
             }
         }
 
         if ($IncludeProcessDump) {
 
-            $JobCopyOut += Invoke-SddcCommonCommand -ClusterNodes $($ClusterNodes).Name -JobName ProcessDumps -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -ArgumentList $ProcessLists {
+            $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName ProcessDumps -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -ArgumentList $ProcessLists {
 
                 Param($ProcessLists)
 
@@ -2014,10 +2059,9 @@ function Get-SddcDiagnosticInfo
                 $DumpProcesses = @("vmms", "vmcompute", "vmwp", "rhs", "clussvc")
 
                 #Appending user passed process lists.
-                if ($ProcessLists -ne $null) {
+                if ($null -ne $ProcessLists) {
                     $DumpProcesses += $ProcessLists.split(",")
                 }
-
 
                 $DumpFileFolder = Join-Path -Path $NodePath -ChildPath 'ProcessDumps'
 
@@ -2073,7 +2117,7 @@ function Get-SddcDiagnosticInfo
                             Show-Warning "Failed to write dump file for process $psname with PID $ProcessId."
                             Remove-Item $DumpFilePath
                         } else {
-                            Write-Output (Get-AdminSharePathFromLocal $Node $DumpFilePath)
+                            NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $DumpFilePath)
                         }
                     }
                 }
@@ -2084,7 +2128,7 @@ function Get-SddcDiagnosticInfo
 
             Show-Update "Start gather of Get-NetView ..."
 
-            $JobCopyOut += Invoke-SddcCommonCommand -ArgumentList $SkipVm -ClusterNodes $($ClusterNodes).Name -JobName 'GetNetView' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
+            $JobGather += Invoke-CommonCommand -ArgumentList $SkipVm -ClusterNodes $($ClusterNodes).Name -JobName 'GetNetView' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
                 Param($SkipVM)
 
@@ -2133,7 +2177,7 @@ function Get-SddcDiagnosticInfo
                 }
 
                 # gather all remaining content (will be the zip + transcript) in GNV directory
-                Write-Output (Get-AdminSharePathFromLocal $env:COMPUTERNAME $gnvDir)
+                NewCopyTask -Delete (Get-AdminSharePathFromLocal $env:COMPUTERNAME $gnvDir)
             }
         }
 
@@ -2154,7 +2198,7 @@ function Get-SddcDiagnosticInfo
 
             $NodeName = $_
 
-            Invoke-SddcCommonCommand -JobName "System Info: $NodeName" -InitBlock $CommonFunc -SessionConfigurationName $SessionConfigurationName -ScriptBlock {
+            Invoke-CommonCommand -JobName "System Info: $NodeName" -InitBlock $CommonFunc -SessionConfigurationName $SessionConfigurationName -ScriptBlock {
 
                 $Node = "$using:NodeName"
                 if ($using:ClusterDomain.Length) {
@@ -2176,9 +2220,9 @@ function Get-SddcDiagnosticInfo
                 # _C_ token will be replaced with node fqdn for cimsession/computername callouts
                 # _N_ token will be replaced with node non-fqdn
                 $CmdsToLog =
-                            @{ C = 'Get-CimInstance Win32_Bios'; F = 'Win32_Bios' },
-                            @{ C = 'Get-CimInstance Win32_ComputerSystem'; F = 'Win32_ComputerSystem' },
-                            @{ C = 'Get-CimInstance Win32_OperatingSystem'; F = 'Win32_OperatingSystem' },
+                            @{ C = 'Get-CimInstance -ComputerName _C_ Win32_Bios'; F = 'Win32_Bios' },
+                            @{ C = 'Get-CimInstance -ComputerName _C_ Win32_ComputerSystem'; F = 'Win32_ComputerSystem' },
+                            @{ C = 'Get-CimInstance -ComputerName _C_ Win32_OperatingSystem'; F = 'Win32_OperatingSystem' },
                             @{ C = 'Get-CimInstance Win32_PhysicalMemory'; F = 'Win32_PhysicalMemory' },
                             @{ C = 'Get-CimInstance Win32_Processor'; F = 'Win32_Processor' },
                             @{ C = 'Get-HotFix -ComputerName _C_'; F = $null },
@@ -2332,7 +2376,7 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Starting export diagnostic log and live dump ..."
 
-        $JobCopyOut += Invoke-SddcCommonCommand -ArgumentList $IncludeLiveDump,$IncludeStorDiag -ClusterNodes $AccessNode -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName StorageDiagnosticInfoAndLiveDump {
+        $JobGather += Invoke-CommonCommand -ArgumentList $IncludeLiveDump,$IncludeStorDiag -ClusterNodes $AccessNode -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName StorageDiagnosticInfoAndLiveDump {
 
             Param($IncludeLiveDump,$IncludeStorDiag)
 
@@ -2351,32 +2395,38 @@ function Get-SddcDiagnosticInfo
                 Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
 
                 # Copy storage diagnostic and live dump information (one-shot, we'll recursively copy)
-                Write-Output (Get-AdminSharePathFromLocal $Node $destinationPath)
+                NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $destinationPath)
             }
             elseif ($IncludeStorDiag) {
                 Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
 
                 # Copy storage diagnostic and live dump information (one-shot, we'll recursively copy)
-                Write-Output (Get-AdminSharePathFromLocal $Node $destinationPath)
+                NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $destinationPath)
             }
         }
 
         Show-Update "Starting export of events ..."
 
-        $JobCopyOut += Invoke-SddcCommonCommand -ArgumentList $HoursOfEvents -ClusterNodes $($ClusterNodes).Name -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName Events {
+        $JobGather += Invoke-CommonCommand -ArgumentList $HoursOfEvents -ClusterNodes $($ClusterNodes).Name -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName Events {
 
             Param([int] $Hours)
 
             $Node = $env:COMPUTERNAME
-            $NodePath = $env:Temp
 
+            # use temporary directory with compression on to minimize capture footprint
+            $NodePath = New-TemporaryFile
+            Remove-Item $NodePath
+            $null = New-Item -ItemType Directory $NodePath
+            $null = compact /c $NodePath
+
+            # Flatten the captured events + local metadata into the per-node directory on the gatherer
             Get-SddcCapturedEvents $NodePath $Hours |% {
-
-                Write-Output (Get-AdminSharePathFromLocal $Node $_)
+                NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $_)
             }
+            NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
 
-            # Also export locale metadata for off-system rendering (one-shot, we'll recursively copy)
-            Write-Output (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
+            # And remove the capture directory at the end of copy
+            NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $NodePath) -NoCopy
         }
 
         if ($IncludeAssociations -and $ClusterName.Length) {
@@ -2530,14 +2580,14 @@ function Get-SddcDiagnosticInfo
         try {
             $o = Get-SmbOpenFile -CimSession $AccessNode
             $o | Export-Clixml ($Path + "GetSmbOpenFile.XML") }
-        catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
+        catch { Show-Error("Unable to get SMB open files. `nError="+$_.Exception.Message) }
 
         Show-Update "SMB Share Witness"
 
         try {
             $o = Get-SmbWitnessClient -CimSession $AccessNode
             $o | Export-Clixml ($Path + "GetSmbWitness.XML") }
-        catch { Show-Error("Unable to get Open Files. `nError="+$_.Exception.Message) }
+        catch { Show-Error("Unable to get SMB Witness state. `nError="+$_.Exception.Message) }
 
         Show-Update "Clustered Subsystem"
 
@@ -2729,30 +2779,25 @@ function Get-SddcDiagnosticInfo
         # Now receive the jobs requiring remote copyout
         ####
 
-        if ($JobCopyOut.Count -or $JobCopyOutNoDelete.Count) {
+        if ($JobGather.Count) {
 
             Show-Update "Completing jobs with remote copyout ..." -ForegroundColor Green
-            Show-WaitChildJob ($JobCopyOut + $JobCopyOutNoDelete) 120
+            Show-WaitChildJob $JobGather 120
             Show-Update "Starting remote copyout ..."
 
             # keep parallelizing on receive at the individual node/child job level
-            $JobCopy = @()
-            if ($JobCopyOut.Count) { $JobCopy += Start-CopyJob $Path -Delete $JobCopyOut }
-            if ($JobCopyOutNoDelete.Count) { $JobCopy += Start-CopyJob $Path $JobCopyOutNoDelete }
-            Show-WaitChildJob $JobCopy 30
+            $JobCopy = $JobGather | Start-CopyJob $Path
+            Remove-Job $JobGather
+            $JobGather | RemoveCommonJobSession
+            $JobGather = @()
 
             # receive any copyout errors for logging/triage
+            Show-WaitChildJob $JobCopy 30
             Receive-Job $JobCopy
-            Remove-Job ($JobCopyOut + $JobCopyOutNoDelete)
             Remove-Job $JobCopy
 
-            if (Get-Member -InputObject $JobCopyOut ActiveSessions)
-            {
-                 Remove-PSSession -Id $JobCopyOut.ActiveSessions
-            }
+            Show-Update "All remote copyout complete" -ForegroundColor Green
         }
-
-        Show-Update "All remote copyout complete" -ForegroundColor Green
 
         ####
         # Now receive the static jobs
@@ -2761,16 +2806,10 @@ function Get-SddcDiagnosticInfo
         Show-Update "Completing background gathers ..." -ForegroundColor Green
         Show-WaitChildJob $JobStatic 30
         Receive-Job $JobStatic
+
         Remove-Job $JobStatic
-
-        if (Get-Member -InputObject $JobStatic ActiveSessions)
-        {
-                Remove-PSSession -Id $JobStatic.ActiveSessions
-        }
-
-        # wipe variables to catch reuse
-        Remove-Variable JobCopyOut
-        Remove-Variable JobStatic
+        $JobStatic | RemoveCommonJobSession
+        $JobStatic = @()
 
         #
         # Phase 2 Prep
@@ -3061,7 +3100,17 @@ function Get-SddcDiagnosticInfo
         Show-Update "GATHERS COMPLETE ($(((Get-Date) - $TodayDate).ToString("m'm's\.f's'")))" -ForegroundColor Green
 
     } finally {
+
         Stop-Transcript
+
+        # Wipe down any pending jobs & associated sessions
+        $JobGather | Stop-Job
+        $JobGather | Remove-Job
+        $JobGather | RemoveCommonJobSession
+
+        $JobStatic | Stop-Job
+        $JobStatic | Remove-Job
+        $JobStatic | RemoveCommonJobSession
     }
 
     # Generate Summary report for rapid consumption at analysis time
@@ -4421,7 +4470,7 @@ function Get-SpacesTimeline
                 $chart.Series[$seriesName].XValueType = [Windows.Forms.DataVisualization.Charting.ChartValueType]::DateTime
                 $chart.Series[$seriesName].MarkerStyle = [Windows.Forms.DataVisualization.Charting.MarkerStyle]::Circle
 
-                if ($startTime -ne $null)
+                if ($null -ne $startTime)
                 {
                     $value = 10
                     $point.SetValueXY($i.TimeCreated, $value)
@@ -4431,7 +4480,7 @@ function Get-SpacesTimeline
                     $chart.Series[$seriesName].Points.Add($point)
                     $startTime = $null
                 }
-                if ($endTime -ne $null)
+                if ($null -ne $endTime)
                 {
                     $value = 20
                     $point.SetValueXY($i.TimeCreated, $value)
@@ -4879,345 +4928,352 @@ function Get-StorageLatencyReport
 
     $j = @()
 
-    dir $Path\Node_*\Microsoft-Windows-Storage-Storport-Operational.EVTX | sort -Property FullName |% {
+    try
+    {
 
-        $file = $_.FullName
-        $node = "<unknown>"
-        if ($file -match "Node_([^\\]+)\\") {
-            $node = $matches[1]
-        }
+        dir $Path\Node_*\Microsoft-Windows-Storage-Storport-Operational.EVTX | sort -Property FullName |% {
 
-        # parallelize processing of per-node event logs
-
-        $j += Invoke-SddcCommonCommand -InitBlock $CommonFunc -JobName $node -SessionConfigurationName $null -ScriptBlock {
-
-            $dofull = $false
-
-            if ($using:ReportLevel -eq "Full")
-            {
-                $dofull = $true
+            $file = $_.FullName
+            $node = "<unknown>"
+            if ($file -match "Node_([^\\]+)\\") {
+                $node = $matches[1]
             }
 
-            # helper function for getting list of bucketnames from x->end
-            function Get-Bucket
-            {
-                param(
-                    [int] $i,
-                    [int] $max,
-                    [string[]] $s
-                )
+            # parallelize processing of per-node event logs
 
-                $i .. $max |% {
-                    $l = $_
-                    $s |% { "BucketIo$_$l" }
-                }
-            }
+            $j += Invoke-CommonCommand -InitBlock $CommonFunc -JobName $node -SessionConfigurationName $null -ScriptBlock {
 
-            # hash for devices, label schema, and whether values are absolute counts or split success/faul
-            $buckhash = @{}
-            $bucklabels = $null
-            $buckvalueschema = $null
+                $dofull = $false
 
-            # note: cutoff bucket is 1-based, following the actual event schema labels (BucketIoCountNNN)
-            $cutoffbuck = 1
-
-            $evs = @()
-
-            # get all storport 505 events; there is a label field at position 6 which names
-            # the integer fields in the following positions. these fields countain counts
-            # of IOs in the given latency buckets. we assume all events have the same labelling
-            # scheme.
-            #
-            # 1. count the number of sample periods in which a given bucket had any io.
-            # 2. emit onto the pipeline the hash of counted periods and events which have
-            #    io in the last bucket
-            #
-            # note: getting fields by position is not ideal, but getting them by name would
-            # appear to require pushing through an XML rendering and hashing. this would be
-            # less efficient and this is already somewhat time consuming.
-
-            # the erroraction handles (potentially) disabled logs, which have no events
-
-            # get single event from the log (if present)
-            $e = Get-WinEvent -Path $using:file -FilterXPath (Get-FilterXpath -Event 505) -ErrorAction SilentlyContinue -MaxEvents 1
-
-            if ($e) {
-
-                # use this event to determine schema and cutoff bucket (if specified)
-
-                $xh = Get-EventDataHash $e
-
-                # only need to get the bucket label schema once
-                # the number of labels and the number of bucket counts should be equal
-                # determine the count schema at the same time
-                $bucklabels = $xh['IoLatencyBuckets'] -split ',\s+'
-
-                # is the count scheme split (RS5) or combined (RS1)?
-                # match 1 is the bucket type
-                # match 2 is the value bucket number (1 .. n)
-                if ($xh.ContainsKey("BucketIoSuccess1")) {
-                    $schemasplit = $true
-                    $buckvalueschema = "^BucketIo(Success|Failed)(\d+)$"
-                } else {
-                    $schemasplit = $false
-                    $buckvalueschema = "^BucketIo(Count)(\d+)$"
+                if ($using:ReportLevel -eq "Full")
+                {
+                    $dofull = $true
                 }
 
-                # initialize empty data element test
-                $DataOr = @{}
+                # helper function for getting list of bucketnames from x->end
+                function Get-Bucket
+                {
+                    param(
+                        [int] $i,
+                        [int] $max,
+                        [string[]] $s
+                    )
 
-                if ($using:CutoffMs) {
-
-                    $CutoffUs = $using:CutoffMs * 1000
-
-                    # parse the buckets to determine where the cutoff is
-                    $a = $xh['IoLatencyBuckets'] -split ',\s+' |% {
-
-                        switch -Regex ($_) {
-
-                            "^(\d+)us$" { [int] $matches[1] }
-                            "^(\d+)ms$" { ([int] $matches[1]) * 1000 }
-                            "^(\d+)\+ms$" { [int]::MaxValue }
-
-                            default { throw "misparsed storport 505 event latency bucket label $_ " }
-                        }
+                    $i .. $max |% {
+                        $l = $_
+                        $s |% { "BucketIo$_$l" }
                     }
+                }
 
-                    # determine which bucket contains the cutoff, and build the must-be-gtz kv
-                    foreach ($i in 0..($a.Count - 1)) {
-                        if ($CutoffUs -lt $a[$i]) {
-                            # cutoff bucket matches the event schema, which is one-based, i.e. we're putting the cutoff
-                            # at BucketIoCount3 if we found the cutoff in the 0-1-2nd array entry
-                            $cutoffbuck = $i+1
-                            break
-                        }
-                    }
+                # hash for devices, label schema, and whether values are absolute counts or split success/faul
+                $buckhash = @{}
+                $bucklabels = $null
+                $buckvalueschema = $null
 
-                    # ... build the named buckets in the event which must-be-gtz
-                    if ($schemasplit) {
-                        $buck = Get-Bucket $cutoffbuck $a.Count 'Success','Failed'
+                # note: cutoff bucket is 1-based, following the actual event schema labels (BucketIoCountNNN)
+                $cutoffbuck = 1
+
+                $evs = @()
+
+                # get all storport 505 events; there is a label field at position 6 which names
+                # the integer fields in the following positions. these fields countain counts
+                # of IOs in the given latency buckets. we assume all events have the same labelling
+                # scheme.
+                #
+                # 1. count the number of sample periods in which a given bucket had any io.
+                # 2. emit onto the pipeline the hash of counted periods and events which have
+                #    io in the last bucket
+                #
+                # note: getting fields by position is not ideal, but getting them by name would
+                # appear to require pushing through an XML rendering and hashing. this would be
+                # less efficient and this is already somewhat time consuming.
+
+                # the erroraction handles (potentially) disabled logs, which have no events
+
+                # get single event from the log (if present)
+                $e = Get-WinEvent -Path $using:file -FilterXPath (Get-FilterXpath -Event 505) -ErrorAction SilentlyContinue -MaxEvents 1
+
+                if ($e) {
+
+                    # use this event to determine schema and cutoff bucket (if specified)
+
+                    $xh = Get-EventDataHash $e
+
+                    # only need to get the bucket label schema once
+                    # the number of labels and the number of bucket counts should be equal
+                    # determine the count schema at the same time
+                    $bucklabels = $xh['IoLatencyBuckets'] -split ',\s+'
+
+                    # is the count scheme split (RS5) or combined (RS1)?
+                    # match 1 is the bucket type
+                    # match 2 is the value bucket number (1 .. n)
+                    if ($xh.ContainsKey("BucketIoSuccess1")) {
+                        $schemasplit = $true
+                        $buckvalueschema = "^BucketIo(Success|Failed)(\d+)$"
                     } else {
-                        $buck = Get-Bucket $cutoffbuck $a.Count 'Count'
+                        $schemasplit = $false
+                        $buckvalueschema = "^BucketIo(Count)(\d+)$"
                     }
 
-                    # ... build out the DataOor as must-be-gtz tests
+                    # initialize empty data element test
                     $DataOr = @{}
-                    $buck |% {
-                        $DataOr[$_] = "> 0"
-                    }
-                }
 
-                # now do two things based on determining the cutoff (or lack thereof)
-                # 1. relabel the cutoff bucket (the first we will return) to indicate the lower bound of latency
-                #       - if there is no cutoff, we add 0- to indicate it contains 0-<label>
-                #       - if there is a cutoff, we add <lower bucket>- to indicate  contains events
-                #           from that latency upward, i.e. 64ms-2048ms
-                # 2. trim off the cut labels from the front of bucklabels (the length of this drives the rest)
+                    if ($using:CutoffMs) {
 
-                if ($cutoffbuck -eq 1) {
-                    # no cutoff, prepend 0- to first entry
-                    $bucklabels[0] = "0-" + $bucklabels[0]
-                } else {
-                    # cutoff, prepend lower neighbor
-                    $bucklabels[$cutoffbuck - 1] = $bucklabels[$cutoffbuck - 2] + "-" + $bucklabels[$cutoffbuck - 1]
-                    # trim labels to the cutoff bucket and upward
-                    $bucklabels = $bucklabels[($cutoffbuck - 1) .. ($bucklabels.Count - 1)]
-                }
+                        $CutoffUs = $using:CutoffMs * 1000
 
-                # construct the xpath filter w/wo the time filter
-                # if the data element test is empty, it will not be built into the xpath query
-                if ($using:HoursOfEvents -ne -1) {
-                    $xpath = Get-FilterXpath -Event 505 -TimeBase $using:TimeBase -TimeDeltaMs ($using:HoursOfEvents * 60 * 60 * 1000) -DataOr $DataOr
-                } else {
-                    $xpath = Get-FilterXpath -Event 505 -DataOr $DataOr
-                }
+                        # parse the buckets to determine where the cutoff is
+                        $a = $xh['IoLatencyBuckets'] -split ',\s+' |% {
 
-<#
-                # block for timing the queries
-                $t0 = Get-Date
+                            switch -Regex ($_) {
 
-                $e = Get-WinEvent -Path $using:file -FilterXPath $xpath
+                                "^(\d+)us$" { [int] $matches[1] }
+                                "^(\d+)ms$" { ([int] $matches[1]) * 1000 }
+                                "^(\d+)\+ms$" { [int]::MaxValue }
 
-                $td = (Get-Date) - $t0
-                Write-Host -ForegroundColor Red ("Query $($using:file) took {0:N2} seconds" -f $td.TotalSeconds)
-
-                $e |% {
-#>
-                # now, with schema, process all events
-                Get-WinEvent -Path $using:file -FilterXPath $xpath |% {
-
-                    $xh = Get-EventDataHash $_
-
-                    # physical disk device id - string the curly to normalize later matching
-                    $dev = [string] $xh['ClassDeviceGuid']
-                    if ($dev -match '{(.*)}') {
-                        $dev = $matches[1]
-                    }
-
-                    # counting array for each bucket
-                    $buckvalues = @($null) * $bucklabels.length
-
-                    # place all data values into the counting array
-                    $xh.Keys |% {
-                        if ($_ -match $buckvalueschema) {
-
-                            # the schema parses the bucket number into match 2
-                            # number is 1-based, as is the cutoff
-                            # this converts it to a 0-base
-                            $thisbuck = [int] $matches[2]
-                            if ($thisbuck -ge $cutoffbuck) {
-                                $buckvalues[$thisbuck - $cutoffbuck] += [int] $xh[$_]
+                                default { throw "misparsed storport 505 event latency bucket label $_ " }
                             }
+                        }
+
+                        # determine which bucket contains the cutoff, and build the must-be-gtz kv
+                        foreach ($i in 0..($a.Count - 1)) {
+                            if ($CutoffUs -lt $a[$i]) {
+                                # cutoff bucket matches the event schema, which is one-based, i.e. we're putting the cutoff
+                                # at BucketIoCount3 if we found the cutoff in the 0-1-2nd array entry
+                                $cutoffbuck = $i+1
+                                break
+                            }
+                        }
+
+                        # ... build the named buckets in the event which must-be-gtz
+                        if ($schemasplit) {
+                            $buck = Get-Bucket $cutoffbuck $a.Count 'Success','Failed'
+                        } else {
+                            $buck = Get-Bucket $cutoffbuck $a.Count 'Count'
+                        }
+
+                        # ... build out the DataOor as must-be-gtz tests
+                        $DataOr = @{}
+                        $buck |% {
+                            $DataOr[$_] = "> 0"
                         }
                     }
 
-                    # the counting array should not contain null entries; all buckets should be represented in the event
-                    if ($buckvalues -contains $null) {
-                        throw "misparsed 505 event latency buckets: labels $($bucklabels.count) values $(($buckvalues | measure).count)"
-                    }
+                    # now do two things based on determining the cutoff (or lack thereof)
+                    # 1. relabel the cutoff bucket (the first we will return) to indicate the lower bound of latency
+                    #       - if there is no cutoff, we add 0- to indicate it contains 0-<label>
+                    #       - if there is a cutoff, we add <lower bucket>- to indicate  contains events
+                    #           from that latency upward, i.e. 64ms-2048ms
+                    # 2. trim off the cut labels from the front of bucklabels (the length of this drives the rest)
 
-                    # now place the counting array into the device hash; each nonzero bucket adds +1
-                    if (-not $buckhash.ContainsKey($dev)) {
-                        # new device
-                        $buckhash[$dev] = $buckvalues |% { if ($_) { 1 } else { 0 }}
+                    if ($cutoffbuck -eq 1) {
+                        # no cutoff, prepend 0- to first entry
+                        $bucklabels[0] = "0-" + $bucklabels[0]
                     } else {
-                        # increment device bucket hit counts
-                        foreach ($i in 0..($buckvalues.count - 1)) {
-                            if ($buckvalues[$i]) { $buckhash[$dev][$i] += 1}
+                        # cutoff, prepend lower neighbor
+                        $bucklabels[$cutoffbuck - 1] = $bucklabels[$cutoffbuck - 2] + "-" + $bucklabels[$cutoffbuck - 1]
+                        # trim labels to the cutoff bucket and upward
+                        $bucklabels = $bucklabels[($cutoffbuck - 1) .. ($bucklabels.Count - 1)]
+                    }
+
+                    # construct the xpath filter w/wo the time filter
+                    # if the data element test is empty, it will not be built into the xpath query
+                    if ($using:HoursOfEvents -ne -1) {
+                        $xpath = Get-FilterXpath -Event 505 -TimeBase $using:TimeBase -TimeDeltaMs ($using:HoursOfEvents * 60 * 60 * 1000) -DataOr $DataOr
+                    } else {
+                        $xpath = Get-FilterXpath -Event 505 -DataOr $DataOr
+                    }
+
+    <#
+                    # block for timing the queries
+                    $t0 = Get-Date
+
+                    $e = Get-WinEvent -Path $using:file -FilterXPath $xpath
+
+                    $td = (Get-Date) - $t0
+                    Write-Host -ForegroundColor Red ("Query $($using:file) took {0:N2} seconds" -f $td.TotalSeconds)
+
+                    $e |% {
+    #>
+                    # now, with schema, process all events
+                    Get-WinEvent -Path $using:file -FilterXPath $xpath |% {
+
+                        $xh = Get-EventDataHash $_
+
+                        # physical disk device id - string the curly to normalize later matching
+                        $dev = [string] $xh['ClassDeviceGuid']
+                        if ($dev -match '{(.*)}') {
+                            $dev = $matches[1]
+                        }
+
+                        # counting array for each bucket
+                        $buckvalues = @($null) * $bucklabels.length
+
+                        # place all data values into the counting array
+                        $xh.Keys |% {
+                            if ($_ -match $buckvalueschema) {
+
+                                # the schema parses the bucket number into match 2
+                                # number is 1-based, as is the cutoff
+                                # this converts it to a 0-base
+                                $thisbuck = [int] $matches[2]
+                                if ($thisbuck -ge $cutoffbuck) {
+                                    $buckvalues[$thisbuck - $cutoffbuck] += [int] $xh[$_]
+                                }
+                            }
+                        }
+
+                        # the counting array should not contain null entries; all buckets should be represented in the event
+                        if ($buckvalues -contains $null) {
+                            throw "misparsed 505 event latency buckets: labels $($bucklabels.count) values $(($buckvalues | measure).count)"
+                        }
+
+                        # now place the counting array into the device hash; each nonzero bucket adds +1
+                        if (-not $buckhash.ContainsKey($dev)) {
+                            # new device
+                            $buckhash[$dev] = $buckvalues |% { if ($_) { 1 } else { 0 }}
+                        } else {
+                            # increment device bucket hit counts
+                            foreach ($i in 0..($buckvalues.count - 1)) {
+                                if ($buckvalues[$i]) { $buckhash[$dev][$i] += 1}
+                            }
+                        }
+
+                        # in the full report, show
+                        # 1. all events above a cutoff, if applied
+                        # 2. or events in the highest bucket
+                        if ($dofull -and ($buckvalues[-1] -ne 0 -or $cutoffbuck -ne 1)) {
+                            $evs += $(
+
+                                # events must be cracked into plain objects to survive deserialization through the session
+
+                                # base object with time/device
+                                $o = New-Object psobject -Property @{
+                                    'Time' = $_.TimeCreated
+                                    'Device' = [string] $_.Properties[4].Value
+                                }
+
+                                # add on the named latency buckets
+                                foreach ($i in 0..($bucklabels.count -1)) {
+                                    $o | Add-Member -NotePropertyName $bucklabels[$i] -NotePropertyValue $buckvalues[$i]
+                                }
+
+                                # and emit
+                                $o
+                            )
                         }
                     }
 
-                    # in the full report, show
-                    # 1. all events above a cutoff, if applied
-                    # 2. or events in the highest bucket
-                    if ($dofull -and ($buckvalues[-1] -ne 0 -or $cutoffbuck -ne 1)) {
-                        $evs += $(
-
-                            # events must be cracked into plain objects to survive deserialization through the session
-
-                            # base object with time/device
-                            $o = New-Object psobject -Property @{
-                                'Time' = $_.TimeCreated
-                                'Device' = [string] $_.Properties[4].Value
-                            }
-
-                            # add on the named latency buckets
-                            foreach ($i in 0..($bucklabels.count -1)) {
-                                $o | Add-Member -NotePropertyName $bucklabels[$i] -NotePropertyValue $buckvalues[$i]
-                            }
-
-                            # and emit
-                            $o
-                        )
-                    }
-                }
-
-                # return label schema, counting hash, and events
-                # labels must be en-listed to pass the pipeline as a list as opposed to individual values
-                ,$bucklabels
-                $buckhash
-                $evs
-            }
-        }
-    }
-
-    # acquire the physicaldisks datasource
-    $PhysicalDisks = Import-ClixmlIf (Join-Path $Path "GetPhysicalDisk.XML")
-
-    # hash by object id
-    # this is an example where a formal datasource class/api could be useful
-    $PhysicalDisksTable = @{}
-    $PhysicalDisks |% {
-        if ($_.ObjectId -match 'PD:{(.*)}') {
-            $PhysicalDisksTable[$matches[1]] = $_
-        }
-    }
-
-    # we will join the latency information with this set of physicaldisk attributes
-    $pdattr = 'FriendlyName','SerialNumber','MediaType','OperationalStatus','HealthStatus','Usage'
-
-    $pdattrs_tab = @{ Label = 'FriendlyName'; Expression = { $PhysicalDisksTable[$_.Device].FriendlyName }},
-                @{ Label = 'SerialNumber'; Expression = { $PhysicalDisksTable[$_.Device].SerialNumber }},
-                @{ Label = 'Firmware'; Expression = { $PhysicalDisksTable[$_.Device].FirmwareVersion }},
-                @{ Label = 'Media'; Expression = { $PhysicalDisksTable[$_.Device].MediaType }},
-                @{ Label = 'Usage'; Expression = { $PhysicalDisksTable[$_.Device].Usage }},
-                @{ Label = 'OpStat'; Expression = { $PhysicalDisksTable[$_.Device].OperationalStatus }},
-                @{ Label = 'HealthStat'; Expression = { $PhysicalDisksTable[$_.Device].HealthStatus }}
-
-    # joined physicaldisk attributes for the event view
-    # since status' are not known at the time of the event, omit for brevity/accuracy
-    $pdattrs_ev = @{ Label = 'FriendlyName'; Expression = { $PhysicalDisksTable[$_.Device].FriendlyName }},
-                @{ Label = 'SerialNumber'; Expression = { $PhysicalDisksTable[$_.Device].SerialNumber }},
-                @{ Label = 'Media'; Expression = { $PhysicalDisksTable[$_.Device].MediaType }},
-                @{ Label = 'Usage'; Expression = { $PhysicalDisksTable[$_.Device].Usage }}
-
-    # now wait for the event processing jobs and emit the per-node reports
-    $j | Wait-Job| sort name |% {
-
-        ($bucklabels, $buckhash, $evs) = receive-job $_
-        $node = $_.Name
-        remove-job $_
-
-        Write-Output ("-"*40),"Node: $node","`nSample Period Count Report"
-
-        if ($buckhash.Count -eq 0) {
-
-            #
-            # If there was nothing reported, that may indicate the storport channel was disabled. In any case
-            # we can't produce the report.
-            #
-
-            Write-Warning "Node $node is not reporting latency information. Please verify the following event channel is enabled on it: Microsoft-Windows-Storage-Storport/Operational"
-
-        } else {
-
-            # note: these reports are filtered to only show devices in the pd table
-            # this leaves boot device and others unreported until we have a datasource
-            # to inject them.
-
-            # output the table of device latency bucket counts
-            $buckhash.Keys |? { $PhysicalDisksTable.ContainsKey($_) } |% {
-
-                $dev = $_
-
-                # the bucket labels are in the hash in the same order as the values
-                # and use to make an object for table rendering
-                $vprop = @{}
-                $weight = 0
-                foreach ($i in 0..($bucklabels.count - 1)) {
-                    $v = $buckhash[$_][$i]
-                    if ($v) {
-                        $weight = $i
-                        $weightval = $v
-                        $vprop[$bucklabels[$i]] = $v
-                    }
-                }
-
-                $vprop['Device'] = $dev
-                $vprop['Weight'] = $weight
-                $vprop['WeightVal'] = $weightval
-
-                new-object psobject -Property $vprop
-
-            } | sort Weight,@{ Expression = {$PhysicalDisksTable[$_.Device].Usage}},WeightVal | ft -AutoSize (,'Device' + $pdattrs_tab  + $bucklabels)
-
-            # for the full report, output the high bucket events
-            # note: enumerations do not appear to be available in job sessions, otherwise it would clearly be more efficient
-            #  to avoid geneating the events in the first place.
-            if ($ReportLevel -eq [ReportLevelType]::Full) {
-
-                Write-Output "`nHigh Latency Events"
-
-                $n = 0
-                if ($null -ne $evs) {
-                    $evs |? { $PhysicalDisksTable.ContainsKey($_.Device) } |% { $n += 1; $_ } | sort Time -Descending | ft -AutoSize ('Time','Device' + $pdattrs_ev + $bucklabels)
-                }
-
-                if ($n -eq 0) {
-                    Write-Output "-> No Events"
+                    # return label schema, counting hash, and events
+                    # labels must be en-listed to pass the pipeline as a list as opposed to individual values
+                    ,$bucklabels
+                    $buckhash
+                    $evs
                 }
             }
         }
+
+        # acquire the physicaldisks datasource
+        $PhysicalDisks = Import-ClixmlIf (Join-Path $Path "GetPhysicalDisk.XML")
+
+        # hash by object id
+        # this is an example where a formal datasource class/api could be useful
+        $PhysicalDisksTable = @{}
+        $PhysicalDisks |% {
+            if ($_.ObjectId -match 'PD:{(.*)}') {
+                $PhysicalDisksTable[$matches[1]] = $_
+            }
+        }
+
+        # we will join the latency information with this set of physicaldisk attributes
+        $pdattrs_tab = @{ Label = 'FriendlyName'; Expression = { $PhysicalDisksTable[$_.Device].FriendlyName }},
+                    @{ Label = 'SerialNumber'; Expression = { $PhysicalDisksTable[$_.Device].SerialNumber }},
+                    @{ Label = 'Firmware'; Expression = { $PhysicalDisksTable[$_.Device].FirmwareVersion }},
+                    @{ Label = 'Media'; Expression = { $PhysicalDisksTable[$_.Device].MediaType }},
+                    @{ Label = 'Usage'; Expression = { $PhysicalDisksTable[$_.Device].Usage }},
+                    @{ Label = 'OpStat'; Expression = { $PhysicalDisksTable[$_.Device].OperationalStatus }},
+                    @{ Label = 'HealthStat'; Expression = { $PhysicalDisksTable[$_.Device].HealthStatus }}
+
+        # joined physicaldisk attributes for the event view
+        # since status' are not known at the time of the event, omit for brevity/accuracy
+        $pdattrs_ev = @{ Label = 'FriendlyName'; Expression = { $PhysicalDisksTable[$_.Device].FriendlyName }},
+                    @{ Label = 'SerialNumber'; Expression = { $PhysicalDisksTable[$_.Device].SerialNumber }},
+                    @{ Label = 'Media'; Expression = { $PhysicalDisksTable[$_.Device].MediaType }},
+                    @{ Label = 'Usage'; Expression = { $PhysicalDisksTable[$_.Device].Usage }}
+
+        # now wait for the event processing jobs and emit the per-node reports
+        $j | Wait-Job | Sort-Object Name |% {
+
+            ($bucklabels, $buckhash, $evs) = receive-job $_
+            $node = $_.Name
+            remove-job $_
+
+            Write-Output ("-"*40),"Node: $node","`nSample Period Count Report"
+
+            if ($buckhash.Count -eq 0) {
+
+                #
+                # If there was nothing reported, that may indicate the storport channel was disabled. In any case
+                # we can't produce the report.
+                #
+
+                Write-Warning "Node $node is not reporting latency information. Please verify the following event channel is enabled on it: Microsoft-Windows-Storage-Storport/Operational"
+
+            } else {
+
+                # note: these reports are filtered to only show devices in the pd table
+                # this leaves boot device and others unreported until we have a datasource
+                # to inject them.
+
+                # output the table of device latency bucket counts
+                $buckhash.Keys |? { $PhysicalDisksTable.ContainsKey($_) } |% {
+
+                    $dev = $_
+
+                    # the bucket labels are in the hash in the same order as the values
+                    # and use to make an object for table rendering
+                    $vprop = @{}
+                    $weight = 0
+                    foreach ($i in 0..($bucklabels.count - 1)) {
+                        $v = $buckhash[$_][$i]
+                        if ($v) {
+                            $weight = $i
+                            $weightval = $v
+                            $vprop[$bucklabels[$i]] = $v
+                        }
+                    }
+
+                    $vprop['Device'] = $dev
+                    $vprop['Weight'] = $weight
+                    $vprop['WeightVal'] = $weightval
+
+                    new-object psobject -Property $vprop
+
+                } | sort Weight,@{ Expression = {$PhysicalDisksTable[$_.Device].Usage}},WeightVal | ft -AutoSize (,'Device' + $pdattrs_tab  + $bucklabels)
+
+                # for the full report, output the high bucket events
+                # note: enumerations do not appear to be available in job sessions, otherwise it would clearly be more efficient
+                #  to avoid geneating the events in the first place.
+                if ($ReportLevel -eq [ReportLevelType]::Full) {
+
+                    Write-Output "`nHigh Latency Events"
+
+                    $n = 0
+                    if ($null -ne $evs) {
+                        $evs |? { $PhysicalDisksTable.ContainsKey($_.Device) } |% { $n += 1; $_ } | sort Time -Descending | ft -AutoSize ('Time','Device' + $pdattrs_ev + $bucklabels)
+                    }
+
+                    if ($n -eq 0) {
+                        Write-Output "-> No Events"
+                    }
+                }
+            }
+        }
+    }
+    finally
+    {
+        # And remove sessions from jobs
+        $j | RemoveCommonJobSession
     }
 }
 
@@ -5575,7 +5631,7 @@ function Get-SummaryReport
     $Subsystem = Import-ClixmlIf (Join-Path $Path "GetStorageSubsystem.XML")
 
     $SubsystemUnhealthy = $false
-    if ($Subsystem -eq $null) {
+    if ($null -eq $Subsystem) {
         Show-Warning "No clustered storage subsystem present"
     } elseif ($Subsystem.HealthStatus -notlike "Healthy") {
         $SubsystemUnhealthy = $true
@@ -5607,7 +5663,7 @@ function Get-SummaryReport
     # Storage jobs
     $StorageJobs = Import-ClixmlIf (Join-Path $Path "GetStorageJob.XML")
 
-    if ($StorageJobs -eq $null) {
+    if ($null -eq $StorageJobs) {
         Write-Host "No storage jobs were present at the time of the gather"
     } else {
         Show-Warning "The following storage jobs were present; this includes ones executing along with those recently completed"
