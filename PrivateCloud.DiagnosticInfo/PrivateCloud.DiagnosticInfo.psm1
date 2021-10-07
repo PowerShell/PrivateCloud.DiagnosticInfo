@@ -611,14 +611,12 @@ $CommonFuncBlock = {
     function Get-EventDataHash
     {
         param(
-            [System.Diagnostics.Eventing.Reader.EventLogRecord] $ev
+            $ev
         )
 
-        # must cast through the XML representation of the event to get named properties
-        # insert text into hash and return
+        # convert list of xmlelements into hash by element name
         $xh = @{}
-        $x = ([xml]$ev.ToXml()).Event.EventData.Data
-        $x |% {
+        $ev.EventData.Data |% {
             $xh[$_.Name] = $_.'#text'
         }
         $xh
@@ -2223,8 +2221,8 @@ function Get-SddcDiagnosticInfo
                             @{ C = 'Get-CimInstance -ComputerName _C_ Win32_Bios'; F = 'Win32_Bios' },
                             @{ C = 'Get-CimInstance -ComputerName _C_ Win32_ComputerSystem'; F = 'Win32_ComputerSystem' },
                             @{ C = 'Get-CimInstance -ComputerName _C_ Win32_OperatingSystem'; F = 'Win32_OperatingSystem' },
-                            @{ C = 'Get-CimInstance Win32_PhysicalMemory'; F = 'Win32_PhysicalMemory' },
-                            @{ C = 'Get-CimInstance Win32_Processor'; F = 'Win32_Processor' },
+                            @{ C = 'Get-CimInstance -ComputerName _C_ Win32_PhysicalMemory'; F = 'Win32_PhysicalMemory' },
+                            @{ C = 'Get-CimInstance -ComputerName _C_ Win32_Processor'; F = 'Win32_Processor' },
                             @{ C = 'Get-HotFix -ComputerName _C_'; F = $null },
                             @{ C = 'Get-NetAdapter -CimSession _C_'; F = $null },
                             @{ C = 'Get-NetAdapterAdvancedProperty -CimSession _C_'; F = $null },
@@ -4941,11 +4939,26 @@ function Get-StorageLatencyReport
 
             # parallelize processing of per-node event logs
 
-            $j += Invoke-CommonCommand -InitBlock $CommonFunc -JobName $node -SessionConfigurationName $null -ScriptBlock {
+            $j += Invoke-CommonCommand -InitBlock $CommonFunc -JobName $node -SessionConfigurationName $null -ArgumentList $file,$ReportLevel,$CutoffMS,$TimeBase,$HoursOfEvents -ScriptBlock {
+
+                param(
+                    [string]
+                    $file,
+
+                    $ReportLevel,
+
+                    [int]
+                    $CutoffMS,
+
+                    [datetime]
+                    $TimeBase,
+
+                    [int]
+                    $HoursOfEvents )
 
                 $dofull = $false
 
-                if ($using:ReportLevel -eq "Full")
+                if ($ReportLevel -eq "Full")
                 {
                     $dofull = $true
                 }
@@ -4991,13 +5004,14 @@ function Get-StorageLatencyReport
                 # the erroraction handles (potentially) disabled logs, which have no events
 
                 # get single event from the log (if present)
-                $e = Get-WinEvent -Path $using:file -FilterXPath (Get-FilterXpath -Event 505) -ErrorAction SilentlyContinue -MaxEvents 1
+                $x = wevtutil qe /lf $file "/q:$(Get-FilterXpath -Event 505)" /c:1
+                $evs = [xml]"<Events>$x</Events>"
 
-                if ($e) {
+                if ($null -ne $evs) {
 
                     # use this event to determine schema and cutoff bucket (if specified)
 
-                    $xh = Get-EventDataHash $e
+                    $xh = Get-EventDataHash $evs.Events.Event
 
                     # only need to get the bucket label schema once
                     # the number of labels and the number of bucket counts should be equal
@@ -5018,9 +5032,9 @@ function Get-StorageLatencyReport
                     # initialize empty data element test
                     $DataOr = @{}
 
-                    if ($using:CutoffMs) {
+                    if ($CutoffMs) {
 
-                        $CutoffUs = $using:CutoffMs * 1000
+                        $CutoffUs = $CutoffMs * 1000
 
                         # parse the buckets to determine where the cutoff is
                         $a = $xh['IoLatencyBuckets'] -split ',\s+' |% {
@@ -5076,29 +5090,21 @@ function Get-StorageLatencyReport
                         $bucklabels = $bucklabels[($cutoffbuck - 1) .. ($bucklabels.Count - 1)]
                     }
 
+                    # now, with schema, process all events
                     # construct the xpath filter w/wo the time filter
                     # if the data element test is empty, it will not be built into the xpath query
-                    if ($using:HoursOfEvents -ne -1) {
-                        $xpath = Get-FilterXpath -Event 505 -TimeBase $using:TimeBase -TimeDeltaMs ($using:HoursOfEvents * 60 * 60 * 1000) -DataOr $DataOr
+                    if ($HoursOfEvents -ne -1) {
+                        $xpath = Get-FilterXpath -Event 505 -TimeBase $TimeBase -TimeDeltaMs ($HoursOfEvents * 60 * 60 * 1000) -DataOr $DataOr
                     } else {
                         $xpath = Get-FilterXpath -Event 505 -DataOr $DataOr
                     }
 
-    <#
-                    # block for timing the queries
-                    $t0 = Get-Date
+                    $x = wevtutil qe /lf $file "/q:$xpath"
+                    $evs = [xml]"<Events>$x</Events>"
 
-                    $e = Get-WinEvent -Path $using:file -FilterXPath $xpath
-
-                    $td = (Get-Date) - $t0
-                    Write-Host -ForegroundColor Red ("Query $($using:file) took {0:N2} seconds" -f $td.TotalSeconds)
-
-                    $e |% {
-    #>
-                    # now, with schema, process all events
-                    Get-WinEvent -Path $using:file -FilterXPath $xpath |% {
-
-                        $xh = Get-EventDataHash $_
+                    foreach ($e in $evs.Events.Event)
+                    {
+                        $xh = Get-EventDataHash $e
 
                         # physical disk device id - string the curly to normalize later matching
                         $dev = [string] $xh['ClassDeviceGuid']
@@ -5149,8 +5155,8 @@ function Get-StorageLatencyReport
 
                                 # base object with time/device
                                 $o = New-Object psobject -Property @{
-                                    'Time' = $_.TimeCreated
-                                    'Device' = [string] $_.Properties[4].Value
+                                    'Time' = $e.TimeCreated
+                                    'Device' = [string] $e.Properties[4].Value
                                 }
 
                                 # add on the named latency buckets
