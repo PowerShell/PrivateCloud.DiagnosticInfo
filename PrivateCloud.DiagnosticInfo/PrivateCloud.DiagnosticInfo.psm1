@@ -2227,8 +2227,8 @@ function Get-SddcDiagnosticInfo
 				'Get-SmbClientConfiguration -CimSession _C_',
 				'Get-SmbServerConfiguration -CimSession _C_',
 				'Invoke-Command -ComputerName _C_ {Get-ComputerInfo}',
-				'Invoke-Command -ComputerName _C_ {Echo Reg-SpacePortParameters;Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters}'				
-				'Invoke-Command -ComputerName _C_ {Echo Reg-OEMInformation;Get-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation}'				
+				'Invoke-Command -ComputerName _C_ {Echo Get-RegSpacePortParameters;Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters}'				
+				'Invoke-Command -ComputerName _C_ {Echo Get-RegOEMInformation;Get-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation}'				
 
                 # These commands are specific to optional modules, add only if present
                 #   - DcbQos: RoCE environments primarily
