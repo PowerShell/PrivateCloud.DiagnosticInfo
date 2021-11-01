@@ -310,7 +310,8 @@ $CommonFuncBlock = {
                         'Security'                                                  # potentially large/sensitive / not needed
 
 
-        $providers = Get-WinEvent -ListLog * -ErrorAction Ignore -WarningAction Ignore
+        # Force adds in analytic/debug logs
+        $providers = Get-WinEvent -Force -ListLog * -ErrorAction Ignore -WarningAction Ignore
 
         # Save off provider report
         $TxtPath = Join-Path $Path "GetWinEvent.txt"
