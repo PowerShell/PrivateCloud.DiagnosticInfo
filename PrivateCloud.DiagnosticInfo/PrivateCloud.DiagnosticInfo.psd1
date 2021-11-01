@@ -9,8 +9,8 @@
 # Script module or binary module file associated with this manifest.
 RootModule = 'PrivateCloud.DiagnosticInfo.psm1'
 
-# Version number of this module.
-ModuleVersion = '1.1.37'
+# Version number of this module. Revision < 1000 is pre-release.
+ModuleVersion = '1.1.37.1000'
 
 # ID used to uniquely identify this module
 GUID = '7e0bc824-c371-4936-98e6-b7216ba5f348'
@@ -46,7 +46,6 @@ Description = 'Evaluates and Reports Windows Server Software Defined Data Center
 # ProcessorArchitecture = ''
 
 # Modules that must be imported into the global environment prior to importing this module
-#RequiredModules = @(@{ModuleName = 'Get-NetView'; ModuleVersion = '2019.6.7.8'; })
 RequiredModules = @()
 
 # Assemblies that must be loaded prior to importing this module
