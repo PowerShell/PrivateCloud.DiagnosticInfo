@@ -2229,7 +2229,13 @@ function Get-SddcDiagnosticInfo
 				'Invoke-Command -ComputerName _C_ {Get-ComputerInfo}',
 				'Invoke-Command -ComputerName _C_ {Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters}',				
 				'Invoke-Command -ComputerName _C_ {Echo Get-RegSpacePortParameters;Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters}',
-				'Invoke-Command -ComputerName _C_ {Echo Get-RegOEMInformation;Get-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation}'				
+				'Invoke-Command -ComputerName _C_ {Echo Get-RegOEMInformation;Get-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation}',
+				'Invoke-Command -ComputerName _C_ {Echo Get-netsh;netsh int tcp show global}',
+				'Invoke-Command -ComputerName _C_ {Echo Get-iSCSINics;Get-WmiObject win32_networkadapter -filter "NetConnectionID = 'iSCSI_NIC'"}',
+				'Invoke-Command -ComputerName _C_ {Echo Get-TcpipParametersInterfaces;Get-ItemProperty -path HKLM:\System\CurrentControlSet\services\Tcpip\Parameters\Interfaces\*}',				
+				'Invoke-Command -ComputerName _C_ {Echo Get-mpioParameters;Get-ItemProperty -path HKLM:\SYSTEM\CurrentControlSet\Services\mpio\Parameters}',
+				'Invoke-Command -ComputerName _C_ {Echo Get-mpioSettings;Get-ItemProperty -path "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e97b-e325-11ce-bfc1-08002be10318}\000*"'
+				'Get-MSDSMSupportedHW  -CimSession _C_'
 
                 # These commands are specific to optional modules, add only if present
                 #   - DcbQos: RoCE environments primarily
