@@ -2213,6 +2213,7 @@ function Get-SddcDiagnosticInfo
                                 'Get-NetOffloadGlobalSetting -CimSession _C_',
                                 'Get-NetPrefixPolicy -CimSession _C_',
                                 'Get-NetQosPolicy -CimSession _C_',
+				'Get-NetAdapterQos -CimSession _C_',
                                 'Get-NetRoute -CimSession _C_',
                                 'Get-Disk -CimSession _C_',
                                 'Get-NetTcpConnection -CimSession _C_',
