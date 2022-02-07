@@ -2255,8 +2255,14 @@ function Get-SddcDiagnosticInfo
 				    'Get-VMHost -CimSession _C_ -ErrorAction SilentlyContinue',
                                     'Get-VMNetworkAdapterVlan -CimSession _C_ -ManagementOS -ErrorAction SilentlyContinue',
                                     'Get-VMNetworkAdapterTeamMapping -CimSession _C_ -ManagementOS -ErrorAction SilentlyContinue'				    
-                }
-
+		}
+		
+		#Added to gather DeDup info if installed
+		If (Get-Module Deduplication -ErrorAction SilentlyContinue){
+			$clusterCimSession = New-CimSession -ComputerName $ClusterName
+			$CmdsToLog += "Get-DedupVolume -CimSession $clusterCimSession"
+		}
+		
                 foreach ($cmd in $CmdsToLog) {
 
                     # truncate cmd string to the cmd itself
