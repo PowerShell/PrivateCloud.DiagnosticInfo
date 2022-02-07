@@ -2283,7 +2283,7 @@ function Get-SddcDiagnosticInfo
 
 		#Add MSInfo32
 		$LocalFile = (Join-Path $LocalNodeDir "\msinfo.nfo")
-		Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computername $using:NodeName /nfo $LocalFile" -Wait
+		Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computer $using:NodeName /nfo $LocalFile" -Wait
 
                 $NodeSystemRootPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { $env:SystemRoot }
 
