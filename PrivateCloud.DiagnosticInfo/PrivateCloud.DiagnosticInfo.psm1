@@ -2281,6 +2281,10 @@ function Get-SddcDiagnosticInfo
                     }
                 }
 
+		#Add MSInfo32
+		$LocalFile = (Join-Path $LocalNodeDir "\msinfo.nfo")
+		Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computername $using:NodeName /nfo $LocalFile" -Wait
+
                 $NodeSystemRootPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { $env:SystemRoot }
 
                 # Avoid to use 'Join-Path' because the drive of path may not exist on the local machine.
