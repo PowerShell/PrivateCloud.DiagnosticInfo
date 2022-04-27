@@ -473,6 +473,39 @@ $CommonFuncBlock = {
         }
     }
 
+    # helper function to add child path path if leaving files unzipped
+    # or to rename zip path if zipping files
+    function Create-ChildPath(
+        [string] $Path,
+
+        [string] $ClusterName,
+
+        [switch] $Zip
+    )
+    {
+        # time/extension suffix
+        $TodayDate = Get-Date
+        $ChildPath = '-' + (Format-SddcDateTime $TodayDate)
+        if ($Zip)
+        {
+            $ChildPath += '.ZIP'
+        }
+       
+        # prepend clustername if live, domain name trimmed away
+        # we could use $Cluster.Name since it will exist if $ClusterName was created from it,
+        # but that may seem excessively mysterious)
+        if ($ClusterName.Length) {
+            $ChildPath = '-' + ($ClusterName.Split('.',2)[0]) + $ChildPath
+        } else {
+            $ChildPath = '-OFFLINECLUSTER' + $ChildPath
+        }
+
+        $ChildPath = "HealthTest" + $ChildPath
+
+        $Path = Join-Path -Path $Path -ChildPath $ChildPath 
+        return $Path
+    }
+
     # function for constructing filter xpath queries for event channels
     # event: list of event ids
     # timebase: time base for timedelta query (default: current system time)
@@ -1268,7 +1301,7 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="WriteN", Position=2, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $ZipPrefix = $($env:userprofile + "\HealthTest"),
-
+        
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [ValidateRange(1,1000)]
@@ -1355,7 +1388,15 @@ function Get-SddcDiagnosticInfo
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [string] $SessionConfigurationName = $null
+        [string] $SessionConfigurationName = $null,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [string] $DestPath = $($env:userprofile + "\HealthTest"),
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [bool] $ZipFiles = $false
         )
 
     #
@@ -1675,6 +1716,32 @@ function Get-SddcDiagnosticInfo
         return
     }
 
+    $DefaultTempPath = $($env:userprofile + "\HealthTest\")
+    $DefaultZipPrefix = $($env:userprofile + "\HealthTest")
+    $DefaultDestPath = $($env:userprofile + "\HealthTest")
+
+    if ($ZipFiles)
+    {
+        if ($DestPath -ne $DefaultDestPath)
+        {
+            Write-Error "Can't use DestPath parameter if ZipFiles parameter is true"
+            return
+        }
+    }
+    else
+    {
+        if ($TemporaryPath -ne $DefaultTempPath)
+        {
+            Write-Error "Can't use TemporaryPath parameter if ZipFiles parameter is false"
+            return 
+        }
+        if ($ZipPrefix -ne $DefaultZipPrefix)
+        {
+            Write-Error "Can't use ZipPrefix parameter if ZipFiles parameter is false"
+            return 
+        }
+    }
+
     #
     # Veriyfing path
     #
@@ -1683,7 +1750,15 @@ function Get-SddcDiagnosticInfo
         $Path = $ReadFromPath
         $Read = $true
     } else {
-        $Path = $TemporaryPath
+        if ($ZipFiles)
+        {
+            $Path = $TemporaryPath
+        }
+        else
+        {
+            $Path = $DestPath
+        }
+        
         $Read = $false
     }
 
@@ -1692,8 +1767,18 @@ function Get-SddcDiagnosticInfo
     } else {
         # Scrub any existing and create new - use compression to minimize temp footprint
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse | Out-Null
+        write-host "zip files is : $zipfiles"
+        write-host "path is : $path"
+        write-host "cluster name is : $ClusterName"
+        
+        $Path = Create-ChildPath -Path $Path -ClusterName $ClusterName
+        
+        write-host "after running create-childpath, path is : $path"
         New-Item -ItemType Directory -ErrorAction SilentlyContinue $Path | Out-Null
-        $null = compact /c $Path
+        if ($ZipFiles)
+        {
+            $null = compact /c $Path
+        } 
     }
 
     $PathObject = Get-Item $Path
@@ -2185,9 +2270,17 @@ function Get-SddcDiagnosticInfo
                 $null = $j | Wait-Job
                 $j | Remove-Job
 
-                # wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
-                dir $gnvDir -Directory |% {
-                    Remove-Item -Recurse -Force $_.FullName
+                # If chose to zip files, wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
+                if ($ZipFiles)
+                {
+                   write-host "Zip files is true, remove directory"
+                    dir $gnvDir -Directory |% {
+                        Remove-Item -Recurse -Force $_.FullName
+                    }
+                }
+                else
+                {
+                    write-host "skipped removing directory because zip files false"
                 }
 
                 # gather all remaining content (will be the zip + transcript) in GNV directory
@@ -3156,32 +3249,22 @@ function Get-SddcDiagnosticInfo
 
     [System.GC]::Collect()
 
-    # time/extension suffix
-    $ZipSuffix = '-' + (Format-SddcDateTime $TodayDate) + '.ZIP'
+    if ($ZipFiles)
+    {
+        $ZipPath = Create-ChildPath -Path $ZipPrefix -ClusterName $ClusterName -Zip
 
-    # prepend clustername if live, domain name trimmed away
-    # we could use $Cluster.Name since it will exist if $ClusterName was created from it,
-    # but that may seem excessively mysterious)
-    if ($ClusterName.Length) {
-        $ZipSuffix = '-' + ($ClusterName.Split('.',2)[0]) + $ZipSuffix
-    } else {
-        $ZipSuffix = '-OFFLINECLUSTER' + $ZipSuffix
-    }
+        try {
+            Add-Type -Assembly System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+            $ZipPath = Convert-Path $ZipPath
+            Show-Update "Zip File Name : $ZipPath"
 
-    # ... and full path
-    $ZipPath = $ZipPrefix + $ZipSuffix
+            Show-Update "Cleaning up temporary directory $Path"
+            Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
 
-    try {
-        Add-Type -Assembly System.IO.Compression.FileSystem
-        [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
-        $ZipPath = Convert-Path $ZipPath
-        Show-Update "Zip File Name : $ZipPath"
-
-        Show-Update "Cleaning up temporary directory $Path"
-        Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
-
-    } catch {
-        Show-Error("Error creating the ZIP file!`nContent remains available at $Path")
+        } catch {
+            Show-Error("Error creating the ZIP file!`nContent remains available at $Path")
+        }
     }
 
     Show-Update "Cleaning up CimSessions"
