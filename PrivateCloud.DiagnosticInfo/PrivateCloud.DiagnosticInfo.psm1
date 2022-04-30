@@ -473,39 +473,6 @@ $CommonFuncBlock = {
         }
     }
 
-    # helper function to add child path path if leaving files unzipped
-    # or to rename zip path if zipping files
-    function Create-ChildPath(
-        [string] $Path,
-
-        [string] $ClusterName,
-
-        [switch] $Zip
-    )
-    {
-        # time/extension suffix
-        $TodayDate = Get-Date
-        $ChildPath = '-' + (Format-SddcDateTime $TodayDate)
-        if ($Zip)
-        {
-            $ChildPath += '.ZIP'
-        }
-       
-        # prepend clustername if live, domain name trimmed away
-        # we could use $Cluster.Name since it will exist if $ClusterName was created from it,
-        # but that may seem excessively mysterious)
-        if ($ClusterName.Length) {
-            $ChildPath = '-' + ($ClusterName.Split('.',2)[0]) + $ChildPath
-        } else {
-            $ChildPath = '-OFFLINECLUSTER' + $ChildPath
-        }
-
-        $ChildPath = "HealthTest" + $ChildPath
-
-        $Path = Join-Path -Path $Path -ChildPath $ChildPath 
-        return $Path
-    }
-
     # function for constructing filter xpath queries for event channels
     # event: list of event ids
     # timebase: time base for timedelta query (default: current system time)
@@ -1134,7 +1101,7 @@ function Get-NodeList(
 Path to read content from for summary health report generation.
 
 .PARAMETER TemporaryPath
-Temporary path to stage capture content to, prior to ZIP creation.
+Temporary path to stage capture content to, prior to ZIP creation. Only use if you want output to be zipped. 
 
 .PARAMETER ClusterName
 Cluster to capture content from.
@@ -1154,7 +1121,7 @@ Specify -1 to capture the complete archive - NOTE: this may be very large.
 Specify 0 to disable capture of the archive.
 
 .PARAMETER ZipPrefix
-Path for the resulting ZIP file: -<cluster>-<timestamp>.ZIP will be appended.
+Path for the resulting ZIP file: -<cluster>-<timestamp>.ZIP will be appended. Only use if you want output to be zipped.
 
 .PARAMETER MonitoringMode
 Run in a limited monitoring mode (deprecated)
@@ -1227,12 +1194,21 @@ Include the process dump for these processlists (comma seperated), if present.
 Include a performance counter capture.
 
 .PARAMETER IncludeReliabilityCounters
-Include Storage Reliability counters. This may incur a short but observable latency cost on the
+.Include Storage Reliability counters. This may incur a short but observable latency cost on the
 physical disks due to varying overhead in their internal handling of SMART queries.
 
 .PARAMETER SessionConfigurationName
 SessionConfigurationName to connect to other nodes in cluster.
 Null if default configuration is to be used.
+
+.PARAMETER DestPath
+.The destination path for output. Only use if you do not want output to be zipped. 
+
+.PARAMETER ZipFiles
+.Determine if output should be zipped. If false, will extract internal .cab files, as well.
+
+.PARAMETER ExcludeLocaleMetadata
+.Determine if contents in "LocaleMetadata" should not be collected. 
 
 #>
 
@@ -1396,7 +1372,11 @@ function Get-SddcDiagnosticInfo
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [bool] $ZipFiles = $false
+        [bool] $ZipFiles = $true,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [switch] $ExcludeLocaleMetadata = $false
         )
 
     #
@@ -1732,6 +1712,8 @@ function Get-SddcDiagnosticInfo
     {
         if ($TemporaryPath -ne $DefaultTempPath)
         {
+            write-host "zip files is $ZipFiles"
+            write-host "temporary path is $TemporaryPath and default temp path is $DefaultTempPath"
             Write-Error "Can't use TemporaryPath parameter if ZipFiles parameter is false"
             return 
         }
@@ -1765,20 +1747,19 @@ function Get-SddcDiagnosticInfo
     if ($Read) {
         $Path = Check-ExtractZip $Path
     } else {
-        # Scrub any existing and create new - use compression to minimize temp footprint
-        Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse | Out-Null
         write-host "zip files is : $zipfiles"
         write-host "path is : $path"
         write-host "cluster name is : $ClusterName"
-        
-        $Path = Create-ChildPath -Path $Path -ClusterName $ClusterName
-        
-        write-host "after running create-childpath, path is : $path"
+        # Scrub any existing and create new - use compression to minimize temp footprint
+        Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse | Out-Null
         New-Item -ItemType Directory -ErrorAction SilentlyContinue $Path | Out-Null
+        $null = compact /c $Path
+        <#
         if ($ZipFiles)
         {
             $null = compact /c $Path
         } 
+        #>
     }
 
     $PathObject = Get-Item $Path
@@ -1820,7 +1801,7 @@ function Get-SddcDiagnosticInfo
 
     try {
 
-        Show-Update "Temporary write path : $Path"
+        Show-Update "Write path : $Path"
 
         #
         # Handle parameters to archive/pass into the summary report generator.
@@ -2226,19 +2207,22 @@ function Get-SddcDiagnosticInfo
         if ($IncludeGetNetView) {
 
             Show-Update "Start gather of Get-NetView ..."
+            $GetNetViewArguments = @($SkipVM, $ZipFiles)
 
-            $JobGather += Invoke-CommonCommand -ArgumentList $SkipVm -ClusterNodes $($ClusterNodes).Name -JobName 'GetNetView' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
+            $JobGather += Invoke-CommonCommand -ArgumentList $GetNetViewArguments -ClusterNodes $($ClusterNodes).Name -JobName 'GetNetView' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
-                Param($SkipVM)
+                Param($SkipVM,$ZipFiles)
 
                 $NodePath = $env:Temp
 
-                # create a directory to capture GNV
+                write-host "Zip files is : $zipfiles"
 
+                # create a directory to capture GNV
+                
                 $gnvDir = Join-Path $NodePath 'GetNetView'
                 Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
                 $null = md $gnvDir -Force -ErrorAction SilentlyContinue
-
+                
                 # run inside a child session so we can sink output to the transcript
                 # we must pass the GNV dir since $using is statically evaluated in the
                 # outermost scope and $gnvDir is inside the Invoke call.
@@ -2251,7 +2235,7 @@ function Get-SddcDiagnosticInfo
 
                     $transcriptFile = Join-Path $gnvDir "0_GetNetViewGatherTranscript.log"
                     Start-Transcript -Path $transcriptFile -Force
-
+                    
                     if (Get-Command Get-NetView -ErrorAction SilentlyContinue) {
                         if ($SkipVM) {
                             Get-NetView -OutputDirectory $gnvDir -SkipLogs -SkipVM
@@ -2270,6 +2254,7 @@ function Get-SddcDiagnosticInfo
                 $null = $j | Wait-Job
                 $j | Remove-Job
 
+                
                 # If chose to zip files, wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
                 if ($ZipFiles)
                 {
@@ -2280,7 +2265,9 @@ function Get-SddcDiagnosticInfo
                 }
                 else
                 {
-                    write-host "skipped removing directory because zip files false"
+                    # if not zipping content, keep the uncompressed dir to copy later, and remove the zipped directory
+                    write-host "skipped removing directory because zip files false, remove .zip instead"
+                    Get-ChildItem -Path $gnvDir -Filter 'msdbg*.zip' | Remove-Item
                 }
 
                 # gather all remaining content (will be the zip + transcript) in GNV directory
@@ -3239,7 +3226,44 @@ function Get-SddcDiagnosticInfo
     # Phase 4
     #
 
-    Show-Update "<<< Phase 4 - Compacting files for transport >>>" -ForegroundColor Cyan
+    if ($ZipFiles)
+    {
+        Show-Update "<<< Phase 4 - Compacting files for transport >>>" -ForegroundColor Cyan
+    }
+    else
+    {
+        Show-Update "<<< Phase 4 - Extract cab files + Final Cleanup >>>" -ForegroundColor Cyan
+    }
+
+    if (!$ZipFiles)
+    {
+         Show-update "Extract cab files"
+         $items = get-childitem -Recurse -Path $Path -Filter "*.cab"
+         foreach ($item in $items)
+         {
+	        # make a new directory for .cab contents
+	        $parentPath = Split-Path -Path $item.fullname -Parent
+	        $newDir = Join-Path -Path $parentpath -ChildPath $item.basename
+	        mkdir $newdir
+
+            try
+            {
+                cmd.exe /c C:\Windows\System32\expand.exe -F:* $item.FullName $newdir
+            }
+            catch
+            {
+                Write-Warning "Extracting .cab contents failed with exception : $_"
+            }
+         }
+         $items | Remove-Item -recurse -force
+    }
+
+    write-host "excludelocalemetadata is $ExcludeLocaleMetadata"
+    if ($ExcludeLocaleMetadata)
+    {
+	    $mtaFolders = Get-ChildItem $Path -recurse | Where-Object {$_.PSIsContainer -eq $true -and $_.Name -match "LocaleMetadata"}
+	    $mtaFolders | remove-item -recurse -force	
+    }
 
     #
     # Force GC so that any pending file references are
@@ -3251,7 +3275,20 @@ function Get-SddcDiagnosticInfo
 
     if ($ZipFiles)
     {
-        $ZipPath = Create-ChildPath -Path $ZipPrefix -ClusterName $ClusterName -Zip
+        # time/extension suffix
+        $ZipSuffix = '-' + (Format-SddcDateTime $TodayDate) + '.ZIP'
+
+        # prepend clustername if live, domain name trimmed away
+        # we could use $Cluster.Name since it will exist if $ClusterName was created from it,
+        # but that may seem excessively mysterious)
+        if ($ClusterName.Length) {
+            $ZipSuffix = '-' + ($ClusterName.Split('.',2)[0]) + $ZipSuffix
+        } else {
+            $ZipSuffix = '-OFFLINECLUSTER' + $ZipSuffix
+        }
+
+        # ... and full path
+        $ZipPath = $ZipPrefix + $ZipSuffix
 
         try {
             Add-Type -Assembly System.IO.Compression.FileSystem
