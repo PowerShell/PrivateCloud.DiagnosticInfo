@@ -1753,13 +1753,13 @@ function Get-SddcDiagnosticInfo
         # Scrub any existing and create new - use compression to minimize temp footprint
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse | Out-Null
         New-Item -ItemType Directory -ErrorAction SilentlyContinue $Path | Out-Null
-        $null = compact /c $Path
-        <#
+        #$null = compact /c $Path
+        
         if ($ZipFiles)
         {
             $null = compact /c $Path
         } 
-        #>
+        
     }
 
     $PathObject = Get-Item $Path
