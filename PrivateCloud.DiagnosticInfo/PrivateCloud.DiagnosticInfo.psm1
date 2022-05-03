@@ -3248,6 +3248,20 @@ function Get-SddcDiagnosticInfo
             }
          }
          $items | Remove-Item -recurse -force
+
+         Show-Update "Rename msdbg.<node name> to msdbg. Do this to shorten overall filepath."
+         $items = get-childitem -Recurse -Path $Path -Filter "msdbg.*"
+         foreach ($item in $items)
+         {
+             if ($item.FullName -match "msdbg(.*)")
+             {
+                 $childFolder = split-path $item.FullName -leaf
+                 $parentFolder = split-path $item.FullName -parent
+                 $childFolder = $childFolder -replace $matches[1], ""
+                 $renamedFolder = join-path -path $parentFolder -childpath $childFolder
+                 Rename-Item $item.FullName $renamedFolder
+             }
+         }
     }
 
     if ($ExcludeLocaleMetadata)
