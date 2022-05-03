@@ -1712,8 +1712,6 @@ function Get-SddcDiagnosticInfo
     {
         if ($TemporaryPath -ne $DefaultTempPath)
         {
-            write-host "zip files is $ZipFiles"
-            write-host "temporary path is $TemporaryPath and default temp path is $DefaultTempPath"
             Write-Error "Can't use TemporaryPath parameter if ZipFiles parameter is false"
             return 
         }
@@ -1747,13 +1745,9 @@ function Get-SddcDiagnosticInfo
     if ($Read) {
         $Path = Check-ExtractZip $Path
     } else {
-        write-host "zip files is : $zipfiles"
-        write-host "path is : $path"
-        write-host "cluster name is : $ClusterName"
         # Scrub any existing and create new - use compression to minimize temp footprint
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse | Out-Null
         New-Item -ItemType Directory -ErrorAction SilentlyContinue $Path | Out-Null
-        #$null = compact /c $Path
         
         if ($ZipFiles)
         {
@@ -2215,8 +2209,6 @@ function Get-SddcDiagnosticInfo
 
                 $NodePath = $env:Temp
 
-                write-host "Zip files is : $zipfiles"
-
                 # create a directory to capture GNV
                 
                 $gnvDir = Join-Path $NodePath 'GetNetView'
@@ -2258,7 +2250,7 @@ function Get-SddcDiagnosticInfo
                 # If chose to zip files, wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
                 if ($ZipFiles)
                 {
-                   write-host "Zip files is true, remove directory"
+                   Write-Host "User selected to zip output. Remove uncompressed directory msdbg"
                     dir $gnvDir -Directory |% {
                         Remove-Item -Recurse -Force $_.FullName
                     }
@@ -2266,7 +2258,7 @@ function Get-SddcDiagnosticInfo
                 else
                 {
                     # if not zipping content, keep the uncompressed dir to copy later, and remove the zipped directory
-                    write-host "skipped removing directory because zip files false, remove .zip instead"
+                    Write-Host "User selected not to zip output. Remove compressed directory msdbg*.zip"
                     Get-ChildItem -Path $gnvDir -Filter 'msdbg*.zip' | Remove-Item
                 }
 
@@ -3258,7 +3250,6 @@ function Get-SddcDiagnosticInfo
          $items | Remove-Item -recurse -force
     }
 
-    write-host "excludelocalemetadata is $ExcludeLocaleMetadata"
     if ($ExcludeLocaleMetadata)
     {
 	    $mtaFolders = Get-ChildItem $Path -recurse | Where-Object {$_.PSIsContainer -eq $true -and $_.Name -match "LocaleMetadata"}
