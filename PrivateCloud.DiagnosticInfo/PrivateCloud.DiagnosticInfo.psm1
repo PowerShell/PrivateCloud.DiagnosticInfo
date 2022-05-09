@@ -2227,6 +2227,7 @@ function Get-SddcDiagnosticInfo
 				'Get-SmbMultichannelConnection -CimSession _C_ -SmbInstance SBL',
 				'Get-SmbClientConfiguration -CimSession _C_',
 				'Get-SmbServerConfiguration -CimSession _C_',
+				'Get-NetIPConfiguration -CimSession _C_',
 				'Invoke-Command -ComputerName _C_ {Get-ComputerInfo}',
 				'Invoke-Command -ComputerName _C_ {Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters}',				
 				'Invoke-Command -ComputerName _C_ {Echo Get-RegSpacePortParameters;Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\spacePort\Parameters}',
