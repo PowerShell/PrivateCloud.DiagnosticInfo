@@ -4906,7 +4906,7 @@ function Get-StorageLatencyReport
         $CutoffMs = 0,
 
         [datetime]
-        $TimeBase,
+        $TimeBase = 0,
 
         [int]
         $HoursOfEvents = -1
@@ -6032,14 +6032,13 @@ function Show-SddcDiagnosticStorageLatencyReport
 
     # Common header for path validation
 
-    $Path = (gi $Path).FullName
-
     if (-not (Test-Path $Path)) {
         Write-Error "Path is not accessible. Please check and try again: $Path"
         return
     }
 
     # Extract ZIP if neccesary
+    $Path = (gi $Path).FullName
     $Path = Check-ExtractZip $Path
 
     # get the timebase from the capture parameters
@@ -6136,14 +6135,13 @@ function Show-SddcDiagnosticReport
         $Report = [ReportType]::All
     )
 
-    $Path = (gi $Path).FullName
-
     if (-not (Test-Path $Path)) {
         Write-Error "Path is not accessible. Please check and try again: $Path"
         return
     }
 
     # Extract ZIP if neccesary
+    $Path = (gi $Path).FullName
     $Path = Check-ExtractZip $Path
 
     # Produce all reports?
