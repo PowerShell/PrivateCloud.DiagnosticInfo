@@ -1680,6 +1680,7 @@ function Get-SddcDiagnosticInfo
     $transcriptFile = Join-Path $Path "0_CloudHealthGatherTranscript.log"
     try {
         Start-Transcript -Path $transcriptFile -Force
+	Write-host "Dell SDDC Version"
     } catch {
         # show error and rethrow to terminate
         Show-Error "Unable to start transcript at $transcriptFile" $_
