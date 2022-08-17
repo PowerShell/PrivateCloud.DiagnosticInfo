@@ -3152,19 +3152,6 @@ function Get-SddcDiagnosticInfo
 
     Show-Update "Cleaning up CimSessions"
     Get-CimSession | Remove-CimSession
-#Get the File-Name without path
-$name = (Get-Item $ZipPath).Name
-
-#The target URL wit SAS Token
-$uri = "https://gsetools.blob.core.windows.net/sddcdata/$($name)?sp=acw&st=2022-06-28T17:26:35Z&se=2032-06-29T01:26:35Z&spr=https&sv=2021-06-08&sr=c&sig=4gtvKkicwS%2BcD6BSBgapTziNrfar11CL%2B6hsVHWzJXI%3D"
-
-#Define required Headers
-$headers = @{
-    'x-ms-blob-type' = 'BlockBlob'
-            }
-
-#Upload File...
-Invoke-RestMethod -Uri $uri -Method Put -Headers $headers -InFile $ZipPath -ErrorAction Continue
     Show-Update "COMPLETE ($(((Get-Date) - $TodayDate).ToString("m'm's\.f's'")))" -ForegroundColor Green
 }
 
