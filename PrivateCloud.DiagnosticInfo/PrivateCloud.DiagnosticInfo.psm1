@@ -1964,6 +1964,18 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Unable to get Cluster Quorum.  `nError="+$_.Exception.Message) }
             }
 
+            $JobStatic += start-job -Name CauDebugTrace {
+                try {
+                    if ((Get-Command Save-CauDebugTrace).Parameters.ContainsKey("FeatureUpdateLogs")) {
+                        Save-CauDebugTrace -Cluster $using:AccessNode -FeatureUpdateLogs All -FilePath $using:Path
+                    }
+                    else {
+                        Save-CauDebugTrace -Cluster $using:AccessNode -FilePath $using:Path
+                    }
+                }
+                catch { Show-Warning("Unable to get CAU debug trace.  `nError="+$_.Exception.Message) }
+            }
+
         } else {
             Show-Update "... Skip gather of cluster configuration since cluster is not available"
         }
