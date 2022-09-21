@@ -1966,11 +1966,14 @@ function Get-SddcDiagnosticInfo
 
             $JobStatic += start-job -Name CauDebugTrace {
                 try {
+
+                    # SCDT returns a fileinfo object for the saved ZIP on the pipeline; discard (allow errors/warnings to flow as normal)
+
                     if ((Get-Command Save-CauDebugTrace).Parameters.ContainsKey("FeatureUpdateLogs")) {
-                        Save-CauDebugTrace -Cluster $using:AccessNode -FeatureUpdateLogs All -FilePath $using:Path
+                        $null = Save-CauDebugTrace -Cluster $using:AccessNode -FeatureUpdateLogs All -FilePath $using:Path
                     }
                     else {
-                        Save-CauDebugTrace -Cluster $using:AccessNode -FilePath $using:Path
+                        $null = Save-CauDebugTrace -Cluster $using:AccessNode -FilePath $using:Path
                     }
                 }
                 catch { Show-Warning("Unable to get CAU debug trace.  `nError="+$_.Exception.Message) }
@@ -2274,7 +2277,8 @@ function Get-SddcDiagnosticInfo
                             @{ C = 'Get-SmbMultichannelConnection -IncludeNotSelected -SmbInstance SR -CimSession _C_'; F = 'GetSmbMultichannelConnection-SR' },
                             @{ C = 'Get-SmbServerConfiguration -CimSession _C_'; F = $null },
                             @{ C = 'Get-SmbServerNetworkInterface -CimSession _C_'; F = $null },
-                            @{ C = 'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'; ; F = $null }
+                            @{ C = 'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'; F = $null },
+                            @{ C = 'Get-WindowsFeature -ComputerName _C_'; F = $null }
 
                 # These commands are specific to optional modules, add only if present
                 #   - DcbQos: RoCE environments primarily
