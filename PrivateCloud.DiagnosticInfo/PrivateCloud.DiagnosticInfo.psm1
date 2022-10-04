@@ -40,7 +40,7 @@ $CommonFuncBlock = {
     Import-Module Storage
 
     #
-    # Shows error, cancels script
+    # Shows error
     #
     function Show-Error(
         [string] $Message,
@@ -407,7 +407,7 @@ $CommonFuncBlock = {
                 $tal = (Get-Date) - $tal
 
                 # Emit results
-                [pscustomobject] @{
+                [ordered] @{
                     EventFile = $EventFile
                     LogName = $p.LogName
                     RecordCount = $p.RecordCount
@@ -642,7 +642,7 @@ $CommonFuncBlock = {
         # the gathering node should retrieve. Source paths must be UNC. NoCopy + Delete is used
         # to scrub away a capture directory.
 
-        [PSCustomObject] @{
+        [Ordered] @{
             Source = $Source
             NoCopy = $NoCopy
             Delete = $Delete
@@ -1277,7 +1277,7 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="WriteN", Position=2, Mandatory=$false)]
         [ValidateNotNullOrEmpty()]
         [string] $ZipPrefix = $($env:userprofile + "\HealthTest"),
-        
+
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [ValidateRange(1,1000)]
@@ -1376,7 +1376,7 @@ function Get-SddcDiagnosticInfo
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [switch] $ExcludeLocaleMetadata = $false
+        [bool] $ExcludeLocaleMetadata = $false
         )
 
     #
@@ -1690,19 +1690,14 @@ function Get-SddcDiagnosticInfo
     #
     # Verify zip location
     #
-
     if (-not (Test-PrefixFilePath ([ref] $ZipPrefix))) {
         Write-Error "$ZipPrefix is not a valid prefix for ZIP: $ZipPrefix.ZIP must be creatable"
         return
     }
-
-    $DefaultTempPath = $($env:userprofile + "\HealthTest\")
-    $DefaultZipPrefix = $($env:userprofile + "\HealthTest")
-    $DefaultDestPath = $($env:userprofile + "\HealthTest")
-
+    
     if ($ZipFiles)
     {
-        if ($DestPath -ne $DefaultDestPath)
+        if ($PSBoundParameters.ContainsKey("DestPath"))
         {
             Write-Error "Can't use DestPath parameter if ZipFiles parameter is true"
             return
@@ -1710,12 +1705,12 @@ function Get-SddcDiagnosticInfo
     }
     else
     {
-        if ($TemporaryPath -ne $DefaultTempPath)
+        if ($PSBoundParameters.ContainsKey("TemporaryPath"))
         {
             Write-Error "Can't use TemporaryPath parameter if ZipFiles parameter is false"
             return 
         }
-        if ($ZipPrefix -ne $DefaultZipPrefix)
+        if ($PSBoundParameters.ContainsKey("ZipPrefix"))
         {
             Write-Error "Can't use ZipPrefix parameter if ZipFiles parameter is false"
             return 
@@ -1748,12 +1743,7 @@ function Get-SddcDiagnosticInfo
         # Scrub any existing and create new - use compression to minimize temp footprint
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse | Out-Null
         New-Item -ItemType Directory -ErrorAction SilentlyContinue $Path | Out-Null
-        
-        if ($ZipFiles)
-        {
-            $null = compact /c $Path
-        } 
-        
+        $null = compact /c $Path
     }
 
     $PathObject = Get-Item $Path
@@ -2074,7 +2064,6 @@ function Get-SddcDiagnosticInfo
         # however, dividing these into distinct jobs helps when triaging hangs or sources of error - its a tradeoff
 
         Show-Update "Start gather of verifier ..."
-
         $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName Verifier -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
             # Verifier
@@ -2272,7 +2261,8 @@ function Get-SddcDiagnosticInfo
 
         $JobStatic += Start-Job -Name ClusterLogs {
             $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime
-            if ((Get-Command Get-ClusterLog).Parameters.ContainsKey("NetFt"))
+            $parameters = (Get-Command Get-ClusterLog).Parameters.Keys
+            if ($parameters -contains "NetFt")
             {
                 $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime -Netft
             }
@@ -2497,11 +2487,10 @@ function Get-SddcDiagnosticInfo
         }
 
         Show-Update "Starting export of events ..."
+        $EventsArguments = @($HoursOfEvents, $ExcludeLocaleMetadata)
+        $JobGather += Invoke-CommonCommand -ArgumentList $EventsArguments -ClusterNodes $($ClusterNodes).Name -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName Events {
 
-        $JobGather += Invoke-CommonCommand -ArgumentList $HoursOfEvents -ClusterNodes $($ClusterNodes).Name -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName Events {
-
-            Param([int] $Hours)
-
+            Param([int] $Hours,[bool] $ExcludeLocaleMetadata)
             $Node = $env:COMPUTERNAME
 
             # use temporary directory with compression on to minimize capture footprint
@@ -2514,7 +2503,15 @@ function Get-SddcDiagnosticInfo
             Get-SddcCapturedEvents $NodePath $Hours |% {
                 NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $_)
             }
-            NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
+
+            if ($ExcludeLocaleMetadata)
+            {
+                NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData")) -NoCopy
+            }
+            else
+            {
+                NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
+            }
 
             # And remove the capture directory at the end of copy
             NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $NodePath) -NoCopy
@@ -2715,7 +2712,6 @@ function Get-SddcDiagnosticInfo
             $Volumes | Export-Clixml ($Path + "GetVolume.XML") }
         catch { Show-Error("Unable to get Volumes. `nError="+$_.Exception.Message) }
 
-
         # Virtual disk health
         # Used in S2D-specific gather below
 
@@ -2757,7 +2753,6 @@ function Get-SddcDiagnosticInfo
         catch { Show-Warning("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
 
         # Storage pool health
-
         try {
             $StoragePools = @(Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $Subsystem -ErrorAction SilentlyContinue)
             $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML") }
@@ -3229,6 +3224,7 @@ function Get-SddcDiagnosticInfo
 
     if (!$ZipFiles)
     {
+        <#
          Show-update "Extract cab files"
          $items = get-childitem -Recurse -Path $Path -Filter "*.cab"
          foreach ($item in $items)
@@ -3248,6 +3244,7 @@ function Get-SddcDiagnosticInfo
             }
          }
          $items | Remove-Item -recurse -force
+         #>
 
          Show-Update "Rename msdbg.<node name> to msdbg. Do this to shorten overall filepath."
          $items = get-childitem -Recurse -Path $Path -Filter "msdbg.*"
@@ -3262,12 +3259,6 @@ function Get-SddcDiagnosticInfo
                  Rename-Item $item.FullName $renamedFolder
              }
          }
-    }
-
-    if ($ExcludeLocaleMetadata)
-    {
-	    $mtaFolders = Get-ChildItem $Path -recurse | Where-Object {$_.PSIsContainer -eq $true -and $_.Name -match "LocaleMetadata"}
-	    $mtaFolders | remove-item -recurse -force	
     }
 
     #
