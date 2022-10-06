@@ -856,7 +856,7 @@ function Start-CopyJob
             catch
             {
                 Show-Warning("Exception in start-copyjob. `nError="+$_.Exception.Message)
-            }  
+            }
         }
     }
 }
@@ -1108,7 +1108,7 @@ function Get-NodeList(
 Path to read content from for summary health report generation.
 
 .PARAMETER TemporaryPath
-Temporary path to stage capture content to, prior to ZIP creation. Only use if you want output to be zipped. 
+Temporary path to stage capture content to, prior to ZIP creation. Only use if you want output to be zipped.
 
 .PARAMETER ClusterName
 Cluster to capture content from.
@@ -1209,13 +1209,13 @@ SessionConfigurationName to connect to other nodes in cluster.
 Null if default configuration is to be used.
 
 .PARAMETER DestPath
-.The destination path for output. Only use if you do not want output to be zipped. 
+The destination path for output. Only use if you do not want output to be zipped.
 
 .PARAMETER ZipFiles
-.Determine if output should be zipped. If false, will extract internal .cab files, as well.
+Determine if output should be zipped. If false, will extract internal .cab files, as well.
 
 .PARAMETER ExcludeLocaleMetadata
-.Determine if contents in "LocaleMetadata" should not be collected. 
+Determine if contents in "LocaleMetadata" should not be collected.
 
 #>
 
@@ -1701,7 +1701,7 @@ function Get-SddcDiagnosticInfo
         Write-Error "$ZipPrefix is not a valid prefix for ZIP: $ZipPrefix.ZIP must be creatable"
         return
     }
-    
+
     if ($ZipFiles)
     {
         if ($PSBoundParameters.ContainsKey("DestPath"))
@@ -1715,12 +1715,12 @@ function Get-SddcDiagnosticInfo
         if ($PSBoundParameters.ContainsKey("TemporaryPath"))
         {
             Write-Error "Can't use TemporaryPath parameter if ZipFiles parameter is false"
-            return 
+            return
         }
         if ($PSBoundParameters.ContainsKey("ZipPrefix"))
         {
             Write-Error "Can't use ZipPrefix parameter if ZipFiles parameter is false"
-            return 
+            return
         }
     }
 
@@ -1740,7 +1740,7 @@ function Get-SddcDiagnosticInfo
         {
             $Path = $DestPath
         }
-        
+
         $Read = $false
     }
 
@@ -2089,7 +2089,7 @@ function Get-SddcDiagnosticInfo
             {
                 Show-Warning("Exception in verifier script block.  `nError="+$_.Exception.Message)
             }
-            
+
         }
 
         Show-Update "Start gather of filesystem filter status ..."
@@ -2111,7 +2111,7 @@ function Get-SddcDiagnosticInfo
             {
                 Show-Warning("Exception in filter manager script block.  `nError="+$_.Exception.Message)
             }
-            
+
         }
 
         $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Copy WER ReportArchive' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
@@ -2126,7 +2126,7 @@ function Get-SddcDiagnosticInfo
             {
                 Show-Warning("Exception in Copy WER ReportArchive script block.  `nError="+$_.Exception.Message)
             }
-            
+
         }
 
         if ($IncludeDumps -eq $true) {
@@ -2230,11 +2230,11 @@ function Get-SddcDiagnosticInfo
                     $NodePath = $env:Temp
 
                     # create a directory to capture GNV
-                
+
                     $gnvDir = Join-Path $NodePath 'GetNetView'
                     Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
                     $null = md $gnvDir -Force -ErrorAction SilentlyContinue
-                
+
                     # run inside a child session so we can sink output to the transcript
                     # we must pass the GNV dir since $using is statically evaluated in the
                     # outermost scope and $gnvDir is inside the Invoke call.
@@ -2247,7 +2247,7 @@ function Get-SddcDiagnosticInfo
 
                         $transcriptFile = Join-Path $gnvDir "0_GetNetViewGatherTranscript.log"
                         Start-Transcript -Path $transcriptFile -Force
-                    
+
                         if (Get-Command Get-NetView -ErrorAction SilentlyContinue) {
                             if ($SkipVM) {
                                 Get-NetView -OutputDirectory $gnvDir -SkipLogs -SkipVM
@@ -2266,7 +2266,7 @@ function Get-SddcDiagnosticInfo
                     $null = $j | Wait-Job
                     $j | Remove-Job
 
-                
+
                     # If chose to zip files, wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
                     if ($ZipFiles)
                     {
@@ -2289,7 +2289,7 @@ function Get-SddcDiagnosticInfo
                 {
                     Show-Warning("Exception in GetNetView script block.  `nError="+$_.Exception.Message)
                 }
-                
+
             }
         }
 
