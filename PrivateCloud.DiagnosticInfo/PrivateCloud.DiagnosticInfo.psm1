@@ -1964,6 +1964,21 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Unable to get Cluster Quorum.  `nError="+$_.Exception.Message) }
             }
 
+            $JobStatic += start-job -Name CauDebugTrace {
+                try {
+
+                    # SCDT returns a fileinfo object for the saved ZIP on the pipeline; discard (allow errors/warnings to flow as normal)
+
+                    if ((Get-Command Save-CauDebugTrace).Parameters.ContainsKey("FeatureUpdateLogs")) {
+                        $null = Save-CauDebugTrace -Cluster $using:AccessNode -FeatureUpdateLogs All -FilePath $using:Path
+                    }
+                    else {
+                        $null = Save-CauDebugTrace -Cluster $using:AccessNode -FilePath $using:Path
+                    }
+                }
+                catch { Show-Warning("Unable to get CAU debug trace.  `nError="+$_.Exception.Message) }
+            }
+
         } else {
             Show-Update "... Skip gather of cluster configuration since cluster is not available"
         }
@@ -2262,7 +2277,8 @@ function Get-SddcDiagnosticInfo
                             @{ C = 'Get-SmbMultichannelConnection -IncludeNotSelected -SmbInstance SR -CimSession _C_'; F = 'GetSmbMultichannelConnection-SR' },
                             @{ C = 'Get-SmbServerConfiguration -CimSession _C_'; F = $null },
                             @{ C = 'Get-SmbServerNetworkInterface -CimSession _C_'; F = $null },
-                            @{ C = 'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'; ; F = $null }
+                            @{ C = 'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'; F = $null },
+                            @{ C = 'Get-WindowsFeature -ComputerName _C_'; F = $null }
 
                 # These commands are specific to optional modules, add only if present
                 #   - DcbQos: RoCE environments primarily
@@ -4906,7 +4922,7 @@ function Get-StorageLatencyReport
         $CutoffMs = 0,
 
         [datetime]
-        $TimeBase,
+        $TimeBase = 0,
 
         [int]
         $HoursOfEvents = -1
@@ -6032,14 +6048,13 @@ function Show-SddcDiagnosticStorageLatencyReport
 
     # Common header for path validation
 
-    $Path = (gi $Path).FullName
-
     if (-not (Test-Path $Path)) {
         Write-Error "Path is not accessible. Please check and try again: $Path"
         return
     }
 
     # Extract ZIP if neccesary
+    $Path = (gi $Path).FullName
     $Path = Check-ExtractZip $Path
 
     # get the timebase from the capture parameters
@@ -6136,14 +6151,13 @@ function Show-SddcDiagnosticReport
         $Report = [ReportType]::All
     )
 
-    $Path = (gi $Path).FullName
-
     if (-not (Test-Path $Path)) {
         Write-Error "Path is not accessible. Please check and try again: $Path"
         return
     }
 
     # Extract ZIP if neccesary
+    $Path = (gi $Path).FullName
     $Path = Check-ExtractZip $Path
 
     # Produce all reports?
