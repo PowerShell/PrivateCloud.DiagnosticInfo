@@ -31,6 +31,10 @@ $CommonFuncBlock = {
     if (Get-Module -ListAvailable Hyper-V) {
         Import-Module Hyper-V
     }
+    #Added Storagereplica module
+    if (Get-Module -ListAvailable StorageReplica) {
+        Import-Module StorageReplica
+    }
 
     Import-Module CimCmdlets
     Import-Module NetAdapter
@@ -1978,6 +1982,15 @@ function Get-SddcDiagnosticInfo
                 }
                 catch { Show-Warning("Unable to get CAU debug trace.  `nError="+$_.Exception.Message) }
             }
+                    # Get-ClusterFaultDomain for stretch clusters
+
+            $JobStatic += start-job -Name ClusterFaultDomain {
+                try {
+                    Get-ClusterFaultDomain -cimsession $using:AccessNode | Select Name,Type,ParentName,ChildrenNames,Location | 
+                    Export-Clixml ($using:Path + "GetClusterFaultDomain.XML")
+                }
+                catch { Show-Warning("Unable to get Cluster Fauld Domain.  `nError="+$_.Exception.Message) }
+            }
 
         } else {
             Show-Update "... Skip gather of cluster configuration since cluster is not available"
@@ -2279,6 +2292,7 @@ function Get-SddcDiagnosticInfo
                             @{ C = 'Get-SmbServerNetworkInterface -CimSession _C_'; F = $null },
                             @{ C = 'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'; F = $null },
                             @{ C = 'Get-WindowsFeature -ComputerName _C_'; F = $null }
+                            @{ C = 'Get-SmbBandWidthLimit -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null } # Get-SMBBandwidthLimit
 
                 # These commands are specific to optional modules, add only if present
                 #   - DcbQos: RoCE environments primarily
@@ -2294,7 +2308,25 @@ function Get-SddcDiagnosticInfo
                     $CmdsToLog +=
                             @{ C = 'Get-VM -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null },
                             @{ C = 'Get-VMNetworkAdapter -All -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null },
-                            @{ C = 'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null }
+                            @{ C = 'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null },
+                            @{ C = 'Get-VMHost -CimSession _C_ -ErrorAction SilentlyContinue '; F = $null }, # get-vmhost for livemigration and other hyper-vhost related info
+                            @{ C = 'Get-VMNetworkAdapterIsolation -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null } # get-vmnetworkadapterisolation
+                }
+
+                                # Storage replica related information for stretch clusters
+
+                if (Get-Module StorageReplica -ErrorAction SilentlyContinue) {
+                    $CmdsToLog +=
+                            @{ C = 'Get-SrPartnership -CimSession _C_ -ErrorAction SilentlyContinue '; F = $null }, # Added Get-SRPartnership
+                            @{ C = 'Get-SrGroup -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null }, #Added Get-SRPGroup
+                            @{ C = 'Get-SrNetworkConstraint -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null } #Added Get-SRNetworkConstraint
+                            
+                }
+                                #Added by Azure stack hci related information
+                  if (Get-Module AzureStackHCI -ErrorAction SilentlyContinue) {
+                    $CmdsToLog +=
+                            @{ C = 'Get-AzureStackHCI -ComputerName _C_ -ErrorAction SilentlyContinue '; F = $null } #Added Get-AzureStackHCI                            
+                            
                 }
 
                 foreach ($cmd in $CmdsToLog) {
