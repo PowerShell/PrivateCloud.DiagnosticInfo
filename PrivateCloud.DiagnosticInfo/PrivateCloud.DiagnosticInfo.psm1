@@ -40,7 +40,7 @@ $CommonFuncBlock = {
     Import-Module Storage
 
     #
-    # Shows error, cancels script
+    # Shows error
     #
     function Show-Error(
         [string] $Message,
@@ -407,7 +407,7 @@ $CommonFuncBlock = {
                 $tal = (Get-Date) - $tal
 
                 # Emit results
-                [pscustomobject] @{
+                [ordered] @{
                     EventFile = $EventFile
                     LogName = $p.LogName
                     RecordCount = $p.RecordCount
@@ -642,7 +642,7 @@ $CommonFuncBlock = {
         # the gathering node should retrieve. Source paths must be UNC. NoCopy + Delete is used
         # to scrub away a capture directory.
 
-        [PSCustomObject] @{
+        [Ordered] @{
             Source = $Source
             NoCopy = $NoCopy
             Delete = $Delete
@@ -819,36 +819,43 @@ function Start-CopyJob
 
         foreach ($childJob in $Job.ChildJobs)
         {
-            # Receive set of copy tasks from job - these are built by NewCopyTask
-            $copy = @(Receive-Job $childJob)
-            if ($copy.Count -eq 0) { continue }
+            try
+            {
+                # Receive set of copy tasks from job - these are built by NewCopyTask
+                $copy = @(Receive-Job $childJob)
+                if ($copy.Count -eq 0) { continue }
 
-            # create/use a specific job destination if present
-            # ex: "foo" -> \node_xxx\foo\<rest> v. the default \node_xxx\<rest>
-            $Destination = (Get-NodePath $Path $childJob.Location)
-            if (Get-Member -InputObject $_ -Name Destination) {
-                $Destination = Join-Path $Destination $childJob.Destination
-                if (-not (Test-Path $Destination)) {
-                    $null = mkdir $Destination -Force -ErrorAction Continue
+                # create/use a specific job destination if present
+                # ex: "foo" -> \node_xxx\foo\<rest> v. the default \node_xxx\<rest>
+                $Destination = (Get-NodePath $Path $childJob.Location)
+                if (Get-Member -InputObject $_ -Name Destination) {
+                    $Destination = Join-Path $Destination $childJob.Destination
+                    if (-not (Test-Path $Destination)) {
+                        $null = mkdir $Destination -Force -ErrorAction Continue
+                    }
+                }
+
+                $jobName = "Copy $($Job.Name) $($childjob.Location)"
+                start-job -Name $jobName -ArgumentList $copy,$Destination {
+
+                    param($copy,$Destination)
+
+                    $copy |% {
+
+                        # allow errors to propagte for triage
+                        if (-not $_.NoCopy)
+                        {
+                            Copy-Item -Recurse $_.Source $Destination -Force -ErrorAction Continue
+                        }
+                        if ($_.Delete) {
+                            Remove-Item -Recurse $_.Source -Force -ErrorAction Continue
+                        }
+                    }
                 }
             }
-
-            $jobName = "Copy $($Job.Name) $($childjob.Location)"
-            start-job -Name $jobName -ArgumentList $copy,$Destination {
-
-                param($copy,$Destination)
-
-                $copy |% {
-
-                    # allow errors to propagte for triage
-                    if (-not $_.NoCopy)
-                    {
-                        Copy-Item -Recurse $_.Source $Destination -Force -ErrorAction Continue
-                    }
-                    if ($_.Delete) {
-                        Remove-Item -Recurse $_.Source -Force -ErrorAction Continue
-                    }
-                }
+            catch
+            {
+                Show-Warning("Exception in start-copyjob. `nError="+$_.Exception.Message)
             }
         }
     }
@@ -1101,7 +1108,7 @@ function Get-NodeList(
 Path to read content from for summary health report generation.
 
 .PARAMETER TemporaryPath
-Temporary path to stage capture content to, prior to ZIP creation.
+Temporary path to stage capture content to, prior to ZIP creation. Only use if you want output to be zipped.
 
 .PARAMETER ClusterName
 Cluster to capture content from.
@@ -1121,7 +1128,7 @@ Specify -1 to capture the complete archive - NOTE: this may be very large.
 Specify 0 to disable capture of the archive.
 
 .PARAMETER ZipPrefix
-Path for the resulting ZIP file: -<cluster>-<timestamp>.ZIP will be appended.
+Path for the resulting ZIP file: -<cluster>-<timestamp>.ZIP will be appended. Only use if you want output to be zipped.
 
 .PARAMETER MonitoringMode
 Run in a limited monitoring mode (deprecated)
@@ -1200,6 +1207,15 @@ physical disks due to varying overhead in their internal handling of SMART queri
 .PARAMETER SessionConfigurationName
 SessionConfigurationName to connect to other nodes in cluster.
 Null if default configuration is to be used.
+
+.PARAMETER DestPath
+The destination path for output. Only use if you do not want output to be zipped.
+
+.PARAMETER ZipFiles
+Determine if output should be zipped. If false, will extract internal .cab files, as well.
+
+.PARAMETER ExcludeLocaleMetadata
+Determine if contents in "LocaleMetadata" should not be collected.
 
 #>
 
@@ -1355,7 +1371,19 @@ function Get-SddcDiagnosticInfo
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [string] $SessionConfigurationName = $null
+        [string] $SessionConfigurationName = $null,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [string] $DestPath = $($env:userprofile + "\HealthTest"),
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [bool] $ZipFiles = $true,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [bool] $ExcludeLocaleMetadata = $false
         )
 
     #
@@ -1669,10 +1697,31 @@ function Get-SddcDiagnosticInfo
     #
     # Verify zip location
     #
-
     if (-not (Test-PrefixFilePath ([ref] $ZipPrefix))) {
         Write-Error "$ZipPrefix is not a valid prefix for ZIP: $ZipPrefix.ZIP must be creatable"
         return
+    }
+
+    if ($ZipFiles)
+    {
+        if ($PSBoundParameters.ContainsKey("DestPath"))
+        {
+            Write-Error "Can't use DestPath parameter if ZipFiles parameter is true"
+            return
+        }
+    }
+    else
+    {
+        if ($PSBoundParameters.ContainsKey("TemporaryPath"))
+        {
+            Write-Error "Can't use TemporaryPath parameter if ZipFiles parameter is false"
+            return
+        }
+        if ($PSBoundParameters.ContainsKey("ZipPrefix"))
+        {
+            Write-Error "Can't use ZipPrefix parameter if ZipFiles parameter is false"
+            return
+        }
     }
 
     #
@@ -1683,7 +1732,15 @@ function Get-SddcDiagnosticInfo
         $Path = $ReadFromPath
         $Read = $true
     } else {
-        $Path = $TemporaryPath
+        if ($ZipFiles)
+        {
+            $Path = $TemporaryPath
+        }
+        else
+        {
+            $Path = $DestPath
+        }
+
         $Read = $false
     }
 
@@ -1735,7 +1792,7 @@ function Get-SddcDiagnosticInfo
 
     try {
 
-        Show-Update "Temporary write path : $Path"
+        Show-Update "Write path : $Path"
 
         #
         # Handle parameters to archive/pass into the summary report generator.
@@ -1968,8 +2025,8 @@ function Get-SddcDiagnosticInfo
                 try {
 
                     # SCDT returns a fileinfo object for the saved ZIP on the pipeline; discard (allow errors/warnings to flow as normal)
-
-                    if ((Get-Command Save-CauDebugTrace).Parameters.ContainsKey("FeatureUpdateLogs")) {
+                    $parameters = (Get-Command Save-CauDebugTrace).Parameters.Keys
+                    if ($parameters -contains "FeatureUpdateLogs") {
                         $null = Save-CauDebugTrace -Cluster $using:AccessNode -FeatureUpdateLogs All -FilePath $using:Path
                     }
                     else {
@@ -2014,18 +2071,25 @@ function Get-SddcDiagnosticInfo
         # however, dividing these into distinct jobs helps when triaging hangs or sources of error - its a tradeoff
 
         Show-Update "Start gather of verifier ..."
-
         $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName Verifier -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
             # Verifier
 
-            $LocalFile = Join-Path $env:temp "verifier-query.txt"
-            verifier /query > $LocalFile
-            NewCopyTask -Delete (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+            try
+            {
+                $LocalFile = Join-Path $env:temp "verifier-query.txt"
+                verifier /query > $LocalFile
+                NewCopyTask -Delete (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
 
-            $LocalFile = Join-Path $env:temp "verifier-querysettings.txt"
-            verifier /querysettings > $LocalFile
-            NewCopyTask -Delete  (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+                $LocalFile = Join-Path $env:temp "verifier-querysettings.txt"
+                verifier /querysettings > $LocalFile
+                NewCopyTask -Delete  (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+            }
+            catch
+            {
+                Show-Warning("Exception in verifier script block.  `nError="+$_.Exception.Message)
+            }
+
         }
 
         Show-Update "Start gather of filesystem filter status ..."
@@ -2033,21 +2097,36 @@ function Get-SddcDiagnosticInfo
         $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Filesystem Filter Manager' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
             # Filter Manager
+            try
+            {
+                $LocalFile = Join-Path $env:temp "fltmc.txt"
+                fltmc > $LocalFile
+                NewCopyTask -Delete  (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
 
-            $LocalFile = Join-Path $env:temp "fltmc.txt"
-            fltmc > $LocalFile
-            NewCopyTask -Delete  (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+                $LocalFile = Join-Path $env:temp "fltmc-instances.txt"
+                fltmc instances > $LocalFile
+                NewCopyTask -Delete  (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
+            }
+            catch
+            {
+                Show-Warning("Exception in filter manager script block.  `nError="+$_.Exception.Message)
+            }
 
-            $LocalFile = Join-Path $env:temp "fltmc-instances.txt"
-            fltmc instances > $LocalFile
-            NewCopyTask -Delete  (Get-AdminSharePathFromLocal $env:COMPUTERNAME $LocalFile)
         }
 
         $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'Copy WER ReportArchive' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
-            # ReportArchive copy (one-shot, we'll recursively copy)
+            try
+            {
+                # ReportArchive copy (one-shot, we'll recursively copy)
 
-            NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $env:ProgramData\Microsoft\Windows\WER\ReportArchive)
+                NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $env:ProgramData\Microsoft\Windows\WER\ReportArchive)
+            }
+            catch
+            {
+                Show-Warning("Exception in Copy WER ReportArchive script block.  `nError="+$_.Exception.Message)
+            }
+
         }
 
         if ($IncludeDumps -eq $true) {
@@ -2141,57 +2220,76 @@ function Get-SddcDiagnosticInfo
         if ($IncludeGetNetView) {
 
             Show-Update "Start gather of Get-NetView ..."
+            $GetNetViewArguments = @($SkipVM, $ZipFiles)
 
-            $JobGather += Invoke-CommonCommand -ArgumentList $SkipVm -ClusterNodes $($ClusterNodes).Name -JobName 'GetNetView' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
+            $JobGather += Invoke-CommonCommand -ArgumentList $GetNetViewArguments -ClusterNodes $($ClusterNodes).Name -JobName 'GetNetView' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {
 
-                Param($SkipVM)
+                Param($SkipVM,$ZipFiles)
+                try
+                {
+                    $NodePath = $env:Temp
 
-                $NodePath = $env:Temp
+                    # create a directory to capture GNV
 
-                # create a directory to capture GNV
+                    $gnvDir = Join-Path $NodePath 'GetNetView'
+                    Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
+                    $null = md $gnvDir -Force -ErrorAction SilentlyContinue
 
-                $gnvDir = Join-Path $NodePath 'GetNetView'
-                Remove-Item -Recurse -Force $gnvDir -ErrorAction SilentlyContinue
-                $null = md $gnvDir -Force -ErrorAction SilentlyContinue
+                    # run inside a child session so we can sink output to the transcript
+                    # we must pass the GNV dir since $using is statically evaluated in the
+                    # outermost scope and $gnvDir is inside the Invoke call.
 
-                # run inside a child session so we can sink output to the transcript
-                # we must pass the GNV dir since $using is statically evaluated in the
-                # outermost scope and $gnvDir is inside the Invoke call.
+                    $j = Start-Job -ArgumentList $gnvDir,$SkipVM {
 
-                $j = Start-Job -ArgumentList $gnvDir,$SkipVM {
+                        param($gnvDir,$SkipVM)
 
-                    param($gnvDir,$SkipVM)
+                        # start gather transcript to the GNV directory
 
-                    # start gather transcript to the GNV directory
+                        $transcriptFile = Join-Path $gnvDir "0_GetNetViewGatherTranscript.log"
+                        Start-Transcript -Path $transcriptFile -Force
 
-                    $transcriptFile = Join-Path $gnvDir "0_GetNetViewGatherTranscript.log"
-                    Start-Transcript -Path $transcriptFile -Force
-
-                    if (Get-Command Get-NetView -ErrorAction SilentlyContinue) {
-                        if ($SkipVM) {
-                            Get-NetView -OutputDirectory $gnvDir -SkipLogs -SkipVM
+                        if (Get-Command Get-NetView -ErrorAction SilentlyContinue) {
+                            if ($SkipVM) {
+                                Get-NetView -OutputDirectory $gnvDir -SkipLogs -SkipVM
+                            } else {
+                                Get-NetView -OutputDirectory $gnvDir -SkipLogs
+                            }
                         } else {
-                            Get-NetView -OutputDirectory $gnvDir -SkipLogs
+                            Write-Host "Get-NetView command not available"
                         }
-                    } else {
-                        Write-Host "Get-NetView command not available"
+
+                        Stop-Transcript
                     }
 
-                    Stop-Transcript
+                    # do not receive job - sunk to transcript for offline analysis
+                    # gnv produces a very large quantity of host output
+                    $null = $j | Wait-Job
+                    $j | Remove-Job
+
+
+                    # If chose to zip files, wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
+                    if ($ZipFiles)
+                    {
+                       Write-Host "User selected to zip output. Remove uncompressed directory msdbg"
+                        dir $gnvDir -Directory |% {
+                            Remove-Item -Recurse -Force $_.FullName
+                        }
+                    }
+                    else
+                    {
+                        # if not zipping content, keep the uncompressed dir to copy later, and remove the zipped directory
+                        Write-Host "User selected not to zip output. Remove compressed directory msdbg*.zip"
+                        Get-ChildItem -Path $gnvDir -Filter 'msdbg*.zip' | Remove-Item
+                    }
+
+                    # gather all remaining content (will be the zip + transcript) in GNV directory
+                    NewCopyTask -Delete (Get-AdminSharePathFromLocal $env:COMPUTERNAME $gnvDir)
+                }
+                catch
+                {
+                    Show-Warning("Exception in GetNetView script block.  `nError="+$_.Exception.Message)
                 }
 
-                # do not receive job - sunk to transcript for offline analysis
-                # gnv produces a very large quantity of host output
-                $null = $j | Wait-Job
-                $j | Remove-Job
-
-                # wipe all non-file content (gnv produces zip + uncompressed dir, don't need the dir)
-                dir $gnvDir -Directory |% {
-                    Remove-Item -Recurse -Force $_.FullName
-                }
-
-                # gather all remaining content (will be the zip + transcript) in GNV directory
-                NewCopyTask -Delete (Get-AdminSharePathFromLocal $env:COMPUTERNAME $gnvDir)
             }
         }
 
@@ -2200,7 +2298,8 @@ function Get-SddcDiagnosticInfo
 
         $JobStatic += Start-Job -Name ClusterLogs {
             $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime
-            if ((Get-Command Get-ClusterLog).Parameters.ContainsKey("NetFt"))
+            $parameters = (Get-Command Get-ClusterLog).Parameters.Keys
+            if ($parameters -contains "NetFt")
             {
                 $null = Get-ClusterLog -Node $using:ClusterNodes.Name -Destination $using:Path -UseLocalTime -Netft
             }
@@ -2217,18 +2316,19 @@ function Get-SddcDiagnosticInfo
             $NodeName = $_
 
             Invoke-CommonCommand -JobName "System Info: $NodeName" -InitBlock $CommonFunc -SessionConfigurationName $SessionConfigurationName -ScriptBlock {
+                try
+                {
+                    $Node = "$using:NodeName"
+                    if ($using:ClusterDomain.Length) {
+                        $Node += ".$using:ClusterDomain"
+                    }
 
-                $Node = "$using:NodeName"
-                if ($using:ClusterDomain.Length) {
-                    $Node += ".$using:ClusterDomain"
-                }
+                    $LocalNodeDir = Get-NodePath $using:Path $using:NodeName
 
-                $LocalNodeDir = Get-NodePath $using:Path $using:NodeName
-
-                # Text-only conventional commands
-                #
-                # Gather SYSTEMINFO.EXE output for a given node
-                SystemInfo.exe /S $using:NodeName > (Join-Path (Get-NodePath $using:Path $using:NodeName) "SystemInfo.TXT")
+                    # Text-only conventional commands
+                    #
+                    # Gather SYSTEMINFO.EXE output for a given node
+                    SystemInfo.exe /S $using:NodeName > (Join-Path (Get-NodePath $using:Path $using:NodeName) "SystemInfo.TXT")
 
                 # Cmdlets to drop in TXT and XML forms
                 #
@@ -2280,115 +2380,120 @@ function Get-SddcDiagnosticInfo
                             @{ C = 'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'; F = $null },
                             @{ C = 'Get-WindowsFeature -ComputerName _C_'; F = $null }
 
-                # These commands are specific to optional modules, add only if present
-                #   - DcbQos: RoCE environments primarily
-                #   - Hyper-V: may be ommitted in SOFS-only cases
-                if (Get-Module DcbQos -ErrorAction SilentlyContinue) {
-                    $CmdsToLog +=
-                            @{ C = 'Get-NetQosDcbxSetting -CimSession _C_'; F = $null },
-                            @{ C = 'Get-NetQosFlowControl -CimSession _C_'; F = $null },
-                            @{ C = 'Get-NetQosTrafficClass -CimSession _C_'; F = $null }
-                }
+                    # These commands are specific to optional modules, add only if present
+                    #   - DcbQos: RoCE environments primarily
+                    #   - Hyper-V: may be ommitted in SOFS-only cases
+                    if (Get-Module DcbQos -ErrorAction SilentlyContinue) {
+                        $CmdsToLog +=
+                                @{ C = 'Get-NetQosDcbxSetting -CimSession _C_'; F = $null },
+                                @{ C = 'Get-NetQosFlowControl -CimSession _C_'; F = $null },
+                                @{ C = 'Get-NetQosTrafficClass -CimSession _C_'; F = $null }
+                    }
 
-                if (Get-Module Hyper-V -ErrorAction SilentlyContinue) {
-                    $CmdsToLog +=
-                            @{ C = 'Get-VM -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null },
-                            @{ C = 'Get-VMNetworkAdapter -All -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null },
-                            @{ C = 'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null }
-                }
+                    if (Get-Module Hyper-V -ErrorAction SilentlyContinue) {
+                        $CmdsToLog +=
+                                @{ C = 'Get-VM -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null },
+                                @{ C = 'Get-VMNetworkAdapter -All -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null },
+                                @{ C = 'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue'; F = $null }
+                    }
 
-                foreach ($cmd in $CmdsToLog) {
+                    foreach ($cmd in $CmdsToLog) {
 
-                    $cmdstr = $cmd.C
-                    $file = $cmd.F
+                        $cmdstr = $cmd.C
+                        $file = $cmd.F
 
-                    # Default rule: base cmdlet name no dash
-                    if ($null -eq $file) {
-                        $LocalFile = (Join-Path $LocalNodeDir (($cmdstr.split(' '))[0] -replace "-",""))
-                    } else {
-                        $LocalFile = (Join-Path $LocalNodeDir $file)
+                        # Default rule: base cmdlet name no dash
+                        if ($null -eq $file) {
+                            $LocalFile = (Join-Path $LocalNodeDir (($cmdstr.split(' '))[0] -replace "-",""))
+                        } else {
+                            $LocalFile = (Join-Path $LocalNodeDir $file)
+                        }
+
+                        try {
+
+                            $cmdex = $cmdstr -replace '_C_',$using:NodeName -replace '_N_',$using:NodeName -replace '_A_',$using:AccessNode
+                            $out = iex $cmdex
+
+                            # capture as txt and xml for quick analysis according to taste
+                            $out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
+                            $out | Export-Clixml -Path "$LocalFile.xml"
+
+                        } catch {
+                            Show-Warning "'$cmdex' failed for node $Node ($($_.Exception.Message))"
+                        }
+                    }
+
+                    $NodeSystemRootPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { $env:SystemRoot }
+
+                    # Avoid to use 'Join-Path' because the drive of path may not exist on the local machine.
+                    if ($using:IncludeDumps -eq $true) {
+
+                        $NodeMinidumpsPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl').MinidumpDir } -ErrorAction SilentlyContinue
+                        $NodeLiveKernelReportsPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl\LiveKernelReports').LiveKernelReportsPath } -ErrorAction SilentlyContinue
+                        ##
+                        # Minidumps
+                        ##
+
+                        try {
+                            # Use the registry key value if it exists.
+                            if ($NodeMinidumpsPath) {
+                                $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeMinidumpsPath\*.dmp")
+                            }
+                            else {
+                                $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeSystemRootPath\Minidump\*.dmp")
+                            }
+
+                            $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue
+                        }
+                        catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $using:NodeName" }
+
+                        $DmpFiles |% {
+                            try { Copy-Item $_.FullName $LocalNodeDir }
+                            catch { Show-Warning("Could not copy minidump file $_.FullName") }
+                        }
+
+                        ##
+                        # Live Kernel Reports
+                        ##
+
+                        try {
+                            # Use the registry key value if it exists.
+                            if ($NodeLiveKernelReportsPath) {
+                                $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeLiveKernelReportsPath\*.dmp")
+                            }
+                            else {
+                                $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeSystemRootPath\LiveKernelReports\*.dmp")
+                            }
+
+                            $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue
+                        }
+                        catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $using:NodeName" }
+
+                        $DmpFiles |% {
+                            try { Copy-Item $_.FullName $LocalNodeDir }
+                            catch { Show-Warning "Could not copy LiveKernelReports file $($_.FullName)" }
+                        }
                     }
 
                     try {
+                        $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeSystemRootPath\Cluster\Reports\*.*")
+                        $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
+                    catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $using:NodeName" }
 
-                        $cmdex = $cmdstr -replace '_C_',$using:NodeName -replace '_N_',$using:NodeName -replace '_A_',$using:AccessNode
-                        $out = iex $cmdex
+                    $LocalReportDir = Join-Path $LocalNodeDir "ClusterReports"
+                    md $LocalReportDir | Out-Null
 
-                        # capture as txt and xml for quick analysis according to taste
-                        $out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
-                        $out | Export-Clixml -Path "$LocalFile.xml"
-
-                    } catch {
-                        Show-Warning "'$cmdex' failed for node $Node ($($_.Exception.Message))"
+                    # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
+                    $RepFiles |% {
+                        if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
+                            try { Copy-Item $_.FullName $LocalReportDir }
+                            catch { Show-Warning "Could not copy report file $($_.FullName)" }
+                        }
                     }
                 }
-
-                $NodeSystemRootPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { $env:SystemRoot }
-
-                # Avoid to use 'Join-Path' because the drive of path may not exist on the local machine.
-                if ($using:IncludeDumps -eq $true) {
-
-                    $NodeMinidumpsPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl').MinidumpDir } -ErrorAction SilentlyContinue
-                    $NodeLiveKernelReportsPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl\LiveKernelReports').LiveKernelReportsPath } -ErrorAction SilentlyContinue
-                    ##
-                    # Minidumps
-                    ##
-
-                    try {
-                        # Use the registry key value if it exists.
-                        if ($NodeMinidumpsPath) {
-                            $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeMinidumpsPath\*.dmp")
-                        }
-                        else {
-                            $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeSystemRootPath\Minidump\*.dmp")
-                        }
-
-                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue
-                    }
-                    catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $using:NodeName" }
-
-                    $DmpFiles |% {
-                        try { Copy-Item $_.FullName $LocalNodeDir }
-                        catch { Show-Warning("Could not copy minidump file $_.FullName") }
-                    }
-
-                    ##
-                    # Live Kernel Reports
-                    ##
-
-                    try {
-                        # Use the registry key value if it exists.
-                        if ($NodeLiveKernelReportsPath) {
-                            $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeLiveKernelReportsPath\*.dmp")
-                        }
-                        else {
-                            $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeSystemRootPath\LiveKernelReports\*.dmp")
-                        }
-
-                        $DmpFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue
-                    }
-                    catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $using:NodeName" }
-
-                    $DmpFiles |% {
-                        try { Copy-Item $_.FullName $LocalNodeDir }
-                        catch { Show-Warning "Could not copy LiveKernelReports file $($_.FullName)" }
-                    }
-                }
-
-                try {
-                    $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeSystemRootPath\Cluster\Reports\*.*")
-                    $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
-                catch { $RepFiles = ""; Show-Warning "Unable to get reports for node $using:NodeName" }
-
-                $LocalReportDir = Join-Path $LocalNodeDir "ClusterReports"
-                md $LocalReportDir | Out-Null
-
-                # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
-                $RepFiles |% {
-                    if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
-                        try { Copy-Item $_.FullName $LocalReportDir }
-                        catch { Show-Warning "Could not copy report file $($_.FullName)" }
-                    }
+                catch
+                {
+                    Show-Warning("Exception in System Info: NodeName $node  `nError="+$_.Exception.Message)
                 }
             }
         }
@@ -2398,54 +2503,74 @@ function Get-SddcDiagnosticInfo
         $JobGather += Invoke-CommonCommand -ArgumentList $IncludeLiveDump,$IncludeStorDiag -ClusterNodes $AccessNode -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName StorageDiagnosticInfoAndLiveDump {
 
             Param($IncludeLiveDump,$IncludeStorDiag)
+            try
+            {
+                $Node = $env:COMPUTERNAME
+                $NodePath = $env:Temp
 
-            $Node = $env:COMPUTERNAME
-            $NodePath = $env:Temp
+                $destinationPath = Join-Path -Path $NodePath -ChildPath 'StorageDiagnosticDump'
 
-            $destinationPath = Join-Path -Path $NodePath -ChildPath 'StorageDiagnosticDump'
+                if (Test-Path -Path $destinationPath) {
+                    Remove-Item -Path $destinationPath -Recurse -Force
+                }
 
-            if (Test-Path -Path $destinationPath) {
-                Remove-Item -Path $destinationPath -Recurse -Force
+                $clusterSubsystem = (Get-StorageSubSystem |? Model -eq 'Clustered Windows Storage').FriendlyName
+
+                if ($IncludeLiveDump) {
+                    Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
+
+                    # Copy storage diagnostic and live dump information (one-shot, we'll recursively copy)
+                    NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $destinationPath)
+                }
+                elseif ($IncludeStorDiag) {
+                    Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
+
+                    # Copy storage diagnostic and live dump information (one-shot, we'll recursively copy)
+                    NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $destinationPath)
+                }
             }
-
-            $clusterSubsystem = (Get-StorageSubSystem |? Model -eq 'Clustered Windows Storage').FriendlyName
-
-            if ($IncludeLiveDump) {
-                Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -IncludeLiveDump -DestinationPath $destinationPath
-
-                # Copy storage diagnostic and live dump information (one-shot, we'll recursively copy)
-                NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $destinationPath)
-            }
-            elseif ($IncludeStorDiag) {
-                Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName $clusterSubsystem -DestinationPath $destinationPath
-
-                # Copy storage diagnostic and live dump information (one-shot, we'll recursively copy)
-                NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $destinationPath)
+            catch
+            {
+                 Show-Warning("Exception in StorageDiagnosticInfoAndLiveDump  `nError="+$_.Exception.Message)
             }
         }
 
         Show-Update "Starting export of events ..."
+        $EventsArguments = @($HoursOfEvents, $ExcludeLocaleMetadata)
+        $JobGather += Invoke-CommonCommand -ArgumentList $EventsArguments -ClusterNodes $($ClusterNodes).Name -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName Events {
 
-        $JobGather += Invoke-CommonCommand -ArgumentList $HoursOfEvents -ClusterNodes $($ClusterNodes).Name -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -JobName Events {
+            Param([int] $Hours,[bool] $ExcludeLocaleMetadata)
+            try
+            {
+                $Node = $env:COMPUTERNAME
 
-            Param([int] $Hours)
+                # use temporary directory with compression on to minimize capture footprint
+                $NodePath = New-TemporaryFile
+                Remove-Item $NodePath
+                $null = New-Item -ItemType Directory $NodePath
+                $null = compact /c $NodePath
 
-            $Node = $env:COMPUTERNAME
+                # Flatten the captured events + local metadata into the per-node directory on the gatherer
+                Get-SddcCapturedEvents $NodePath $Hours |% {
+                    NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $_)
+                }
 
-            # use temporary directory with compression on to minimize capture footprint
-            $NodePath = New-TemporaryFile
-            Remove-Item $NodePath
-            $null = New-Item -ItemType Directory $NodePath
-            $null = compact /c $NodePath
+                if ($ExcludeLocaleMetadata)
+                {
+                    NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData")) -NoCopy
+                }
+                else
+                {
+                    NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
+                }
 
-            # Flatten the captured events + local metadata into the per-node directory on the gatherer
-            Get-SddcCapturedEvents $NodePath $Hours |% {
-                NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $_)
+                # And remove the capture directory at the end of copy
+                NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $NodePath) -NoCopy
             }
-            NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node (Join-Path $NodePath "LocaleMetaData"))
-
-            # And remove the capture directory at the end of copy
-            NewCopyTask -Delete (Get-AdminSharePathFromLocal $Node $NodePath) -NoCopy
+            catch
+            {
+                Show-Warning("Exception in JobName Events  `nError="+$_.Exception.Message)
+            }
         }
 
         if ($IncludeAssociations -and $ClusterName.Length) {
@@ -2643,7 +2768,6 @@ function Get-SddcDiagnosticInfo
             $Volumes | Export-Clixml ($Path + "GetVolume.XML") }
         catch { Show-Error("Unable to get Volumes. `nError="+$_.Exception.Message) }
 
-
         # Virtual disk health
         # Used in S2D-specific gather below
 
@@ -2685,7 +2809,6 @@ function Get-SddcDiagnosticInfo
         catch { Show-Warning("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
 
         # Storage pool health
-
         try {
             $StoragePools = @(Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $Subsystem -ErrorAction SilentlyContinue)
             $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML") }
@@ -3146,7 +3269,31 @@ function Get-SddcDiagnosticInfo
     # Phase 4
     #
 
-    Show-Update "<<< Phase 4 - Compacting files for transport >>>" -ForegroundColor Cyan
+    if ($ZipFiles)
+    {
+        Show-Update "<<< Phase 4 - Compacting files for transport >>>" -ForegroundColor Cyan
+    }
+    else
+    {
+        Show-Update "<<< Phase 4 - Extract cab files + Final Cleanup >>>" -ForegroundColor Cyan
+    }
+
+    if (!$ZipFiles)
+    {
+         Show-Update "Rename msdbg.<node name> to msdbg. Do this to shorten overall filepath."
+         $items = Get-ChildItem -Recurse -Path $Path -Filter "msdbg.*"
+         foreach ($item in $items)
+         {
+             if ($item.FullName -Match "msdbg(.*)")
+             {
+                 $childFolder = Split-Path $item.FullName -Leaf
+                 $parentFolder = Split-Path $item.FullName -Parent
+                 $childFolder = $childFolder -Replace $matches[1], ""
+                 $renamedFolder = Join-Path -Path $parentFolder -ChildPath $childFolder
+                 Rename-Item $item.FullName $renamedFolder
+             }
+         }
+    }
 
     #
     # Force GC so that any pending file references are
@@ -3156,32 +3303,35 @@ function Get-SddcDiagnosticInfo
 
     [System.GC]::Collect()
 
-    # time/extension suffix
-    $ZipSuffix = '-' + (Format-SddcDateTime $TodayDate) + '.ZIP'
+    if ($ZipFiles)
+    {
+        # time/extension suffix
+        $ZipSuffix = '-' + (Format-SddcDateTime $TodayDate) + '.ZIP'
 
-    # prepend clustername if live, domain name trimmed away
-    # we could use $Cluster.Name since it will exist if $ClusterName was created from it,
-    # but that may seem excessively mysterious)
-    if ($ClusterName.Length) {
-        $ZipSuffix = '-' + ($ClusterName.Split('.',2)[0]) + $ZipSuffix
-    } else {
-        $ZipSuffix = '-OFFLINECLUSTER' + $ZipSuffix
-    }
+        # prepend clustername if live, domain name trimmed away
+        # we could use $Cluster.Name since it will exist if $ClusterName was created from it,
+        # but that may seem excessively mysterious)
+        if ($ClusterName.Length) {
+            $ZipSuffix = '-' + ($ClusterName.Split('.',2)[0]) + $ZipSuffix
+        } else {
+            $ZipSuffix = '-OFFLINECLUSTER' + $ZipSuffix
+        }
 
-    # ... and full path
-    $ZipPath = $ZipPrefix + $ZipSuffix
+        # ... and full path
+        $ZipPath = $ZipPrefix + $ZipSuffix
 
-    try {
-        Add-Type -Assembly System.IO.Compression.FileSystem
-        [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
-        $ZipPath = Convert-Path $ZipPath
-        Show-Update "Zip File Name : $ZipPath"
+        try {
+            Add-Type -Assembly System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+            $ZipPath = Convert-Path $ZipPath
+            Show-Update "Zip File Name : $ZipPath"
 
-        Show-Update "Cleaning up temporary directory $Path"
-        Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
+            Show-Update "Cleaning up temporary directory $Path"
+            Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
 
-    } catch {
-        Show-Error("Error creating the ZIP file!`nContent remains available at $Path")
+        } catch {
+            Show-Error("Error creating the ZIP file!`nContent remains available at $Path")
+        }
     }
 
     Show-Update "Cleaning up CimSessions"
@@ -5296,6 +5446,10 @@ function Get-StorageLatencyReport
                 }
             }
         }
+    }
+    catch
+    {
+        Show-Warning("Exception in get-stroage latency report .  `nError="+$_.Exception.Message)
     }
     finally
     {
