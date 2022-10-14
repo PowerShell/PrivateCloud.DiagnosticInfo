@@ -2025,8 +2025,8 @@ function Get-SddcDiagnosticInfo
                 try {
 
                     # SCDT returns a fileinfo object for the saved ZIP on the pipeline; discard (allow errors/warnings to flow as normal)
-
-                    if ((Get-Command Save-CauDebugTrace).Parameters.ContainsKey("FeatureUpdateLogs")) {
+                    $parameters = (Get-Command Save-CauDebugTrace).Parameters.Keys
+                    if ($parameters -contains "FeatureUpdateLogs") {
                         $null = Save-CauDebugTrace -Cluster $using:AccessNode -FeatureUpdateLogs All -FilePath $using:Path
                     }
                     else {
@@ -3281,15 +3281,15 @@ function Get-SddcDiagnosticInfo
     if (!$ZipFiles)
     {
          Show-Update "Rename msdbg.<node name> to msdbg. Do this to shorten overall filepath."
-         $items = get-childitem -Recurse -Path $Path -Filter "msdbg.*"
+         $items = Get-ChildItem -Recurse -Path $Path -Filter "msdbg.*"
          foreach ($item in $items)
          {
-             if ($item.FullName -match "msdbg(.*)")
+             if ($item.FullName -Match "msdbg(.*)")
              {
-                 $childFolder = split-path $item.FullName -leaf
-                 $parentFolder = split-path $item.FullName -parent
-                 $childFolder = $childFolder -replace $matches[1], ""
-                 $renamedFolder = join-path -path $parentFolder -childpath $childFolder
+                 $childFolder = Split-Path $item.FullName -Leaf
+                 $parentFolder = Split-Path $item.FullName -Parent
+                 $childFolder = $childFolder -Replace $matches[1], ""
+                 $renamedFolder = Join-Path -Path $parentFolder -ChildPath $childFolder
                  Rename-Item $item.FullName $renamedFolder
              }
          }
