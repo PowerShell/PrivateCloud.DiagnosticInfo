@@ -672,16 +672,17 @@ $CommonFunc = [scriptblock]::Create($(
 
 #
 # This tests whether a path is a valid prefix name for a new file (e.g., $path + .ZIP)
-# A ref is provided so it can be rewritten to an absolute path if specified in drive or
-# directory relative forms - .NET callouts have cwd = WINDIR, which confuses things v.
-# normal expectations
-#
+# The path is returned if valid, normalized to an absolute path if specified in
+# relative form. If $null is returned it is not a valid prefix path.
 
-function Test-PrefixFilePath(
-    [ref] $path
-    )
+function Test-PrefixFilePath
 {
-    $p = $path.Value
+    param(
+        [string]
+        $Path
+    )
+
+    $p = $Path
     $elements = @($p -split '\\')
 
     # we need to tear off the last element and test the parent. before doing that,
@@ -699,7 +700,7 @@ function Test-PrefixFilePath(
     if ($lastempty -or
         ($islocabs -and $elements.Count -eq 1) -or
         ($isunc -and $elements.Count -lt 5)) {
-        return $false
+        return $null
     }
 
     # if not local absolute or unc, it is local relative
@@ -719,15 +720,10 @@ function Test-PrefixFilePath(
 
             # drive relative single element (no test needed, return immediately) (e.g., \foo, NOT \foo\bar)
             if ($elements.Count -eq 2) {
-
-                $path.Value = $p
-                return $true
+                return $p
             }
 
             # ... must be multi-element (test needed)
-            # resplit for the prefix test (e.g., got foo\bar, must set up so we test c:\the\cwd\foo)
-            $elements = @($p -split '\\')
-
         } else {
 
             # prepend cwd
@@ -735,15 +731,13 @@ function Test-PrefixFilePath(
 
             # local single element (no test needed, return immediately)
             if ($elements.Count -eq 1) {
-
-                $path.Value = $p
-                return $true
+                return $p
             }
 
             # ... must be local relative multi-element (test needed)
-            # resplit ...
-            $elements = @($path.Value -split '\\')
         }
+
+        $elements = @($p -split '\\')
     }
 
     # rejoin without the tail and test
@@ -751,11 +745,10 @@ function Test-PrefixFilePath(
 
     # return potentially updated path, but only modify on success
     if (Test-Path $tp) {
-        $path.Value = $p
-        $true
-    } else {
-        $false
+        return $p
     }
+
+    return $null
 }
 
 function Check-ExtractZip(
