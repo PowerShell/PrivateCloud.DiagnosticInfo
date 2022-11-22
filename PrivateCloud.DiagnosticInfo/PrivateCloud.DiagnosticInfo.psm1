@@ -2016,17 +2016,23 @@ function Get-SddcDiagnosticInfo
 
             $JobStatic += start-job -Name CauDebugTrace {
                 try {
-
-                    # SCDT returns a fileinfo object for the saved ZIP on the pipeline; discard (allow errors/warnings to flow as normal)
-                    $parameters = (Get-Command Save-CauDebugTrace).Parameters.Keys
-                    if ($parameters -contains "FeatureUpdateLogs") {
-                        $null = Save-CauDebugTrace -Cluster $using:AccessNode -FeatureUpdateLogs All -FilePath $using:Path
+                    if ($executionContext.SessionState.LanguageMode -eq "FullLanguage")
+                    {
+                        # SCDT returns a fileinfo object for the saved ZIP on the pipeline; discard (allow errors/warnings to flow as normal)
+                        $parameters = (Get-Command Save-CauDebugTrace).Parameters.Keys
+                        if ($parameters -contains "FeatureUpdateLogs") {
+                            $null = Save-CauDebugTrace -Cluster $using:AccessNode -FeatureUpdateLogs All -FilePath $using:Path
+                        }
+                        else {
+                            $null = Save-CauDebugTrace -Cluster $using:AccessNode -FilePath $using:Path
+                        }
                     }
-                    else {
-                        $null = Save-CauDebugTrace -Cluster $using:AccessNode -FilePath $using:Path
+                    else
+                    {
+                        Write-Host "Skipping CauDebugTrace because cannot run Save-CAUDebugTrace in constrained language mode."
                     }
                 }
-                catch { Show-Warning("Unable to get CAU debug trace.  `nError="+$_.Exception.Message) }
+                catch { Write-Warning("Unable to get CAU debug trace.  `nError="+$_.Exception.Message) }
             }
 
         } else {
@@ -3783,7 +3789,8 @@ function Get-SddcDiagnosticArchiveJobParameters
 
     $c = Get-Cluster -Name $Cluster -ErrorAction Stop
 
-    if ($PSBoundParameters.ContainsKey('Days')) {
+    $psBoundParametersKeys = $PSBoundParameters.Keys
+    if ($psBoundParametersKeys -contains 'Days') {
         try {
             $Days.Value = ($c | Get-ClusterParameter -Name SddcDiagnosticArchiveDays -ErrorAction Stop).Value
         } catch {
@@ -3791,7 +3798,7 @@ function Get-SddcDiagnosticArchiveJobParameters
         }
     }
 
-    if ($PSBoundParameters.ContainsKey('Path')) {
+    if ($psBoundParametersKeys -contains 'Path') {
         try {
             $Path.Value = ($c | Get-ClusterParameter -Name SddcDiagnosticArchivePath -ErrorAction Stop).Value
         } catch {
@@ -3799,7 +3806,7 @@ function Get-SddcDiagnosticArchiveJobParameters
         }
     }
 
-    if ($PSBoundParameters.ContainsKey('Size')) {
+    if ($psBoundParametersKeys -contains 'Size') {
         try {
             $Size.Value = ($c | Get-ClusterParameter -Name SddcDiagnosticArchiveSize -ErrorAction Stop).Value
         } catch {
@@ -3807,7 +3814,7 @@ function Get-SddcDiagnosticArchiveJobParameters
         }
     }
 
-    if ($PSBoundParameters.ContainsKey('At')) {
+    if ($psBoundParametersKeys -contains 'At') {
         try {
             $Task = Get-ClusteredScheduledTask -Cluster $c.Name -TaskName SddcDiagnosticArchive -ErrorAction Stop
 
@@ -4905,7 +4912,7 @@ function Get-StorageBusCacheReport
                         Label = 'CacheDevice#'; Expression = {
                             if ($_.IsSblCacheDevice -eq 'true') {
                                 '= cache'
-                            } elseif ($idmap.ContainsKey($_.CacheDeviceId)) {
+                            } elseif ($idmap.Keys -contains $_.CacheDeviceId) {
                                 $idmap[$_.CacheDeviceId]
                             } elseif ($_.CacheDeviceId -eq '{00000000-0000-0000-0000-000000000000}') {
                                 "= unbound"
@@ -5185,7 +5192,8 @@ function Get-StorageLatencyReport
                     # is the count scheme split (RS5) or combined (RS1)?
                     # match 1 is the bucket type
                     # match 2 is the value bucket number (1 .. n)
-                    if ($xh.ContainsKey("BucketIoSuccess1")) {
+                     $xhKeys = $xh.Keys
+                    if ($xhKeys -contains "BucketIoSuccess1") {
                         $schemasplit = $true
                         $buckvalueschema = "^BucketIo(Success|Failed)(\d+)$"
                     } else {
@@ -5299,7 +5307,7 @@ function Get-StorageLatencyReport
                         }
 
                         # now place the counting array into the device hash; each nonzero bucket adds +1
-                        if (-not $buckhash.ContainsKey($dev)) {
+                        if (-not ($buckhash.Keys -contains $dev)) {
                             # new device
                             $buckhash[$dev] = $buckvalues |% { if ($_) { 1 } else { 0 }}
                         } else {
@@ -5396,7 +5404,7 @@ function Get-StorageLatencyReport
                 # to inject them.
 
                 # output the table of device latency bucket counts
-                $buckhash.Keys |? { $PhysicalDisksTable.ContainsKey($_) } |% {
+                $buckhash.Keys |? { $PhysicalDisksTable.Keys -contains $_ } |% {
 
                     $dev = $_
 
@@ -5430,7 +5438,7 @@ function Get-StorageLatencyReport
 
                     $n = 0
                     if ($null -ne $evs) {
-                        $evs |? { $PhysicalDisksTable.ContainsKey($_.Device) } |% { $n += 1; $_ } | sort Time -Descending | ft -AutoSize ('Time','Device' + $pdattrs_ev + $bucklabels)
+                        $evs |? { $PhysicalDisksTable.Keys -contains $_.Device } |% { $n += 1; $_ } | sort Time -Descending | ft -AutoSize ('Time','Device' + $pdattrs_ev + $bucklabels)
                     }
 
                     if ($n -eq 0) {
