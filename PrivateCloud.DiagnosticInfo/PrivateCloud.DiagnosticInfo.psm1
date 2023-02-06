@@ -2132,6 +2132,35 @@ function Get-SddcDiagnosticInfo
             }
         }
 
+        if ($executionContext.SessionState.LanguageMode -ne "FullLanguage") {
+            Write-Host "Collecting CAU files manually in constrained language mode"
+            $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'CAU log files' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {            
+                # discover CAU orchestrator log files 
+                $dirs = [System.Collections.Generic.HashSet[string]]::new()
+                Get-ChildItem "REGISTRY::HKEY_USERS\" | ForEach-Object {
+                    $regName = "REGISTRY::" + $_.Name + "\SOFTWARE\Microsoft\Windows\CurrentVersion\ClusterAwareUpdating\"
+                    $regKey = Get-ItemProperty -Path $regName -ErrorAction SilentlyContinue
+                    if ($regKey) {
+                        if($dirs.Add($regKey.DebugTraceDir)) {
+                            NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $regKey.DebugTraceDir)
+                        }
+                    }
+                }
+            }
+
+            $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'CAU wmi files' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {            
+                # discover CAU wmi log files and add them to their own zip
+                $sourceDir = Join-Path $env:SystemRoot "System32\LogFiles\ClusterUpdate"
+                NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $sourceDir)
+            }
+
+            $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'CAU wua files' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {            
+                # collect windows update agent logs
+                $sourceDir = Join-Path $env:WINDIR "Logs\WindowsUpdate"
+                NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $sourceDir)
+            }
+        }
+
         if ($IncludeProcessDump) {
 
             $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName ProcessDumps -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc -ArgumentList $ProcessLists {
