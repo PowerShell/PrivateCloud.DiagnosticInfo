@@ -2014,19 +2014,25 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Unable to get Cluster Quorum.  `nError="+$_.Exception.Message) }
             }
 
-            $JobStatic += start-job -Name CauDebugTrace {
+            $JobStatic += start-job -Name CauDebugTrace -initializationScript $commonFunc {
                 try {
-
-                    # SCDT returns a fileinfo object for the saved ZIP on the pipeline; discard (allow errors/warnings to flow as normal)
-                    $parameters = (Get-Command Save-CauDebugTrace).Parameters.Keys
-                    if ($parameters -contains "FeatureUpdateLogs") {
-                        $null = Save-CauDebugTrace -Cluster $using:AccessNode -FeatureUpdateLogs All -FilePath $using:Path
+                    if ($executionContext.SessionState.LanguageMode -eq "FullLanguage")
+                    {
+                        # SCDT returns a fileinfo object for the saved ZIP on the pipeline; discard (allow errors/warnings to flow as normal)
+                        $parameters = (Get-Command Save-CauDebugTrace).Parameters.Keys
+                        if ($parameters -contains "FeatureUpdateLogs") {
+                            $null = Save-CauDebugTrace -Cluster $using:AccessNode -FeatureUpdateLogs All -FilePath $using:Path
+                        }
+                        else {
+                            $null = Save-CauDebugTrace -Cluster $using:AccessNode -FilePath $using:Path
+                        }
                     }
-                    else {
-                        $null = Save-CauDebugTrace -Cluster $using:AccessNode -FilePath $using:Path
+                    else
+                    {
+                        Write-Host "Skipping CauDebugTrace because cannot run Save-CAUDebugTrace in constrained language mode."
                     }
                 }
-                catch { Show-Warning("Unable to get CAU debug trace.  `nError="+$_.Exception.Message) }
+                catch { Write-Warning("Unable to get CAU debug trace.  `nError="+$_.Exception.Message) }
             }
 
         } else {
@@ -2132,33 +2138,46 @@ function Get-SddcDiagnosticInfo
             }
         }
 
-        if ($executionContext.SessionState.LanguageMode -ne "FullLanguage") {
-            Write-Host "Collecting CAU files manually in constrained language mode"
-            $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'CAU log files' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {            
-                # discover CAU orchestrator log files 
-                $dirs = [System.Collections.Generic.HashSet[string]]::new()
-                Get-ChildItem "REGISTRY::HKEY_USERS\" | ForEach-Object {
-                    $regName = "REGISTRY::" + $_.Name + "\SOFTWARE\Microsoft\Windows\CurrentVersion\ClusterAwareUpdating\"
-                    $regKey = Get-ItemProperty -Path $regName -ErrorAction SilentlyContinue
-                    if ($regKey) {
-                        if($dirs.Add($regKey.DebugTraceDir)) {
-                            NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $regKey.DebugTraceDir)
+        $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'CAU log files' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {            
+            try {    
+                if ($executionContext.SessionState.LanguageMode -ne "FullLanguage") {
+                    # discover CAU orchestrator log files 
+                    $dirs = @()
+                    Get-ChildItem "REGISTRY::HKEY_USERS\" | ForEach-Object {
+                        $regName = "REGISTRY::" + $_.Name + "\SOFTWARE\Microsoft\Windows\CurrentVersion\ClusterAwareUpdating\"
+                        $regKey = Get-ItemProperty -Path $regName -ErrorAction SilentlyContinue
+                        if ($regKey) {
+                            $dirs += $regKey.DebugTraceDir                            
                         }
+                    }
+                    $dirs | Select-Object -Unique | ForEach-Object {
+                        NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $_)
                     }
                 }
             }
+            catch { Show-Warning("Exception in CAU log files script block. `nError="+$_.Exception.Message) }
+        }
 
-            $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'CAU wmi files' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {            
-                # discover CAU wmi log files and add them to their own zip
-                $sourceDir = Join-Path $env:SystemRoot "System32\LogFiles\ClusterUpdate"
-                NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $sourceDir)
+        $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'CAU wmi files' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {            
+            try {
+                if ($executionContext.SessionState.LanguageMode -ne "FullLanguage") {
+                    # discover CAU wmi log files and add them to their own zip
+                    $sourceDir = Join-Path $env:SystemRoot "System32\LogFiles\ClusterUpdate"
+                    NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $sourceDir)
+                }
             }
+            catch { Show-Warning("Exception in CAU wmi files script block. `nError="+$_.Exception.Message) }
+        }
 
-            $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'CAU wua files' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {            
-                # collect windows update agent logs
-                $sourceDir = Join-Path $env:WINDIR "Logs\WindowsUpdate"
-                NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $sourceDir)
+        $JobGather += Invoke-CommonCommand -ClusterNodes $($ClusterNodes).Name -JobName 'CAU wua files' -SessionConfigurationName $SessionConfigurationName -InitBlock $CommonFunc {            
+            try {
+                if ($executionContext.SessionState.LanguageMode -ne "FullLanguage") {
+                    # collect windows update agent logs
+                    $sourceDir = Join-Path $env:WINDIR "Logs\WindowsUpdate"
+                    NewCopyTask -Delete:$false (Get-AdminSharePathFromLocal $env:COMPUTERNAME $sourceDir)
+                }
             }
+            catch { Show-Warning("Exception in CAU log files script block. `nError="+$_.Exception.Message) }
         }
 
         if ($IncludeProcessDump) {
