@@ -2029,10 +2029,10 @@ function Get-SddcDiagnosticInfo
                     }
                     else
                     {
-                        Write-Host "Skipping CauDebugTrace because cannot run Save-CAUDebugTrace in constrained language mode."
+                        Show-Update "Skipping CauDebugTrace because cannot run Save-CAUDebugTrace in constrained language mode."
                     }
                 }
-                catch { Write-Warning("Unable to get CAU debug trace.  `nError="+$_.Exception.Message) }
+                catch { Show-Warning("Unable to get CAU debug trace.  `nError="+$_.Exception.Message) }
             }
 
         } else {
