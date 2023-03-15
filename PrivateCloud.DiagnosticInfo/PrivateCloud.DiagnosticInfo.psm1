@@ -872,7 +872,7 @@ function Invoke-CommonCommand (
 {
     $Sessions = @()
 
-    if ($ClusterNodes.Count -eq 0)
+    if ($null -eq $ClusterNodes -or $ClusterNodes.Count -eq 0)
     {
         $Sessions = New-PSSession -Cn localhost -EnableNetworkAccess -ConfigurationName $SessionConfigurationName
     }
@@ -1831,7 +1831,7 @@ function Get-SddcDiagnosticInfo
         #
 
         $DedupEnabled = $true
-        if ($(Invoke-Command -ComputerName $AccessNode -ConfigurationName $SessionConfigurationName {(-not (Get-Command -Module Deduplication))} )) {
+        if ($null -eq $AccessNode -or $(Invoke-Command -ComputerName $AccessNode -ConfigurationName $SessionConfigurationName {(-not (Get-Command -Module Deduplication))} )) {
             $DedupEnabled = $false
         }
 
@@ -2552,190 +2552,196 @@ function Get-SddcDiagnosticInfo
             }
         }
 
-        #
-        # SMB share health/status
-        #
-
-        Show-Update "SMB Shares"
-
-        try { $SmbShares = Get-SmbShare -CimSession $AccessNode }
-        catch { Show-Error("Unable to get SMB Shares. `nError="+$_.Exception.Message) }
-
-        # XXX only sharepath and health are added in, why are we selecting down to just these four as opposed to add-member?
-        $ShareStatus = $SmbShares |? ContinuouslyAvailable | Select-Object ScopeName, Name, SharePath, Health
-        $Count1 = 0
-        $Total1 = NCount($ShareStatus)
-
-        if ($Total1 -gt 0)
+        if($null -eq $AccessNode)
         {
-            $ShareStatus |% {
-                $Progress = $Count1 / $Total1 * 100
-                $Count1++
-                Write-Progress -Activity "Testing file share access" -PercentComplete $Progress
+            Show-Update "Skipping gathering of cluster storage as no access node was found"
+        }
+        else
+        {
+            #
+            # SMB share health/status
+            #
 
-                if ($ClusterDomain -ne "")
-                {
-                    $_.SharePath = "\\" + $_.ScopeName + "." + $ClusterDomain + "\" + $_.Name
+            Show-Update "SMB Shares"
+            try { $SmbShares = Get-SmbShare -CimSession $AccessNode }
+            catch { Show-Error("Unable to get SMB Shares. `nError="+$_.Exception.Message) }
+
+            # XXX only sharepath and health are added in, why are we selecting down to just these four as opposed to add-member?
+            $ShareStatus = $SmbShares |? ContinuouslyAvailable | Select-Object ScopeName, Name, SharePath, Health
+            $Count1 = 0
+            $Total1 = NCount($ShareStatus)
+
+            if ($Total1 -gt 0)
+            {
+                $ShareStatus |% {
+                    $Progress = $Count1 / $Total1 * 100
+                    $Count1++
+                    Write-Progress -Activity "Testing file share access" -PercentComplete $Progress
+
+                    if ($ClusterDomain -ne "")
+                    {
+                        $_.SharePath = "\\" + $_.ScopeName + "." + $ClusterDomain + "\" + $_.Name
+                    }
+                    else
+                    {
+                        $_.SharePath = "\\" + $_.ScopeName + "\" + $_.Name
+                    }
+                    try { if (Test-Path -Path $_.SharePath  -ErrorAction SilentlyContinue) {
+                                $_.Health = "Accessible"
+                            } else {
+                                $_.Health = "Inaccessible"
+                        }
+                    }
+                    catch { $_.Health = "Accessible: "+$_.Exception.Message }
                 }
-                else
-                {
-                    $_.SharePath = "\\" + $_.ScopeName + "\" + $_.Name
-                }
-                try { if (Test-Path -Path $_.SharePath  -ErrorAction SilentlyContinue) {
-                            $_.Health = "Accessible"
-                        } else {
-                            $_.Health = "Inaccessible"
+                Write-Progress -Activity "Testing file share access" -Completed
+            }
+
+            $ShareStatus | Export-Clixml ($Path + "ShareStatus.XML")
+
+            Show-Update "SMB Share Open Files"
+
+            try {
+                $o = Get-SmbOpenFile -CimSession $AccessNode
+                $o | Export-Clixml ($Path + "GetSmbOpenFile.XML") }
+            catch { Show-Error("Unable to get SMB open files. `nError="+$_.Exception.Message) }
+
+            Show-Update "SMB Share Witness"
+
+            try {
+                $o = Get-SmbWitnessClient -CimSession $AccessNode
+                $o | Export-Clixml ($Path + "GetSmbWitness.XML") }
+            catch { Show-Error("Unable to get SMB Witness state. `nError="+$_.Exception.Message) }
+
+            Show-Update "Clustered Subsystem"
+
+            # NOTE: $Subsystem is reused several times below
+            try {
+                $Subsystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
+                $Subsystem | Export-Clixml ($Path + "GetStorageSubsystem.XML")
+            }
+            catch { Show-Warning("Unable to get Clustered Subsystem.`nError="+$_.Exception.Message) }
+
+            # Automatic triage is dependent on the cluster (Health Resource), avoid spurious
+            # errors if not available
+            if ($Subsystem.HealthStatus -notlike "Healthy" -and $ClusterName.Length) {
+                Show-Update "Triage for Clustered Subsystem (HealthStatus = $($Subsystem.HealthStatus))"
+                try {
+                    $cmdlet = Get-Command Get-HealthFault -ErrorAction SilentlyContinue
+                    if ($null -ne $cmdlet -and $cmdlet.Source -eq 'FailoverClusters') {
+                        Get-HealthFault  -CimSession $AccessNode |
+                            Export-Clixml (Join-Path $Path "HeathFault.XML")
+                    } else {
+                        $Subsystem | Debug-StorageSubsystem -CimSession $AccessNode |
+                            Export-Clixml (Join-Path $Path "DebugStorageSubsystem.XML")
                     }
                 }
-                catch { $_.Health = "Accessible: "+$_.Exception.Message }
+                catch { Show-Error "Unable to get Get-HealthFault or Debug-StorageSubsystem for unhealthy StorageSubsystem.`nError=" $_ }
             }
-            Write-Progress -Activity "Testing file share access" -Completed
-        }
 
-        $ShareStatus | Export-Clixml ($Path + "ShareStatus.XML")
+            Show-Update "Volumes & Virtual Disks"
 
-        Show-Update "SMB Share Open Files"
+            # Volume status
 
-        try {
-            $o = Get-SmbOpenFile -CimSession $AccessNode
-            $o | Export-Clixml ($Path + "GetSmbOpenFile.XML") }
-        catch { Show-Error("Unable to get SMB open files. `nError="+$_.Exception.Message) }
-
-        Show-Update "SMB Share Witness"
-
-        try {
-            $o = Get-SmbWitnessClient -CimSession $AccessNode
-            $o | Export-Clixml ($Path + "GetSmbWitness.XML") }
-        catch { Show-Error("Unable to get SMB Witness state. `nError="+$_.Exception.Message) }
-
-        Show-Update "Clustered Subsystem"
-
-        # NOTE: $Subsystem is reused several times below
-        try {
-            $Subsystem = Get-StorageSubsystem Cluster* -CimSession $AccessNode
-            $Subsystem | Export-Clixml ($Path + "GetStorageSubsystem.XML")
-        }
-        catch { Show-Warning("Unable to get Clustered Subsystem.`nError="+$_.Exception.Message) }
-
-        # Automatic triage is dependent on the cluster (Health Resource), avoid spurious
-        # errors if not available
-        if ($Subsystem.HealthStatus -notlike "Healthy" -and $ClusterName.Length) {
-            Show-Update "Triage for Clustered Subsystem (HealthStatus = $($Subsystem.HealthStatus))"
             try {
-                $cmdlet = Get-Command Get-HealthFault -ErrorAction SilentlyContinue
-                if ($null -ne $cmdlet -and $cmdlet.Source -eq 'FailoverClusters') {
-                    Get-HealthFault  -CimSession $AccessNode |
-                        Export-Clixml (Join-Path $Path "HeathFault.XML")
-                } else {
-                    $Subsystem | Debug-StorageSubsystem -CimSession $AccessNode |
-                        Export-Clixml (Join-Path $Path "DebugStorageSubsystem.XML")
-                }
+                $Volumes = Get-Volume -CimSession $AccessNode -StorageSubSystem $Subsystem
+                $Volumes | Export-Clixml ($Path + "GetVolume.XML") }
+            catch { Show-Error("Unable to get Volumes. `nError="+$_.Exception.Message) }
+
+
+            # Virtual disk health
+            # Used in S2D-specific gather below
+
+            try {
+                $VirtualDisk = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $Subsystem
+                $VirtualDisk | Export-Clixml ($Path + "GetVirtualDisk.XML")
             }
-            catch { Show-Error "Unable to get Get-HealthFault or Debug-StorageSubsystem for unhealthy StorageSubsystem.`nError=" $_ }
-        }
+            catch { Show-Warning("Unable to get Virtual Disks.`nError="+$_.Exception.Message) }
 
-        Show-Update "Volumes & Virtual Disks"
+            # Deduplicated volume health
+            # XXX the counts/healthy likely not needed once phase 2 shifted into summary report
 
-        # Volume status
+            if ($DedupEnabled)
+            {
+                Show-Update "Dedup Volume Status"
 
-        try {
-            $Volumes = Get-Volume -CimSession $AccessNode -StorageSubSystem $Subsystem
-            $Volumes | Export-Clixml ($Path + "GetVolume.XML") }
-        catch { Show-Error("Unable to get Volumes. `nError="+$_.Exception.Message) }
+                try {
+                    $DedupVolumes = Invoke-Command -ComputerName $AccessNode -ConfigurationName $SessionConfigurationName { Get-DedupStatus }
+                    $DedupVolumes | Export-Clixml ($Path + "GetDedupVolume.XML") }
+                catch { Show-Error("Unable to get Dedup Volumes.`nError="+$_.Exception.Message) }
 
+                $DedupTotal = NCount($DedupVolumes)
+                $DedupHealthy = NCount($DedupVolumes |? LastOptimizationResult -eq 0 )
 
-        # Virtual disk health
-        # Used in S2D-specific gather below
+            } else {
 
-        try {
-            $VirtualDisk = Get-VirtualDisk -CimSession $AccessNode -StorageSubSystem $Subsystem
-            $VirtualDisk | Export-Clixml ($Path + "GetVirtualDisk.XML")
-        }
-        catch { Show-Warning("Unable to get Virtual Disks.`nError="+$_.Exception.Message) }
+                $DedupVolumes = @()
+                $DedupTotal = 0
+                $DedupHealthy = 0
+            }
 
-        # Deduplicated volume health
-        # XXX the counts/healthy likely not needed once phase 2 shifted into summary report
+            Show-Update "Storage Pool & Tiers"
 
-        if ($DedupEnabled)
-        {
-            Show-Update "Dedup Volume Status"
-
-            try {
-                $DedupVolumes = Invoke-Command -ComputerName $AccessNode -ConfigurationName $SessionConfigurationName { Get-DedupStatus }
-                $DedupVolumes | Export-Clixml ($Path + "GetDedupVolume.XML") }
-            catch { Show-Error("Unable to get Dedup Volumes.`nError="+$_.Exception.Message) }
-
-            $DedupTotal = NCount($DedupVolumes)
-            $DedupHealthy = NCount($DedupVolumes |? LastOptimizationResult -eq 0 )
-
-        } else {
-
-            $DedupVolumes = @()
-            $DedupTotal = 0
-            $DedupHealthy = 0
-        }
-
-        Show-Update "Storage Pool & Tiers"
-
-        # Storage tier information
-
-        try {
-            Get-StorageTier -CimSession $AccessNode |
-                Export-Clixml ($Path + "GetStorageTier.XML") }
-        catch { Show-Warning("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
-
-        # Storage pool health
-
-        try {
-            $StoragePools = @(Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $Subsystem -ErrorAction SilentlyContinue)
-            $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML") }
-        catch { Show-Error("Unable to get Storage Pools. `nError="+$_.Exception.Message) }
-
-        Show-Update "Storage Jobs"
-
-        try {
-            # cannot subsystem scope Get-StorageJob at this time
-            icm $AccessNode -ConfigurationName $SessionConfigurationName { Get-StorageJob } |
-                Export-Clixml ($Path + "GetStorageJob.XML") }
-        catch { Show-Warning("Unable to get Storage Jobs. `nError="+$_.Exception.Message) }
-
-        Show-Update "Clustered PhysicalDisks and SNV"
-
-        # Physical disk health
-
-        try {
-            $PhysicalDisks = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $Subsystem
-            $PhysicalDisks | Export-Clixml ($Path + "GetPhysicalDisk.XML") }
-        catch { Show-Error("Unable to get Physical Disks. `nError="+$_.Exception.Message) }
-
-        try {
-            Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $Subsystem | Get-PhysicalDiskSNV -CimSession $AccessNode |
-                Export-Clixml ($Path + "GetPhysicalDiskSNV.XML") }
-        catch { Show-Error("Unable to get Physical Disk Storage Node View. `nError="+$_.Exception.Message) }
-
-        # Reliability counters
-        # These may cause a latency burst on some devices due to device-specific requirements for lifting/generating
-        # the SMART data which underlies them. Decline to do this by default.
-
-        if ($IncludeReliabilityCounters -eq $true) {
-
-            Show-Update "Storage Reliability Counters"
+            # Storage tier information
 
             try {
-                $PhysicalDisks | Get-StorageReliabilityCounter -CimSession $AccessNode |
-                    Export-Clixml ($Path + "GetReliabilityCounter.XML") }
-            catch { Show-Error("Unable to get Storage Reliability Counters. `nError="+$_.Exception.Message) }
+                Get-StorageTier -CimSession $AccessNode |
+                    Export-Clixml ($Path + "GetStorageTier.XML") }
+            catch { Show-Warning("Unable to get Storage Tiers. `nError="+$_.Exception.Message) }
 
+            # Storage pool health
+
+            try {
+                $StoragePools = @(Get-StoragePool -IsPrimordial $False -CimSession $AccessNode -StorageSubSystem $Subsystem -ErrorAction SilentlyContinue)
+                $StoragePools | Export-Clixml ($Path + "GetStoragePool.XML") }
+            catch { Show-Error("Unable to get Storage Pools. `nError="+$_.Exception.Message) }
+
+            Show-Update "Storage Jobs"
+
+            try {
+                # cannot subsystem scope Get-StorageJob at this time
+                icm $AccessNode -ConfigurationName $SessionConfigurationName { Get-StorageJob } |
+                    Export-Clixml ($Path + "GetStorageJob.XML") }
+            catch { Show-Warning("Unable to get Storage Jobs. `nError="+$_.Exception.Message) }
+
+            Show-Update "Clustered PhysicalDisks and SNV"
+
+            # Physical disk health
+
+            try {
+                $PhysicalDisks = Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $Subsystem
+                $PhysicalDisks | Export-Clixml ($Path + "GetPhysicalDisk.XML") }
+            catch { Show-Error("Unable to get Physical Disks. `nError="+$_.Exception.Message) }
+
+            try {
+                Get-PhysicalDisk -CimSession $AccessNode -StorageSubSystem $Subsystem | Get-PhysicalDiskSNV -CimSession $AccessNode |
+                    Export-Clixml ($Path + "GetPhysicalDiskSNV.XML") }
+            catch { Show-Error("Unable to get Physical Disk Storage Node View. `nError="+$_.Exception.Message) }
+
+            # Reliability counters
+            # These may cause a latency burst on some devices due to device-specific requirements for lifting/generating
+            # the SMART data which underlies them. Decline to do this by default.
+
+            if ($IncludeReliabilityCounters -eq $true) {
+
+                Show-Update "Storage Reliability Counters"
+
+                try {
+                    $PhysicalDisks | Get-StorageReliabilityCounter -CimSession $AccessNode |
+                        Export-Clixml ($Path + "GetReliabilityCounter.XML") }
+                catch { Show-Error("Unable to get Storage Reliability Counters. `nError="+$_.Exception.Message) }
+
+            }
+
+            # Storage enclosure health
+
+            Show-Update "Storage Enclosures"
+
+            try {
+                Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $Subsystem |
+                    Export-Clixml ($Path + "GetStorageEnclosure.XML") }
+            catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
         }
-
-        # Storage enclosure health
-
-        Show-Update "Storage Enclosures"
-
-        try {
-            Get-StorageEnclosure -CimSession $AccessNode -StorageSubSystem $Subsystem |
-                Export-Clixml ($Path + "GetStorageEnclosure.XML") }
-        catch { Show-Error("Unable to get Enclosures. `nError="+$_.Exception.Message) }
 
         # Undo changes as this is failing in AzureStack environment.
         # SDDC cim objects
