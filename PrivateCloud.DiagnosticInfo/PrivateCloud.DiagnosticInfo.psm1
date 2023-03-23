@@ -1929,6 +1929,25 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
 
             }
+	    
+	    Show-Update "Start gather of Network ATC information..."
+	    
+            $JobStatic += start-job -Name NetIntentStatus {
+                try {
+                    $o = Get-NetIntentStatus -ClusterName $using:AccessNode
+                    $o | Export-Clixml ($using:Path + "GetNetIntentStatus.XML")
+                }
+                catch { Show-Warning("Unable to get NetIntentStatus.  `nError="+$_.Exception.Message) }
+
+            }
+            $JobStatic += start-job -Name NetIntent {
+                try {
+                    $o = Get-NetIntent -ClusterName $using:AccessNode
+                    $o | Export-Clixml ($using:Path + "GetNetIntent.XML")
+                }
+                catch { Show-Warning("Unable to get NetIntent.  `nError="+$_.Exception.Message) }
+
+            }	    
         } else {
             Show-Update "... Skip gather of cluster configuration since cluster is not available"
         }
