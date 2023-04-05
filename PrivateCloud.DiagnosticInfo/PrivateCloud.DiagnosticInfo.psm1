@@ -1947,6 +1947,14 @@ function Get-SddcDiagnosticInfo
                 }
                 catch { Show-Warning("Unable to get NetIntent.  `nError="+$_.Exception.Message) }
 
+            }
+            $JobStatic += start-job -Name NetIntentGlobalOverrides {
+                try {
+                    $o = Get-NetIntent -GlobalOverrides -ClusterName $using:AccessNode
+                    $o | Export-Clixml ($using:Path + "GetNetIntentGlobalOverrides.XML")
+                }
+                catch { Show-Warning("Unable to get NetIntent -GlobalOverrides.  `nError="+$_.Exception.Message) }
+
             }	    
         } else {
             Show-Update "... Skip gather of cluster configuration since cluster is not available"
