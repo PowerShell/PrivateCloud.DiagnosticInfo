@@ -1940,6 +1940,14 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Unable to get NetIntentStatus.  `nError="+$_.Exception.Message) }
 
             }
+	    $JobStatic += start-job -Name NetIntentStatus -GlobalOverrides {
+                try {
+                    $o = Get-NetIntentStatus -GlobalOverrides -ClusterName $using:AccessNode
+                    $o | Export-Clixml ($using:Path + "GetNetIntentStatusGlobalOverrides.XML")
+                }
+                catch { Show-Warning("Unable to get NetIntentStatus -GlobalOverrides.  `nError="+$_.Exception.Message) }
+
+            }	    
             $JobStatic += start-job -Name NetIntent {
                 try {
                     $o = Get-NetIntent -ClusterName $using:AccessNode
