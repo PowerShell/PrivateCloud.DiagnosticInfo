@@ -1963,7 +1963,64 @@ function Get-SddcDiagnosticInfo
                 }
                 catch { Show-Warning("Unable to get NetIntent -GlobalOverrides.  `nError="+$_.Exception.Message) }
 
-            }	    
+            }
+	    Show-Update "Start gather of Cluster Perfomance information..."
+            $JobStatic += start-job -Name 25gigisthenew10gig {
+                try {
+                    #Sample 4: As they say, "25-gig is the new 10-gig"
+                    #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-4-as-they-say-25-gig-is-the-new-10-gig
+                     $o = Invoke-Command (Get-ClusterNode -ClusterName $using:AccessNode).Name {
+
+                        Function Format-BitsPerSec {
+                            Param (
+                                $RawValue
+                            )
+                            $i = 0 ; $Labels = ("bps", "kbps", "Mbps", "Gbps", "Tbps", "Pbps") # Petabits, just in case!
+                            Do { $RawValue /= 1000 ; $i++ } While ( $RawValue -Gt 1000 )
+                            # Return
+                            [String][Math]::Round($RawValue) + " " + $Labels[$i]
+                        }
+
+                        Get-NetAdapter | ForEach-Object {
+
+                            $Inbound = $_ | Get-ClusterPerf -NetAdapterSeriesName "NetAdapter.Bandwidth.Inbound" -TimeFrame "LastDay"
+                            $Outbound = $_ | Get-ClusterPerf -NetAdapterSeriesName "NetAdapter.Bandwidth.Outbound" -TimeFrame "LastDay"
+
+                            If ($Inbound -Or $Outbound) {
+
+                                $InterfaceDescription = $_.InterfaceDescription
+                                $LinkSpeed = $_.LinkSpeed
+
+                                $MeasureInbound = $Inbound | Measure-Object -Property Value -Maximum
+                                $MaxInbound = $MeasureInbound.Maximum * 8 # Multiply to bits/sec
+
+                                $MeasureOutbound = $Outbound | Measure-Object -Property Value -Maximum
+                                $MaxOutbound = $MeasureOutbound.Maximum * 8 # Multiply to bits/sec
+
+                                $Saturated = $False
+
+                                # Speed property is Int, e.g. 10000000000
+                                If (($MaxInbound -Gt (0.90 * $_.Speed)) -Or ($MaxOutbound -Gt (0.90 * $_.Speed))) {
+                                    $Saturated = $True
+                                    Write-Warning "In the last day, adapter '$InterfaceDescription' on server '$Env:ComputerName' exceeded 90% of its '$LinkSpeed' theoretical maximum bandwidth. In general, network saturation leads to higher latency and diminished reliability. Not good!"
+                                }
+
+                                [PsCustomObject]@{
+                                    "NetAdapter"  = $InterfaceDescription
+                                    "LinkSpeed"   = $LinkSpeed
+                                    "MaxInbound"  = Format-BitsPerSec $MaxInbound
+                                    "MaxOutbound" = Format-BitsPerSec $MaxOutbound
+                                    "Saturated"   = $Saturated
+                                }
+                            }
+                        }
+                    }
+
+                    $o | Sort-Object PsComputerName, InterfaceDescription | Export-Clixml ($using:Path + "25gigisthenew10gig.xml")
+                }
+                catch { Show-Warning("Unable to get 25gigisthenew10gig Data.  `nError="+$_.Exception.Message) }
+
+            }
         } else {
             Show-Update "... Skip gather of cluster configuration since cluster is not available"
         }
