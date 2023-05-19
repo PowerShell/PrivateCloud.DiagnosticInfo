@@ -2270,8 +2270,8 @@ function Get-SddcDiagnosticInfo
 				'Invoke-Command -ComputerName _C_ {Echo Get-netsh;netsh int tcp show global}',
 				'Invoke-Command -ComputerName _C_ {Echo Get-win32_networkadapter;Get-WmiObject win32_networkadapter}',
 				'Invoke-Command -ComputerName _C_ {Echo Get-TcpipParametersInterfaces;Get-ItemProperty -path HKLM:\System\CurrentControlSet\services\Tcpip\Parameters\Interfaces\*}',				
-				'Invoke-Command -ComputerName _C_ {Echo Get-mpioParameters;IF((Get-WindowsFeature -Name 'Multipath-IO').Installed -eq 'True'){Get-ItemProperty -path HKLM:\SYSTEM\CurrentControlSet\Services\mpio\Parameters}}',
-				'Invoke-Command -ComputerName _C_ {Echo Get-mpioSettings;IF((Get-WindowsFeature -Name 'Multipath-IO').Installed -eq 'True'){Get-ItemProperty -path "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e97b-e325-11ce-bfc1-08002be10318}\000*"}}',
+				'Invoke-Command -ComputerName _C_ {Echo Get-mpioParameters;IF((Get-WindowsFeature -Name "Multipath-IO").Installed -eq "True"){Get-ItemProperty -path HKLM:\SYSTEM\CurrentControlSet\Services\mpio\Parameters}}',
+				'Invoke-Command -ComputerName _C_ {Echo Get-mpioSettings;IF((Get-WindowsFeature -Name "Multipath-IO").Installed -eq "True"){Get-ItemProperty -path "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e97b-e325-11ce-bfc1-08002be10318}\000*"}}',11ce-bfc1-08002be10318}\000*"}}',
 				'Get-MSDSMSupportedHW  -CimSession _C_',
 				'Get-NetNeighbor -CimSession _C_'
 
