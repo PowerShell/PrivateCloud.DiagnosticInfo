@@ -2893,19 +2893,19 @@ function Get-SddcDiagnosticInfo
 
                     If ($Output.Length -Ge 3) { # Minimum population requirement
 
-                        # Find mean μ and standard deviation σ
-                        $μ = ($Output | Measure-Object -Property RawAvgLatencyThisHDD -Average).Average
-                        $d = $Output | ForEach-Object { ($_.RawAvgLatencyThisHDD - $μ) * ($_.RawAvgLatencyThisHDD - $μ) }
-                        $σ = [Math]::Sqrt(($d | Measure-Object -Sum).Sum / $Output.Length)
+                        # Find mean u and standard deviation o
+                        $u = ($Output | Measure-Object -Property RawAvgLatencyThisHDD -Average).Average
+                        $d = $Output | ForEach-Object { ($_.RawAvgLatencyThisHDD - $u) * ($_.RawAvgLatencyThisHDD - $u) }
+                        $o = [Math]::Sqrt(($d | Measure-Object -Sum).Sum / $Output.Length)
 
                         $FoundOutlier = $False
 
                         $Output | ForEach-Object {
-                            $Deviation = ($_.RawAvgLatencyThisHDD - $μ) / $σ
-                            $_.AvgLatencyPopulation = Format-Latency $μ
+                            $Deviation = ($_.RawAvgLatencyThisHDD - $u) / $o
+                            $_.AvgLatencyPopulation = Format-Latency $u
                             $_.Deviation = Format-StandardDeviation $Deviation
                             $_.RawDeviation = $Deviation
-                            # If distribution is Normal, expect >99% within 3σ
+                            # If distribution is Normal, expect >99% within 3 devations
                             If ($Deviation -Gt 3) {
                                 $FoundOutlier = $True
                             }
