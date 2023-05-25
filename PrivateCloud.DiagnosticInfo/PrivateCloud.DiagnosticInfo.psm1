@@ -2801,7 +2801,7 @@ function Get-SddcDiagnosticInfo
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-4-as-they-say-25-gig-is-the-new-10-gig
 		    $Cluster = Get-cluster
                     $ClusterNodes = Get-ClusterNode -Cluster $Cluster -ErrorAction SilentlyContinue
-                     $o = Invoke-Command (Get-ClusterNode -ClusterName $ClusterName).Name {
+                      $o = Invoke-Command $ClusterNodes.Name {
 
                         Function Format-BitsPerSec {
                             Param (
