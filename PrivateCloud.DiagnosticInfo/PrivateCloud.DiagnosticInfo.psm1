@@ -2799,7 +2799,7 @@ function Get-SddcDiagnosticInfo
                 try {
                     Show-Update "    Gathering Sample 1: CPU, I see you!"
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-1-cpu-i-see-you
-                    $Output =@()
+                    $Output =""
                     Function Format-Hours {
                         Param (
                             $RawValue
@@ -2863,7 +2863,7 @@ function Get-SddcDiagnosticInfo
                             $Sign = "-"
                         }
                         # Return
-                        $Sign + [String][Math]::Round([Math]::Abs($RawValue), 2) + "σ"
+                        $Sign + [String][Math]::Round([Math]::Abs($RawValue), 2)
                     }
 
                     $HDD = Get-StorageSubSystem Cluster* | Get-PhysicalDisk 
