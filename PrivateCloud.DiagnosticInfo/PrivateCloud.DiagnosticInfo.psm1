@@ -2797,7 +2797,162 @@ function Get-SddcDiagnosticInfo
 
 	    Show-Update "Start gather of Cluster Performance information..."
                 try {
-                    #Sample 4: As they say, "25-gig is the new 10-gig"
+                    Show-Update "    Gathering Sample 1: CPU, I see you!"
+                    #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-1-cpu-i-see-you
+                    $Output =@()
+                    Function Format-Hours {
+                        Param (
+                            $RawValue
+                        )
+                        # Weekly timeframe has frequency 15 minutes = 4 points per hour
+                        [Math]::Round($RawValue/4)
+                    }
+
+                    Function Format-Percent {
+                        Param (
+                            $RawValue
+                        )
+                        [String][Math]::Round($RawValue) + " " + "%"
+                    }
+
+                    $Output = Get-ClusterNode | ForEach-Object {
+                        $Data = $_ | Get-ClusterPerf -ClusterNodeSeriesName "ClusterNode.Cpu.Usage" -TimeFrame "LastWeek"
+
+                        $Measure = $Data | Measure-Object -Property Value -Minimum -Maximum -Average
+                        $Min = $Measure.Minimum
+                        $Max = $Measure.Maximum
+                        $Avg = $Measure.Average
+
+                        [PsCustomObject]@{
+                            "ClusterNode"    = $_.Name
+                            "MinCpuObserved" = Format-Percent $Min
+                            "MaxCpuObserved" = Format-Percent $Max
+                            "AvgCpuObserved" = Format-Percent $Avg
+                            "HrsOver25%"     = Format-Hours ($Data | Where-Object Value -Gt 25).Length
+                            "HrsOver50%"     = Format-Hours ($Data | Where-Object Value -Gt 50).Length
+                            "HrsOver75%"     = Format-Hours ($Data | Where-Object Value -Gt 75).Length
+                        }
+                    }
+                    $Output | Sort-Object ClusterNode | Export-Clixml ($Path + "CPUIseeyou.xml")
+                }catch { Show-Warning("Unable to get CPU, I see you Data.  `nError="+$_.Exception.Message) }
+		
+                try {
+                    Show-Update "    Gathering Sample 2: Fire, fire, latency outlier"
+                    #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-2-fire-fire-latency-outlier
+                 
+                    $Cluster = Get-cluster
+                    $ClusterNodes = Get-ClusterNode -Cluster $Cluster -ErrorAction SilentlyContinue
+                     $o = Invoke-Command $ClusterNodes.Name {                    Function Format-Latency {
+                        Param (
+                            $RawValue
+                        )
+                        $i = 0 ; $Labels = ("s", "ms", "μs", "ns") # Petabits, just in case!
+                        Do { $RawValue *= 1000 ; $i++ } While ( $RawValue -Lt 1 )
+                        # Return
+                        [String][Math]::Round($RawValue, 2) + " " + $Labels[$i]
+                    }
+
+                    Function Format-StandardDeviation {
+                        Param (
+                            $RawValue
+                        )
+                        If ($RawValue -Gt 0) {
+                            $Sign = "+"
+                        }
+                        Else {
+                            $Sign = "-"
+                        }
+                        # Return
+                        $Sign + [String][Math]::Round([Math]::Abs($RawValue), 2) + "σ"
+                    }
+
+                    $HDD = Get-StorageSubSystem Cluster* | Get-PhysicalDisk 
+
+                    $Output = $HDD | ForEach-Object {
+
+                        $Iops = $_ | Get-ClusterPerf -PhysicalDiskSeriesName "PhysicalDisk.Iops.Total" -TimeFrame "LastWeek"
+                        $AvgIops = ($Iops | Measure-Object -Property Value -Average).Average
+
+                        If ($AvgIops -Gt 1) { # Exclude idle or nearly idle drives
+
+                            $Latency = $_ | Get-ClusterPerf -PhysicalDiskSeriesName "PhysicalDisk.Latency.Average" -TimeFrame "LastWeek" 
+                            $AvgLatency = ($Latency | Measure-Object -Property Value -Average).Average
+
+                            [PsCustomObject]@{
+                                "FriendlyName"  = $_.FriendlyName
+                                "SerialNumber"  = $_.SerialNumber
+                                "MediaType"     = $_.MediaType
+                                "AvgLatencyPopulation" = $null # Set below
+                                "AvgLatencyThisHDD"    = Format-Latency $AvgLatency
+                                "RawAvgLatencyThisHDD" = $AvgLatency
+                                "Deviation"            = $null # Set below
+                                "RawDeviation"         = $null # Set below
+                            }
+                        }
+                    }
+
+                    If ($Output.Length -Ge 3) { # Minimum population requirement
+
+                        # Find mean μ and standard deviation σ
+                        $μ = ($Output | Measure-Object -Property RawAvgLatencyThisHDD -Average).Average
+                        $d = $Output | ForEach-Object { ($_.RawAvgLatencyThisHDD - $μ) * ($_.RawAvgLatencyThisHDD - $μ) }
+                        $σ = [Math]::Sqrt(($d | Measure-Object -Sum).Sum / $Output.Length)
+
+                        $FoundOutlier = $False
+
+                        $Output | ForEach-Object {
+                            $Deviation = ($_.RawAvgLatencyThisHDD - $μ) / $σ
+                            $_.AvgLatencyPopulation = Format-Latency $μ
+                            $_.Deviation = Format-StandardDeviation $Deviation
+                            $_.RawDeviation = $Deviation
+                            # If distribution is Normal, expect >99% within 3σ
+                            If ($Deviation -Gt 3) {
+                                $FoundOutlier = $True
+                            }
+                        }
+                    }
+                    }
+                    $output | Sort-Object PsComputerName | Export-Clixml ($Path + "latencyoutlier.xml")
+                } catch { Show-Warning("Unable to get latency outlier Data.  `nError="+$_.Exception.Message) }
+                try {
+                    Show-Update "    Gathering Sample 3: Noisy neighbor? That's write!"
+                    #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-3-noisy-neighbor-thats-write
+                    $Cluster = Get-cluster
+                    $ClusterNodes = Get-ClusterNode -Cluster $Cluster -ErrorAction SilentlyContinue
+                     $o = Invoke-Command $ClusterNodes.Name {
+
+                     
+                        Function Format-Iops {
+                            Param (
+                                $RawValue
+                            )
+                            $i = 0 ; $Labels = (" ", "K", "M", "B", "T") # Thousands, millions, billions, trillions...
+                            Do { if($RawValue -Gt 1000){$RawValue /= 1000 ; $i++ } } While ( $RawValue -Gt 1000 )
+                            # Return
+                            [String][Math]::Round($RawValue) + " " + $Labels[$i]
+                        }
+
+                        Get-VM | ForEach-Object {
+                            $IopsTotal = $_ | Get-ClusterPerf -VMSeriesName "VHD.Iops.Total"
+                            $IopsRead  = $_ | Get-ClusterPerf -VMSeriesName "VHD.Iops.Read"
+                            $IopsWrite = $_ | Get-ClusterPerf -VMSeriesName "VHD.Iops.Write"
+                            [PsCustomObject]@{
+                                "VM" = $_.Name
+                                "IopsTotal" = Format-Iops $IopsTotal.Value
+                                "IopsRead"  = Format-Iops $IopsRead.Value
+                                "IopsWrite" = Format-Iops $IopsWrite.Value
+                                "RawIopsTotal" = $IopsTotal.Value # For sorting...
+                            }
+                        }
+
+                    }
+
+                    $o | Sort-Object RawIopsTotal -Descending | Select-Object -First 10 | Format-Table PsComputerName, VM, IopsTotal, IopsRead, IopsWrite | Export-Clixml ($Path + "Noisyneighbor.xml")
+                }
+                catch { Show-Warning("Unable to get Noisy neighbor Data.  `nError="+$_.Exception.Message) }
+		
+		try {
+                    Show-Update "    Gathering Sample 4: As they say, 25-gig is the new 10-gig"
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-4-as-they-say-25-gig-is-the-new-10-gig
 		    $Cluster = Get-cluster
                     $ClusterNodes = Get-ClusterNode -Cluster $Cluster -ErrorAction SilentlyContinue
@@ -2850,6 +3005,126 @@ function Get-SddcDiagnosticInfo
                     $o | Sort-Object PsComputerName, InterfaceDescription | Export-Clixml ($Path + "25gigisthenew10gig.xml")
                 }
                 catch { Show-Warning("Unable to get 25gigisthenew10gig Data.  `nError="+$_.Exception.Message) }
+                
+		try {
+                    Show-Update "    Gathering Sample 5: Make storage trendy again!"
+                    #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-6-memory-hog-you-can-run-but-you-cant-hide
+                    Function Format-Bytes {
+                        Param (
+                            $RawValue
+                        )
+                        $i = 0 ; $Labels = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+                        Do { $RawValue /= 1024 ; $i++ } While ( $RawValue -Gt 1024 )
+                        # Return
+                        [String][Math]::Round($RawValue) + " " + $Labels[$i]
+                    }
+
+                    Function Format-Trend {
+                        Param (
+                            $RawValue
+                        )
+                        If ($RawValue -Eq 0) {
+                            "0"
+                        }
+                        Else {
+                            If ($RawValue -Gt 0) {
+                                $Sign = "+"
+                            }
+                            Else {
+                                $Sign = "-"
+                            }
+                            # Return
+                            $Sign + $(Format-Bytes [Math]::Abs($RawValue)) + "/day"
+                        }
+                    }
+
+                    Function Format-Days {
+                        Param (
+                            $RawValue
+                        )
+                        [Math]::Round($RawValue)
+                    }
+
+                    $CSV = Get-Volume | Where-Object FileSystem -Like "*CSV*"
+
+                    $Output = $CSV | ForEach-Object {
+
+                        $N = 14 # Require 14 days of history
+
+                        $Data = $_ | Get-ClusterPerf -VolumeSeriesName "Volume.Size.Available" -TimeFrame "LastYear" | Sort-Object Time | Select-Object -Last $N
+
+                        If ($Data.Length -Ge $N) {
+
+                            # Last N days as (x, y) points
+                            $PointsXY = @()
+                            1..$N | ForEach-Object {
+                                $PointsXY += [PsCustomObject]@{ "X" = $_ ; "Y" = $Data[$_-1].Value }
+                            }
+
+                            # Linear (y = ax + b) least squares algorithm
+                            $MeanX = ($PointsXY | Measure-Object -Property X -Average).Average
+                            $MeanY = ($PointsXY | Measure-Object -Property Y -Average).Average
+                            $XX = $PointsXY | ForEach-Object { $_.X * $_.X }
+                            $XY = $PointsXY | ForEach-Object { $_.X * $_.Y }
+                            $SSXX = ($XX | Measure-Object -Sum).Sum - $N * $MeanX * $MeanX
+                            $SSXY = ($XY | Measure-Object -Sum).Sum - $N * $MeanX * $MeanY
+                            $A = ($SSXY / $SSXX)
+                            $B = ($MeanY - $A * $MeanX)
+                            $RawTrend = -$A # Flip to get daily increase in Used (vs decrease in Remaining)
+                            $Trend = Format-Trend $RawTrend
+
+                            If ($RawTrend -Gt 0) {
+                                $DaysToFull = Format-Days ($_.SizeRemaining / $RawTrend)
+                            }
+                            Else {
+                                $DaysToFull = "-"
+                            }
+                        }
+                        Else {
+                            $Trend = "InsufficientHistory"
+                            $DaysToFull = "-"
+                        }
+
+                        [PsCustomObject]@{
+                            "Volume"     = $_.FileSystemLabel
+                            "Size"       = Format-Bytes ($_.Size)
+                            "Used"       = Format-Bytes ($_.Size - $_.SizeRemaining)
+                            "Trend"      = $Trend
+                            "DaysToFull" = $DaysToFull
+                        }
+                    }
+                    $Output | Sort-Object ClusterNode | Export-Clixml ($Path + "trendyagain.xml")
+                }catch { Show-Warning("Unable to get Make storage trendy again! Data.  `nError="+$_.Exception.Message) }
+                
+		try {
+                    Show-Update "    Gathering Sample 6: Memory hog, you can run but you can't hide"
+                    #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-6-memory-hog-you-can-run-but-you-cant-hide
+                    $Output = Invoke-Command (Get-ClusterNode).Name {
+                        Function Format-Bytes {
+                            Param (
+                                $RawValue
+                            )
+                            $i = 0 ; $Labels = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+                            Do { if( $RawValue -Gt 1024 ){ $RawValue /= 1024 ; $i++ } } While ( $RawValue -Gt 1024 )
+                            # Return
+                            [String][Math]::Round($RawValue) + " " + $Labels[$i]
+                        }
+
+                        Get-VM | ForEach-Object {
+                            $Data = $_ | Get-ClusterPerf -VMSeriesName "VM.Memory.Assigned" -TimeFrame "LastMonth"
+                            If ($Data) {
+                                $AvgMemoryUsage = ($Data | Measure-Object -Property Value -Average).Average
+                                [PsCustomObject]@{
+                                    "VM" = $_.Name
+                                    "AvgMemoryUsage" = Format-Bytes $AvgMemoryUsage.Value
+                                    "RawAvgMemoryUsage" = $AvgMemoryUsage.Value # For sorting...
+                                }
+                            }
+                        }
+                    }
+                    $Output | Sort-Object RawAvgMemoryUsage -Descending | Select-Object -First 10 | Format-Table PsComputerName, VM, AvgMemoryUsage | Export-Clixml ($Path + "Memoryhog.xml")
+                }catch { Show-Warning("Unable to get Memory hog Data.  `nError="+$_.Exception.Message) }
+                
         }
 
         ####
