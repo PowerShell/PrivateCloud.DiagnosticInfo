@@ -2815,8 +2815,9 @@ function Get-SddcDiagnosticInfo
 			
 	    Show-Update "Start gather of Cluster Performance information..."
 		#Added by JG
-                try {
+                #try {
                     Show-Update "    Gathering Sample 1: CPU, I see you!"
+					Show-Update "$ClusterNodes"
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-1-cpu-i-see-you
                     $Output =""
 
@@ -2841,7 +2842,7 @@ function Get-SddcDiagnosticInfo
                         }}
                     }
                     $Output | Sort-Object ClusterNode | Export-Clixml ($Path + "CPUIseeyou.xml")
-                }catch { Show-Warning("Unable to get CPU, I see you Data.  `nError="+$_.Exception.Message) }
+                #}catch { Show-Warning("Unable to get CPU, I see you Data.  `nError="+$_.Exception.Message) }
 		
                 try {
                     Show-Update "    Gathering Sample 2: Fire, fire, latency outlier"
