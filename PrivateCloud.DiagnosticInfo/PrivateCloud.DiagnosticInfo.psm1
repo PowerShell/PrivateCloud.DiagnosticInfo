@@ -2820,26 +2820,8 @@ function Get-SddcDiagnosticInfo
 					Show-Update "$ClusterNodes"
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-1-cpu-i-see-you
                     $Output =""
-
                     $Output = $ClusterNodes | ForEach-Object {
-                        $Data = $_ | Get-ClusterPerf -ClusterNodeSeriesName "ClusterNode.Cpu.Usage" -TimeFrame "LastWeek"  -ErrorAction SilentlyContinue 
-
-                        $Measure = $Data | Measure-Object -Property Value -Minimum -Maximum -Average
-                        $Min = $Measure.Minimum
-                        $Max = $Measure.Maximum
-                        $Avg = $Measure.Average
-						$ClusterNode = $_.Name
-						
-						$data | ForEach-Object{
-                        [PsCustomObject]@{
-                            "ClusterNode"    = $ClusterNode
-                            "MinCpuObserved" = [String][Math]::Round($Min) + " " + "%"
-                            "MaxCpuObserved" = [String][Math]::Round($Max) + " " + "%"
-                            "AvgCpuObserved" = [String][Math]::Round($Avg) + " " + "%"
-                            "HrsOver25%"     = try{[Math]::Round(($_ | Where-Object Value -Gt 25).value/4)} Catch{}
-                            "HrsOver50%"     = try{[Math]::Round(($_ | Where-Object Value -Gt 50).value/4)} Catch{}
-                            "HrsOver75%"     = try{[Math]::Round(($_ | Where-Object Value -Gt 75).value/4)} Catch{}
-                        }}
+                        $_ | Get-ClusterPerf -ClusterNodeSeriesName "ClusterNode.Cpu.Usage" -TimeFrame "LastWeek"  -ErrorAction SilentlyContinue 
                     }
                     $Output | Sort-Object ClusterNode | Export-Clixml ($Path + "CPUIseeyou.xml")
                 #}catch { Show-Warning("Unable to get CPU, I see you Data.  `nError="+$_.Exception.Message) }
