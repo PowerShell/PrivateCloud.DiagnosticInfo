@@ -2820,13 +2820,6 @@ function Get-SddcDiagnosticInfo
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-1-cpu-i-see-you
                     $Output =""
 
-                    Function Format-Percent {
-                        Param (
-                            $RawValue
-                        )
-                        [String][Math]::Round($RawValue) + " " + "%"
-                    }
-
                     $Output = $ClusterNodes | ForEach-Object {
                         $Data = $_ | Get-ClusterPerf -ClusterNodeSeriesName "ClusterNode.Cpu.Usage" -TimeFrame "LastWeek"  -ErrorAction SilentlyContinue 
 
@@ -2834,16 +2827,17 @@ function Get-SddcDiagnosticInfo
                         $Min = $Measure.Minimum
                         $Max = $Measure.Maximum
                         $Avg = $Measure.Average
-
+						
+						$data | %{
                         [PsCustomObject]@{
                             "ClusterNode"    = $_.Name
-                            "MinCpuObserved" = Format-Percent $Min
-                            "MaxCpuObserved" = Format-Percent $Max
-                            "AvgCpuObserved" = Format-Percent $Avg
-                            "HrsOver25%"     = [Math]::Round(($Data | Where-Object Value -Gt 25).value/4)
-                            "HrsOver50%"     = [Math]::Round(($Data | Where-Object Value -Gt 50).value/4)
-                            "HrsOver75%"     = [Math]::Round(($Data | Where-Object Value -Gt 75).value/4)
-                        }
+                            "MinCpuObserved" = [String][Math]::Round($Min) + " " + "%"
+                            "MaxCpuObserved" = [String][Math]::Round($Max) + " " + "%"
+                            "AvgCpuObserved" = [String][Math]::Round($Avg) + " " + "%"
+                            "HrsOver25%"     = [Math]::Round(($_ | Where-Object Value -Gt 25).value/4)
+                            "HrsOver50%"     = [Math]::Round(($_ | Where-Object Value -Gt 50).value/4)
+                            "HrsOver75%"     = [Math]::Round(($_ | Where-Object Value -Gt 75).value/4)
+                        }}
                     }
                     $Output | Sort-Object ClusterNode | Export-Clixml ($Path + "CPUIseeyou.xml")
                 }catch { Show-Warning("Unable to get CPU, I see you Data.  `nError="+$_.Exception.Message) }
