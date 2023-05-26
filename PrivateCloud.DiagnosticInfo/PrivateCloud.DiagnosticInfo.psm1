@@ -2836,9 +2836,9 @@ function Get-SddcDiagnosticInfo
                             "MinCpuObserved" = [String][Math]::Round($Min) + " " + "%"
                             "MaxCpuObserved" = [String][Math]::Round($Max) + " " + "%"
                             "AvgCpuObserved" = [String][Math]::Round($Avg) + " " + "%"
-                            "HrsOver25%"     = [Math]::Round(($_ | Where-Object Value -Gt 25).value/4)
-                            "HrsOver50%"     = [Math]::Round(($_ | Where-Object Value -Gt 50).value/4)
-                            "HrsOver75%"     = [Math]::Round(($_ | Where-Object Value -Gt 75).value/4)
+                            "HrsOver25%"     = try{[Math]::Round(($_ | Where-Object Value -Gt 25).value/4)} Catch{}
+                            "HrsOver50%"     = try{[Math]::Round(($_ | Where-Object Value -Gt 50).value/4)} Catch{}
+                            "HrsOver75%"     = try{[Math]::Round(($_ | Where-Object Value -Gt 75).value/4)} Catch{}
                         }}
                     }
                     $Output | Sort-Object ClusterNode | Export-Clixml ($Path + "CPUIseeyou.xml")
