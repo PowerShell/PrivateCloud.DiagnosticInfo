@@ -2272,7 +2272,7 @@ function Get-SddcDiagnosticInfo
 				'Invoke-Command -ComputerName _C_ {Echo Get-TcpipParametersInterfaces;Get-ItemProperty -path HKLM:\System\CurrentControlSet\services\Tcpip\Parameters\Interfaces\*}',				
 				'Invoke-Command -ComputerName _C_ {Echo Get-mpioParameters;IF((Get-WindowsFeature -Name "Multipath-IO").Installed -eq "True"){Get-ItemProperty -path HKLM:\SYSTEM\CurrentControlSet\Services\mpio\Parameters}}',
 				'Invoke-Command -ComputerName _C_ {Echo Get-mpioSettings;IF((Get-WindowsFeature -Name "Multipath-IO").Installed -eq "True"){Get-ItemProperty -path "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e97b-e325-11ce-bfc1-08002be10318}\000*"}}',
-				'Get-MSDSMSupportedHW  -CimSession _C_',
+				'Invoke-Command -ComputerName _C_ {Echo Get-MSDSMSupportedHW;IF((Get-WindowsFeature -Name "Multipath-IO").Installed -eq "True"){Get-MSDSMSupportedHW  -CimSession _C_}}',
 				'Get-NetNeighbor -CimSession _C_',
 				'Get-VMNetworkAdapterIsolation -ManagementOS -CimSession _C_'
 
@@ -2288,6 +2288,7 @@ function Get-SddcDiagnosticInfo
 
                 if (Get-Module Hyper-V -ErrorAction SilentlyContinue) {
                     $CmdsToLog += 'Get-VM -CimSession _C_ -ErrorAction SilentlyContinue',
+		    		    'Invoke-Command -ComputerName _C_ {Echo Get-vmprocessor;'Get-VM -CimSession _C_ | Get-VMProcessor -ErrorAction SilentlyContinue'}',
                                     'Get-VMNetworkAdapter -All -CimSession _C_ -ErrorAction SilentlyContinue',
                                     'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue',
 				    'Echo Get-VMSwitchTeam; Get-VMSwitch  -CimSession _C_ | Where-Object {$_.EmbeddedTeamingEnabled -eq $true} | %{Get-VMSwitchTeam -CimSession _C_  -SwitchName $_.name}',
@@ -2300,6 +2301,11 @@ function Get-SddcDiagnosticInfo
 		If (Get-Module Deduplication -ErrorAction SilentlyContinue){
 			$clusterCimSession = New-CimSession -ComputerName $ClusterName
 			$CmdsToLog += "Get-DedupVolume -CimSession $clusterCimSession"
+		}
+		#Added to gather AzureStack HCI info
+		If ((Get-WmiObject -Class Win32_OperatingSystem).Caption -imatch "HCI"){
+			$CmdsToLog += "Get-AzureStackHCI"
+			$CmdsToLog += "Get-AzureStackHCIArcIntegration"
 		}
 		
                 foreach ($cmd in $CmdsToLog) {
