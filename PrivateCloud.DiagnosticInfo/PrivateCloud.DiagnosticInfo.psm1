@@ -2288,7 +2288,7 @@ function Get-SddcDiagnosticInfo
 
                 if (Get-Module Hyper-V -ErrorAction SilentlyContinue) {
                     $CmdsToLog += 'Get-VM -CimSession _C_ -ErrorAction SilentlyContinue',
-		    		    'Invoke-Command -ComputerName _C_ {Echo Get-vmprocessor;'Get-VM -CimSession _C_ | Get-VMProcessor -ErrorAction SilentlyContinue'}',
+		    		    'Invoke-Command -ComputerName _C_ {Echo Get-vmprocessor;Get-VM -CimSession _C_ | Get-VMProcessor -ErrorAction SilentlyContinue}',
                                     'Get-VMNetworkAdapter -All -CimSession _C_ -ErrorAction SilentlyContinue',
                                     'Get-VMSwitch -CimSession _C_ -ErrorAction SilentlyContinue',
 				    'Echo Get-VMSwitchTeam; Get-VMSwitch  -CimSession _C_ | Where-Object {$_.EmbeddedTeamingEnabled -eq $true} | %{Get-VMSwitchTeam -CimSession _C_  -SwitchName $_.name}',
