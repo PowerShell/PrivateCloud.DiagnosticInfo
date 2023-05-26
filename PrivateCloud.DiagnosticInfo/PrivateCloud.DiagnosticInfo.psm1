@@ -2800,8 +2800,21 @@ function Get-SddcDiagnosticInfo
             } catch {
                 Show-Warning "Gathering S2D connectivity failed"
             }
-
+			
+			Show-Update "AzureStack HCI info"
+			#Added by JG
+			try {
+				If ((Get-WmiObject -Class Win32_OperatingSystem).Caption -imatch "HCI"){
+					Get-AzureStackHCI| Export-Clixml ($Path + "GetAzureStackHCI.xml")
+					Get-AzureStackHCIArcIntegration| Export-Clixml ($Path + "AzureStackHCIArcIntegration.xml")
+				}
+			} catch {
+				Show-Warning("Unable to get AzureStack HCI info.  `nError="+$_.Exception.Message)
+			}
+			
+			
 	    Show-Update "Start gather of Cluster Performance information..."
+		#Added by JG
                 try {
                     Show-Update "    Gathering Sample 1: CPU, I see you!"
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-1-cpu-i-see-you
@@ -2821,8 +2834,8 @@ function Get-SddcDiagnosticInfo
                         [String][Math]::Round($RawValue) + " " + "%"
                     }
 
-                    $Output = Get-ClusterNode | ForEach-Object {
-                        $Data = $_ | Get-ClusterPerf -ClusterNodeSeriesName "ClusterNode.Cpu.Usage" -TimeFrame "LastWeek"
+                    $Output = $ClusterNodes | ForEach-Object {
+                        $Data = $_ | Get-ClusterPerf -ClusterNodeSeriesName "ClusterNode.Cpu.Usage" -TimeFrame "LastWeek"  -ErrorAction SilentlyContinue 
 
                         $Measure = $Data | Measure-Object -Property Value -Minimum -Maximum -Average
                         $Min = $Measure.Minimum
