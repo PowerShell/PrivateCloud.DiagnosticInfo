@@ -2819,13 +2819,6 @@ function Get-SddcDiagnosticInfo
                     Show-Update "    Gathering Sample 1: CPU, I see you!"
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-1-cpu-i-see-you
                     $Output =""
-                    Function Format-Hours {
-                        Param (
-                            $RawValue
-                        )
-                        # Weekly timeframe has frequency 15 minutes = 4 points per hour
-                        [Math]::Round($RawValue/4)
-                    }
 
                     Function Format-Percent {
                         Param (
@@ -2847,9 +2840,9 @@ function Get-SddcDiagnosticInfo
                             "MinCpuObserved" = Format-Percent $Min
                             "MaxCpuObserved" = Format-Percent $Max
                             "AvgCpuObserved" = Format-Percent $Avg
-                            "HrsOver25%"     = Format-Hours ($Data | Where-Object Value -Gt 25).Length
-                            "HrsOver50%"     = Format-Hours ($Data | Where-Object Value -Gt 50).Length
-                            "HrsOver75%"     = Format-Hours ($Data | Where-Object Value -Gt 75).Length
+                            "HrsOver25%"     = [Math]::Round(($Data | Where-Object Value -Gt 25).value/4)
+                            "HrsOver50%"     = [Math]::Round(($Data | Where-Object Value -Gt 50).value/4)
+                            "HrsOver75%"     = [Math]::Round(($Data | Where-Object Value -Gt 75).value/4)
                         }
                     }
                     $Output | Sort-Object ClusterNode | Export-Clixml ($Path + "CPUIseeyou.xml")
