@@ -2827,10 +2827,11 @@ function Get-SddcDiagnosticInfo
                         $Min = $Measure.Minimum
                         $Max = $Measure.Maximum
                         $Avg = $Measure.Average
+						$ClusterNode = $_.Name
 						
-						$data | %{
+						$data | ForEach-Object{
                         [PsCustomObject]@{
-                            "ClusterNode"    = $_.Name
+                            "ClusterNode"    = $ClusterNode
                             "MinCpuObserved" = [String][Math]::Round($Min) + " " + "%"
                             "MaxCpuObserved" = [String][Math]::Round($Max) + " " + "%"
                             "AvgCpuObserved" = [String][Math]::Round($Avg) + " " + "%"
