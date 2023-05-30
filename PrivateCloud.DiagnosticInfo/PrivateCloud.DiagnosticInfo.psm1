@@ -2864,7 +2864,7 @@ function Get-SddcDiagnosticInfo
                         $Iops = $_ | Get-ClusterPerf -PhysicalDiskSeriesName "PhysicalDisk.Iops.Total" -TimeFrame "LastWeek"
                         $AvgIops = ($Iops | Measure-Object -Property Value -Average).Average
 
-							If ($AvgIops -Gt 1) { # Exclude idle or nearly idle drives
+							If ($AvgIops -Gt 0) { # Exclude idle or nearly idle drives
 
 								$Latency = $_ | Get-ClusterPerf -PhysicalDiskSeriesName "PhysicalDisk.Latency.Average" -TimeFrame "LastWeek" 
 								$AvgLatency = ($Latency | Measure-Object -Property Value -Average).Average
