@@ -2857,7 +2857,7 @@ function Get-SddcDiagnosticInfo
 							$Sign + [String][Math]::Round([Math]::Abs($RawValue), 2)
 						}
 
-						$HDD = Get-StorageSubSystem Cluster* | Get-PhysicalDisk 
+						$HDD = Get-StorageNode | ?{$ENV:COMPUTERNAME -imatch ($_.name -split '\.')[0]} | Get-PhysicalDisk 
 
 						$Output = $HDD | ForEach-Object {
 
