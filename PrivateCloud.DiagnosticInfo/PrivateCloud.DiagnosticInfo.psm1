@@ -2831,77 +2831,81 @@ function Get-SddcDiagnosticInfo
                  
                     $Cluster = Get-cluster
                     $ClusterNodes = Get-ClusterNode -Cluster $Cluster -ErrorAction SilentlyContinue
-                     $o = Invoke-Command $ClusterNodes.Name {                    Function Format-Latency {
-                        Param (
-                            $RawValue
-                        )
-                        $i = 0 ; $Labels = ("s", "ms", "μs", "ns") # Petabits, just in case!
-                        Do { $RawValue *= 1000 ; $i++ } While ( $RawValue -Lt 1 )
-                        # Return
-                        [String][Math]::Round($RawValue, 2) + " " + $Labels[$i]
-                    }
+                    $o = Invoke-Command $ClusterNodes.Name {
+					
+						Function Format-Latency {
+							Param (
+								$RawValue
+							)
+							$i = 0 ; $Labels = ("s", "ms", "μs", "ns") # Petabits, just in case!
+							Do { $RawValue *= 1000 ; $i++ } While ( $RawValue -Lt 1 )
+							# Return
+							[String][Math]::Round($RawValue, 2) + " " + $Labels[$i]
+						}
 
-                    Function Format-StandardDeviation {
-                        Param (
-                            $RawValue
-                        )
-                        If ($RawValue -Gt 0) {
-                            $Sign = "+"
-                        }
-                        Else {
-                            $Sign = "-"
-                        }
-                        # Return
-                        $Sign + [String][Math]::Round([Math]::Abs($RawValue), 2)
-                    }
+						Function Format-StandardDeviation {
+							Param (
+								$RawValue
+							)
+							If ($RawValue -Gt 0) {
+								$Sign = "+"
+							}
+							Else {
+								$Sign = "-"
+							}
+							# Return
+							$Sign + [String][Math]::Round([Math]::Abs($RawValue), 2)
+						}
 
-                    $HDD = Get-StorageSubSystem Cluster* | Get-PhysicalDisk 
+						$HDD = Get-StorageSubSystem Cluster* | Get-PhysicalDisk 
 
-                    $Output = $HDD | ForEach-Object {
+						$Output = $HDD | ForEach-Object {
 
                         $Iops = $_ | Get-ClusterPerf -PhysicalDiskSeriesName "PhysicalDisk.Iops.Total" -TimeFrame "LastWeek"
                         $AvgIops = ($Iops | Measure-Object -Property Value -Average).Average
 
-                        If ($AvgIops -Gt 1) { # Exclude idle or nearly idle drives
+							If ($AvgIops -Gt 1) { # Exclude idle or nearly idle drives
 
-                            $Latency = $_ | Get-ClusterPerf -PhysicalDiskSeriesName "PhysicalDisk.Latency.Average" -TimeFrame "LastWeek" 
-                            $AvgLatency = ($Latency | Measure-Object -Property Value -Average).Average
+								$Latency = $_ | Get-ClusterPerf -PhysicalDiskSeriesName "PhysicalDisk.Latency.Average" -TimeFrame "LastWeek" 
+								$AvgLatency = ($Latency | Measure-Object -Property Value -Average).Average
 
-                            [PsCustomObject]@{
-                                "FriendlyName"  = $_.FriendlyName
-                                "SerialNumber"  = $_.SerialNumber
-                                "MediaType"     = $_.MediaType
-                                "AvgLatencyPopulation" = $null # Set below
-                                "AvgLatencyThisHDD"    = Format-Latency $AvgLatency
-                                "RawAvgLatencyThisHDD" = $AvgLatency
-                                "Deviation"            = $null # Set below
-                                "RawDeviation"         = $null # Set below
-                            }
-                        }
+								[PsCustomObject]@{
+									"FriendlyName"  = $_.FriendlyName
+									"SerialNumber"  = $_.SerialNumber
+									"MediaType"     = $_.MediaType
+									"AvgLatencyPopulation" = $null # Set below
+									"AvgLatencyThisHDD"    = Format-Latency $AvgLatency
+									"RawAvgLatencyThisHDD" = $AvgLatency
+									"Deviation"            = $null # Set below
+									"RawDeviation"         = $null # Set below
+								}
+							}
+						}
+
+						If ($Output.Length -Ge 3) { # Minimum population requirement
+
+							# Find mean u and standard deviation o
+							$u = ($Output | Measure-Object -Property RawAvgLatencyThisHDD -Average).Average
+							$d = $Output | ForEach-Object { ($_.RawAvgLatencyThisHDD - $u) * ($_.RawAvgLatencyThisHDD - $u) }
+							$o = [Math]::Sqrt(($d | Measure-Object -Sum).Sum / $Output.Length)
+
+							$FoundOutlier = $False
+
+							$Output | ForEach-Object {
+								$Deviation = ($_.RawAvgLatencyThisHDD - $u) / $o
+								$_.AvgLatencyPopulation = Format-Latency $u
+								$_.Deviation = Format-StandardDeviation $Deviation
+								$_.RawDeviation = $Deviation
+								# If distribution is Normal, expect >99% within 3 devations
+								If ($Deviation -Gt 3) {
+									$FoundOutlier = $True
+								}
+							}
+						}
+						
+						$Output
                     }
-
-                    If ($Output.Length -Ge 3) { # Minimum population requirement
-
-                        # Find mean u and standard deviation o
-                        $u = ($Output | Measure-Object -Property RawAvgLatencyThisHDD -Average).Average
-                        $d = $Output | ForEach-Object { ($_.RawAvgLatencyThisHDD - $u) * ($_.RawAvgLatencyThisHDD - $u) }
-                        $o = [Math]::Sqrt(($d | Measure-Object -Sum).Sum / $Output.Length)
-
-                        $FoundOutlier = $False
-
-                        $Output | ForEach-Object {
-                            $Deviation = ($_.RawAvgLatencyThisHDD - $u) / $o
-                            $_.AvgLatencyPopulation = Format-Latency $u
-                            $_.Deviation = Format-StandardDeviation $Deviation
-                            $_.RawDeviation = $Deviation
-                            # If distribution is Normal, expect >99% within 3 devations
-                            If ($Deviation -Gt 3) {
-                                $FoundOutlier = $True
-                            }
-                        }
-                    }
-                    }
-                    $output | Sort-Object PsComputerName | Export-Clixml ($Path + "latencyoutlier.xml")
+                    $o | Sort-Object PsComputerName | Export-Clixml ($Path + "latencyoutlier.xml")
                 } catch { Show-Warning("Unable to get latency outlier Data.  `nError="+$_.Exception.Message) }
                 try {
                     Show-Update "    Gathering Sample 3: Noisy neighbor? That's write!"
