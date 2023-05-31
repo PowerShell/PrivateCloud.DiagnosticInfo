@@ -2940,7 +2940,7 @@ function Get-SddcDiagnosticInfo
 
                     }
 
-                    $o | Sort-Object RawIopsTotal -Descending | Select-Object -First 10 | Format-Table PsComputerName, VM, IopsTotal, IopsRead, IopsWrite | Export-Clixml ($Path + "Noisyneighbor.xml")
+                    $o | Sort-Object RawIopsTotal -Descending | Select-Object -First 10 | Export-Clixml ($Path + "Noisyneighbor.xml")
                 }
                 catch { Show-Warning("Unable to get Noisy neighbor Data.  `nError="+$_.Exception.Message) }
 		
@@ -3031,7 +3031,7 @@ function Get-SddcDiagnosticInfo
                             }
                         }
                     }
-                    $Output | Sort-Object RawAvgMemoryUsage -Descending | Select-Object -First 10 | Format-Table PsComputerName, VM, AvgMemoryUsage | Export-Clixml ($Path + "Memoryhog.xml")
+                    $Output | Sort-Object RawAvgMemoryUsage -Descending | Select-Object -First 10 | Export-Clixml ($Path + "Memoryhog.xml")
                 }catch { Show-Warning("Unable to get Memory hog Data.  `nError="+$_.Exception.Message) }
                 
         }
