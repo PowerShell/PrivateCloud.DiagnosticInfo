@@ -1990,11 +1990,11 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
                 $o | Export-Clixml (Join-Path (Join-Path $using:Path "Node_$using:node") "GetDrivers.XML")
             }
-            $JobStatic += start-job -Name "Nic Driver Suite Information: $node" {
+            <#$JobStatic += start-job -Name "Nic Driver Suite Information: $node" {
                 try { $o =  Invoke-Command -ScriptBlock {Get-ChildItem -Recurse "HKLM:\SOFTWARE\Dell\MUP"} -ComputerName $using:node }
                 catch { Show-Warning "Unable to get Nic Driver Suite on $using:node." }
                 $o | select PSComputerName,@{Label='Name';Expression={$_.name}},@{Label='Property';Expression={($_ | Get-ItemProperty -ErrorAction SilentlyContinue).'(default)'}} | Export-Clixml (Join-Path (Join-Path $using:Path "Node_$using:node") "DSUMUP.xml")
-            }
+            }#>
         }
 
         # consider using this as the generic copyout job set
@@ -2278,6 +2278,7 @@ function Get-SddcDiagnosticInfo
 				'Invoke-Command -ComputerName _C_ {Echo Get-mpioParameters;IF((Get-WindowsFeature -Name "Multipath-IO").Installed -eq "True"){Get-ItemProperty -path HKLM:\SYSTEM\CurrentControlSet\Services\mpio\Parameters}}',
 				'Invoke-Command -ComputerName _C_ {Echo Get-mpioSettings;IF((Get-WindowsFeature -Name "Multipath-IO").Installed -eq "True"){Get-ItemProperty -path "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e97b-e325-11ce-bfc1-08002be10318}\000*"}}',
 				'Invoke-Command -ComputerName _C_ {Echo Get-MSDSMSupportedHW;IF((Get-WindowsFeature -Name "Multipath-IO").Installed -eq "True"){Get-MSDSMSupportedHW  -CimSession _C_}}',
+				'Invoke-Command -ComputerName _C_ {Echo Get-DriverSuiteVersion;Get-ChildItem HKLM:\SOFTWARE\Dell\MUP -Recurse | Get-ItemProperty}',
 				'Get-NetNeighbor -CimSession _C_',
 				'Get-VMNetworkAdapterIsolation -ManagementOS -CimSession _C_'
 
