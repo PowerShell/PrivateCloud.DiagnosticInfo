@@ -1993,7 +1993,7 @@ function Get-SddcDiagnosticInfo
             $JobStatic += start-job -Name "Nic Driver Suite Information: $node" {
                 try { $o =  Invoke-Command -ScriptBlock {Get-ChildItem -Recurse "HKLM:\SOFTWARE\Dell\MUP"} -ComputerName $using:node }
                 catch { Show-Warning "Unable to get Nic Driver Suite on $using:node." }
-                $o | Export-Clixml (Join-Path (Join-Path $using:Path "Node_$using:node") "DSUMUP.XML")
+                $o | select @{Label='Name';Expression={$_.name}},@{Label='Property';Expression={($_ | Get-ItemProperty -ErrorAction SilentlyContinue).'(default)'}} | Export-Clixml (Join-Path (Join-Path $using:Path "Node_$using:node") "DSUMUP.xml")
             }
         }
 
