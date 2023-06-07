@@ -2274,7 +2274,8 @@ function Get-SddcDiagnosticInfo
 				'Invoke-Command -ComputerName _C_ {Echo Get-mpioSettings;IF((Get-WindowsFeature -Name "Multipath-IO").Installed -eq "True"){Get-ItemProperty -path "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e97b-e325-11ce-bfc1-08002be10318}\000*"}}',
 				'Invoke-Command -ComputerName _C_ {Echo Get-MSDSMSupportedHW;IF((Get-WindowsFeature -Name "Multipath-IO").Installed -eq "True"){Get-MSDSMSupportedHW  -CimSession _C_}}',
 				'Invoke-Command -ComputerName _C_ {Echo Get-DriverSuiteVersion;Get-ChildItem HKLM:\SOFTWARE\Dell\MUP -Recurse | Get-ItemProperty}',
-				'Get-NetNeighbor -CimSession _C_',
+				'Invoke-Command -ComputerName _C_ {Echo Get-ChipsetVersion;Get-WmiObject win32_product | ? Name -like "*chipset*"}',
+                'Get-NetNeighbor -CimSession _C_',
 				'Get-VMNetworkAdapterIsolation -ManagementOS -CimSession _C_'
 
                 # These commands are specific to optional modules, add only if present
