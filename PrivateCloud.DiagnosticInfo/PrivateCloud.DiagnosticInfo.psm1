@@ -2275,6 +2275,7 @@ function Get-SddcDiagnosticInfo
 				'Invoke-Command -ComputerName _C_ {Echo Get-MSDSMSupportedHW;IF((Get-WindowsFeature -Name "Multipath-IO").Installed -eq "True"){Get-MSDSMSupportedHW  -CimSession _C_}}',
 				'Invoke-Command -ComputerName _C_ {Echo Get-DriverSuiteVersion;Get-ChildItem HKLM:\SOFTWARE\Dell\MUP -Recurse | Get-ItemProperty}',
 				'Invoke-Command -ComputerName _C_ {Echo Get-ChipsetVersion;Get-WmiObject win32_product | ? Name -like "*chipset*"}',
+                'Invoke-Command -ComputerName _C_ {Echo Get-ProcessByService;$aps=GPs;$r=@();$Ass=GWmi Win32_Service;foreach($p in $aps){$ss=$Ass|?{$_.ProcessID -eq $p.Id};IF($ss){$r+=[PSCustomObject]@{Service=$ss.DisplayName;ProcessName=$p.ProcessName;ProcessID=$p.Id}}}$r}',
                 'Get-NetNeighbor -CimSession _C_',
 				'Get-VMNetworkAdapterIsolation -ManagementOS -CimSession _C_'
 
@@ -3226,7 +3227,7 @@ function Get-SddcDiagnosticInfo
         } else {
 
             Show-Update "Get counter sets"
-            $set = Get-Counter -ListSet "Cluster Storage*","Cluster CSV*","Storage Spaces*","Refs","Cluster Disk Counters","PhysicalDisk","RDMA*","Mellanox*","Marvell*" -ComputerName $ClusterNodes.Name
+            $set = Get-Counter -ListSet "Cluster Storage*","Cluster CSV*","Storage Spaces*","Refs","Cluster Disk Counters","PhysicalDisk","RDMA*","Mellanox*","Marvell*","Hyper-V Hypervisor Virtual Processor" -ComputerName $ClusterNodes.Name
             Show-Update "Start monitoring ($($PerfSamples)s)"
             $PerfRaw = Get-Counter -Counter $set.Paths -SampleInterval 1 -MaxSamples $PerfSamples -ErrorAction Ignore -WarningAction Ignore
             Show-Update "Exporting counters"
