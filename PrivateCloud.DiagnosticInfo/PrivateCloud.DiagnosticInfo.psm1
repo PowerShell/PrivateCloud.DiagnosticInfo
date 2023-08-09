@@ -2815,8 +2815,9 @@ function Get-SddcDiagnosticInfo
 				Show-Warning("Unable to get AzureStack HCI info.  `nError="+$_.Exception.Message)
 			}
 			
-			
+	
 	    Show-Update "Start gather of Cluster Performance information..."
+	    IF(Get-ClusterPerf -CimSession $(Get-Cluster).name  -ErrorAction SilentlyContinue){     
 		#Added by JG
                 #try {
                     Show-Update "    Gathering Sample 1: CPU, I see you!"
@@ -3036,6 +3037,7 @@ function Get-SddcDiagnosticInfo
                     }
                     $Output | Sort-Object RawAvgMemoryUsage -Descending | Select-Object -First 10 | Export-Clixml ($Path + "Memoryhog.xml")
                 }catch { Show-Warning("Unable to get Memory hog Data.  `nError="+$_.Exception.Message) }
+	    }Else{Show-Update "    No Cluster Performance information found."}
                 
         }
 
