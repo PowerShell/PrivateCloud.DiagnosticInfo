@@ -1,4 +1,4 @@
-<###################################################
+﻿<###################################################
  #                                                 #
  #  Copyright (c) Microsoft. All rights reserved.  #
  #                                                 #
@@ -392,10 +392,8 @@ $CommonFuncBlock = {
                 $tepl = (Get-Date)
                 if ($QTime) {
                     wevtutil epl $p.LogName $EventFile /q:$QTime /ow:true
-                    #wevtutil epl $p.LogName $EventFile.Replace(".EVTX",".XML") /q:$QTime /ow:true
                 } else {
                     wevtutil epl $p.LogName $EventFile /ow:true
-                    #wevtutil epl $p.LogName $EventFile.Replace(".EVTX",".XML") /ow:true
                 }
                 $tepl = (Get-Date) - $tepl
 
@@ -1887,8 +1885,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterGroup -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
                 }
-                catch { #Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message)
-			 }
+                catch { Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
             }
 
             $JobStatic += start-job -Name ClusterNetwork {
@@ -1896,8 +1893,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterNetwork -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
                 }
-                catch { #Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message)
-			 }
+                catch { Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
             }	    
 
             $JobStatic += start-job -Name ClusterNetworkLiveMigrationInformation {
@@ -1905,8 +1901,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterResourceType -Name 'Virtual Machine' -Cluster $using:AccessNode | Get-ClusterParameter
                     $o | Export-Clixml ($using:Path + "ClusterNetworkLiveMigration.XML")
                 }
-                catch { #Show-Warning("Could not get Cluster Network Live Migration Information. `nError="+$_.Exception.Message) 
-			}
+                catch { Show-Warning("Could not get Cluster Network Live Migration Information. `nError="+$_.Exception.Message) }
             }	
 
             $JobStatic += start-job -Name ClusterResource {
@@ -1914,8 +1909,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterResource -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
                 }
-                catch { #Show-Warning("Unable to get Cluster Resources.  `nError="+$_.Exception.Message) 
-			}
+                catch { Show-Warning("Unable to get Cluster Resources.  `nError="+$_.Exception.Message) }
 
             }
 
@@ -1924,8 +1918,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
                     $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
                 }
-                catch { #Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) 
-			}
+                catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
             }
 
             $JobStatic += start-job -Name ClusterSharedVolume {
@@ -1933,8 +1926,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterSharedVolume -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
                 }
-                catch { #Show-Warning("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) 
-			}
+                catch { Show-Warning("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
 
             }
 	    
@@ -1945,26 +1937,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-NetIntentStatus -ClusterName $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetNetIntentStatus.XML")
                 }
-                catch { #Show-Warning("Unable to get NetIntentStatus.  `nError="+$_.Exception.Message) 
-			}
-
-            }
-	    $JobStatic += start-job -Name NetIntentStatusGlobalOverrides {
-                try {
-                    $o = Get-NetIntentStatus -GlobalOverrides -ClusterName $using:AccessNode
-                    $o | Export-Clixml ($using:Path + "GetNetIntentStatusGlobalOverrides.XML")
-                }
-                catch { #Show-Warning("Unable to get NetIntentStatus -GlobalOverrides.  `nError="+$_.Exception.Message) 
-                }
-
-            }	    
-            $JobStatic += start-job -Name NetIntent {
-                try {
-                    $o = Get-NetIntent -ClusterName $using:AccessNode
-                    $o | Export-Clixml ($using:Path + "GetNetIntent.XML")
-                }
-                catch { #Show-Warning("Unable to get NetIntent.  `nError="+$_.Exception.Message) 
-		    	}
+                catch { Show-Warning("Unable to get NetIntentStatus.  `nError="+$_.Exception.Message) }
 
             }
             $JobStatic += start-job -Name GetClusterFaultDomain {
@@ -1975,13 +1948,28 @@ function Get-SddcDiagnosticInfo
                 catch { #Show-Warning("Unable to get ClusterFaultDomain.  `nError="+$_.Exception.Message) 
 			    }
             }
+	    $JobStatic += start-job -Name NetIntentStatusGlobalOverrides {
+                try {
+                    $o = Get-NetIntentStatus -GlobalOverrides -ClusterName $using:AccessNode
+                    $o | Export-Clixml ($using:Path + "GetNetIntentStatusGlobalOverrides.XML")
+                }
+                catch { Show-Warning("Unable to get NetIntentStatus -GlobalOverrides.  `nError="+$_.Exception.Message) }
+
+            }	    
+            $JobStatic += start-job -Name NetIntent {
+                try {
+                    $o = Get-NetIntent -ClusterName $using:AccessNode
+                    $o | Export-Clixml ($using:Path + "GetNetIntent.XML")
+                }
+                catch { Show-Warning("Unable to get NetIntent.  `nError="+$_.Exception.Message) }
+
+            }
             $JobStatic += start-job -Name NetIntentGlobalOverrides {
                 try {
                     $o = Get-NetIntent -GlobalOverrides -ClusterName $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetNetIntentGlobalOverrides.XML")
                 }
-                catch { #Show-Warning("Unable to get NetIntent -GlobalOverrides.  `nError="+$_.Exception.Message) 
-	    		}
+                catch { Show-Warning("Unable to get NetIntent -GlobalOverrides.  `nError="+$_.Exception.Message) }
             }
         } else {
             Show-Update "... Skip gather of cluster configuration since cluster is not available"
@@ -1995,8 +1983,7 @@ function Get-SddcDiagnosticInfo
                 try {
                     Get-Clusterlog -ExportClusterPerformanceHistory -Destination $using:Path -PerformanceHistoryTimeFrame $using:PerformanceHistoryTimeFrame -Node $using:ClusterNodes.Name
                 }
-                catch { #Show-Warning("Could not get ClusterPerformanceHistory. `nError="+$_.Exception.Message) 
-			}
+                catch { Show-Warning("Could not get ClusterPerformanceHistory. `nError="+$_.Exception.Message) }
             }
         }
 
@@ -2008,8 +1995,7 @@ function Get-SddcDiagnosticInfo
 
             $JobStatic += start-job -Name "Driver Information: $node" {
                 try { $o = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node }
-                catch { #Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) 
-			}
+                catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
                 $o | Export-Clixml (Join-Path (Join-Path $using:Path "Node_$using:node") "GetDrivers.XML")
             }
         }
@@ -2236,13 +2222,11 @@ function Get-SddcDiagnosticInfo
                 #
                 # Gather SYSTEMINFO.EXE output for a given node
 			$SysInfoOut=(Join-Path (Get-NodePath $using:Path $using:NodeName) "SystemInfo.TXT")
-			Start-Process -FilePath "$env:comspec" -ArgumentList "/c SystemInfo.exe /S $using:NodeName > $SysInfoOut" -WindowStyle Hidden # -Wait
+			Start-Process -FilePath "$env:comspec" -ArgumentList "/c SystemInfo.exe /S $using:NodeName > $SysInfoOut" -WindowStyle Hidden -Wait
 		
 		# Gather MSINFO32.EXE output for a given node
 			#$MSINFO32Out=(Join-Path (Get-NodePath $using:Path $using:NodeName) "MSINFO32.NFO")
 			#Start-Process -FilePath "$env:comspec" -ArgumentList "/c MSINFO32.exe /nfo $MSINFO32Out /Computer $using:NodeName" -WindowStyle Hidden -Wait
-		$LocalFileMsInfo = (Join-Path $LocalNodeDir "\msinfo.nfo")
-		Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computer $using:NodeName /nfo $LocalFileMsInfo" # -Wait
 
                 # Cmdlets to drop in TXT and XML forms
                 #
@@ -2302,7 +2286,6 @@ function Get-SddcDiagnosticInfo
                 'Invoke-Command -ComputerName _C_ {Echo Get-ProcessByService;$aps=GPs;$r=@();$Ass=GWmi Win32_Service;foreach($p in $aps){$ss=$Ass|?{$_.ProcessID -eq $p.Id};IF($ss){$r+=[PSCustomObject]@{Service=$ss.DisplayName;ProcessName=$p.ProcessName;ProcessID=$p.Id}}}$r}',
                 'Get-NetNeighbor -CimSession _C_',
 				'Get-VMNetworkAdapterIsolation -ManagementOS -CimSession _C_'
-                #[System.DirectoryServices.ActiveDirectory.ActiveDirectorySite]::GetComputerSite()
 
                 # These commands are specific to optional modules, add only if present
                 #   - DcbQos: RoCE environments primarily
@@ -2336,7 +2319,6 @@ function Get-SddcDiagnosticInfo
 			$CmdsToLog += "Get-AzureStackHCIArcIntegration"
 		}
 		
-                $nodejobs=@()
                 foreach ($cmd in $CmdsToLog) {
 
                     # truncate cmd string to the cmd itself
@@ -2344,20 +2326,20 @@ function Get-SddcDiagnosticInfo
                     try {
 
                         $cmdex = $cmd -replace '_C_',$using:NodeName -replace '_N_',$using:NodeName -replace '_A_',$using:AccessNode
-			$cmdsb = [scriptblock]::Create("$cmdex")
-                        $nodejobs+=Start-Job -Name $LocalFile -ScriptBlock $cmdsb
-                        #$out = Invoke-Expression $cmdex
+                        $out = Invoke-Expression $cmdex
 
                         # capture as txt and xml for quick analysis according to taste
-                        #$out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
-                        #$out | Export-Clixml -Path "$LocalFile.xml"
+                        $out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
+                        $out | Export-Clixml -Path "$LocalFile.xml"
 
-                    } catch {}
+                    } catch {
+                        Show-Warning "'$cmdex' failed for node $Node ($($_.Exception.Message))"
+                    }
                 }
 
-
-
 		#Add MSInfo32
+		$LocalFile = (Join-Path $LocalNodeDir "\msinfo.nfo")
+		Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computer $using:NodeName /nfo $LocalFile" -Wait
 
                 $NodeSystemRootPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { $env:SystemRoot }
 
@@ -2426,28 +2408,6 @@ function Get-SddcDiagnosticInfo
                         catch { Show-Warning "Could not copy report file $($_.FullName)" }
                     }
                 }
-                Do {
-                    Sleep 1
-                    Foreach ($myjob in ($nodejobs | ? Name -notmatch "JOBDONE" | ? State -eq "Completed")) {
-			$LocalFile=$myJob.Name
-                        $out = Receive-Job $myjob
-
-                        # capture as txt and xml for quick analysis according to taste
-                        $out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
-                        $out | Export-Clixml -Path "$LocalFile.xml"
-                        $myjob.Name=$myjob.Name+":JOBDONE"
-			$myjob.Dispose()
-                    }
-                    $nodejobs | fl * | Out-File -FilePath (Join-Path $LocalNodeDir "GetNodeJobsStatus.txt")
-
-                } while ($nodejobs.State -contains "Running")
-		$FailedJobs=@()
-                Foreach ($myjob in ($nodejobs | ? State -ne "Completed")) {
-		    $FailedJobs+=$myjob
-                    #Show-Warning "'$myjob' failed for node $Node ($(Receive-Job $myjob))"
-                }
-		$FailedJobs | fl * | Out-File -FilePath (Join-Path $LocalNodeDir "GetNodeJobsStatus.txt")
-                $nodejobs | Remove-Job
             }
         }
 
@@ -2851,23 +2811,33 @@ function Get-SddcDiagnosticInfo
             } catch {
                 Show-Warning "Gathering S2D connectivity failed"
             }
-			Show-Update "Cluster Advanced Performance History"
-
-            try {
-                $JobStatic += start-job -Name "Cluster Advanced Performance History" {
-                #Added by JG
+			
+			Show-Update "AzureStack HCI info"
+			#Added by JG
+			try {
+				If ((Get-WmiObject -Class Win32_OperatingSystem).Caption -imatch "HCI"){
+					Get-AzureStackHCI| Export-Clixml ($Path + "GetAzureStackHCI.xml")
+					Get-AzureStackHCIArcIntegration| Export-Clixml ($Path + "AzureStackHCIArcIntegration.xml")
+				}
+			} catch {
+				Show-Warning("Unable to get AzureStack HCI info.  `nError="+$_.Exception.Message)
+			}
+			
+			
+	    Show-Update "Start gather of Cluster Performance information..."
+		#Added by JG
                 #try {
-                    #Show-Update "    Gathering Sample 1: CPU, I see you!"
+                    Show-Update "    Gathering Sample 1: CPU, I see you!"
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-1-cpu-i-see-you
                     $Output =""
                     $Output = $ClusterNodes | ForEach-Object {
                         $_ | Get-ClusterPerf -ClusterNodeSeriesName "ClusterNode.Cpu.Usage" -TimeFrame "LastWeek"  -ErrorAction SilentlyContinue 
                     }
-                    $Output | Sort-Object ClusterNode | Export-Clixml ($using:Path + "CPUIseeyou.xml")
+                    $Output | Sort-Object ClusterNode | Export-Clixml ($Path + "CPUIseeyou.xml")
                 #}catch { Show-Warning("Unable to get CPU, I see you Data.  `nError="+$_.Exception.Message) }
 		
                 try {
-                    #Show-Update "    Gathering Sample 2: Fire, fire, latency outlier"
+                    Show-Update "    Gathering Sample 2: Fire, fire, latency outlier"
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-2-fire-fire-latency-outlier
                  
                     $Cluster = Get-cluster
@@ -2946,11 +2916,10 @@ function Get-SddcDiagnosticInfo
 						
 						$Output
                     }
-                    $o | Sort-Object PsComputerName | Export-Clixml ($using:Path + "latencyoutlier.xml")
-                } catch { #Show-Warning("Unable to get latency outlier Data.  `nError="+$_.Exception.Message) 
-                        }
+                    $o | Sort-Object PsComputerName | Export-Clixml ($Path + "latencyoutlier.xml")
+                } catch { Show-Warning("Unable to get latency outlier Data.  `nError="+$_.Exception.Message) }
                 try {
-                    #Show-Update "    Gathering Sample 3: Noisy neighbor? That's write!"
+                    Show-Update "    Gathering Sample 3: Noisy neighbor? That's write!"
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-3-noisy-neighbor-thats-write
                     $Cluster = Get-cluster
                     $ClusterNodes = Get-ClusterNode -Cluster $Cluster -ErrorAction SilentlyContinue
@@ -2984,11 +2953,10 @@ function Get-SddcDiagnosticInfo
 
                     $o | Sort-Object RawIopsTotal -Descending | Select-Object -First 10 | Export-Clixml ($Path + "Noisyneighbor.xml")
                 }
-                catch { #Show-Warning("Unable to get Noisy neighbor Data.  `nError="+$_.Exception.Message) 
-                        }
+                catch { Show-Warning("Unable to get Noisy neighbor Data.  `nError="+$_.Exception.Message) }
 		
 		try {
-                    #Show-Update "    Gathering Sample 4: As they say, 25-gig is the new 10-gig"
+                    Show-Update "    Gathering Sample 4: As they say, 25-gig is the new 10-gig"
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-4-as-they-say-25-gig-is-the-new-10-gig
 		    $Cluster = Get-cluster
                     $ClusterNodes = Get-ClusterNode -Cluster $Cluster -ErrorAction SilentlyContinue
@@ -3038,20 +3006,18 @@ function Get-SddcDiagnosticInfo
                         }
                     }
 
-                    $o | Sort-Object PsComputerName, InterfaceDescription | Export-Clixml ($using:Path + "25gigisthenew10gig.xml")
+                    $o | Sort-Object PsComputerName, InterfaceDescription | Export-Clixml ($Path + "25gigisthenew10gig.xml")
                 }
-                catch { #Show-Warning("Unable to get 25gigisthenew10gig Data.  `nError="+$_.Exception.Message) 
-                        }
+                catch { Show-Warning("Unable to get 25gigisthenew10gig Data.  `nError="+$_.Exception.Message) }
                 
 		try {
-                    #Show-Update "    Gathering Sample 5: Make storage trendy again!"
+                    Show-Update "    Gathering Sample 5: Make storage trendy again!"
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-6-memory-hog-you-can-run-but-you-cant-hide
-					Get-Volume | Where-Object FileSystem -Like "*CSV*" | %{$_ | Get-ClusterPerf -VolumeSeriesName "Volume.Size.Available" -TimeFrame "LastYear" | Sort-Object Time | Select-Object -Last 14} | Sort-Object ClusterNode | Export-Clixml ($using:Path + "trendyagain.xml")
-                }catch { #Show-Warning("Unable to get Make storage trendy again! Data.  `nError="+$_.Exception.Message) 
-                            }
+					Get-Volume | Where-Object FileSystem -Like "*CSV*" | %{$_ | Get-ClusterPerf -VolumeSeriesName "Volume.Size.Available" -TimeFrame "LastYear" | Sort-Object Time | Select-Object -Last 14} | Sort-Object ClusterNode | Export-Clixml ($Path + "trendyagain.xml")
+                }catch { Show-Warning("Unable to get Make storage trendy again! Data.  `nError="+$_.Exception.Message) }
                 
 		try {
-                    #Show-Update "    Gathering Sample 6: Memory hog, you can run but you can't hide"
+                    Show-Update "    Gathering Sample 6: Memory hog, you can run but you can't hide"
                     #Ref: https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/performance-history-scripting#sample-6-memory-hog-you-can-run-but-you-cant-hide
                     $Output = Invoke-Command (Get-ClusterNode).Name {
                         Function Format-Bytes {
@@ -3076,31 +3042,10 @@ function Get-SddcDiagnosticInfo
                             }
                         }
                     }
-                    $Output | Sort-Object RawAvgMemoryUsage -Descending | Select-Object -First 10 | Export-Clixml ($using:Path + "Memoryhog.xml")
-                }catch { #Show-Warning("Unable to get Memory hog Data.  `nError="+$_.Exception.Message) 
-                        }
-                }
-
+                    $Output | Sort-Object RawAvgMemoryUsage -Descending | Select-Object -First 10 | Export-Clixml ($Path + "Memoryhog.xml")
+                }catch { Show-Warning("Unable to get Memory hog Data.  `nError="+$_.Exception.Message) }
                 
-            } catch {
-                Show-Warning "Gathering Cluster Performance History failed"
-            }
-            }
-			Show-Update "AzureStack HCI info"
-			#Added by JG
-			try {
-				If ((Get-WmiObject -Class Win32_OperatingSystem).Caption -imatch "HCI"){
-					Get-AzureStackHCI| Export-Clixml ($Path + "GetAzureStackHCI.xml")
-					Get-AzureStackHCIArcIntegration| Export-Clixml ($Path + "AzureStackHCIArcIntegration.xml")
-				}
-			} catch {
-				Show-Warning("Unable to get AzureStack HCI info.  `nError="+$_.Exception.Message)
-			}
-			
-			
-	    Show-Update "Start gather of Cluster Performance information..."
-		
-        
+        }
 
         ####
         # Now receive the jobs requiring remote copyout
@@ -3137,9 +3082,8 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Completing background gathers ..." -ForegroundColor Green
         Show-WaitChildJob $JobStatic 30
-	    $JobStatic | ? Name -ne "Cluster Advanced Performance History" | Receive-Job
+        Receive-Job $JobStatic
         Remove-Job $JobStatic
-
 
         if (Get-Member -InputObject $JobStatic ActiveSessions)
         {
