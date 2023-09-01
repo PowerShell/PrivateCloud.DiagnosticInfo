@@ -2851,10 +2851,10 @@ function Get-SddcDiagnosticInfo
             } catch {
                 Show-Warning "Gathering S2D connectivity failed"
             }
-			Show-Update "Cluster Performance History"
+			Show-Update "Cluster Advanced Performance History"
 
             try {
-                $JobStatic += start-job -Name "Cluster Performance History" {
+                $JobStatic += start-job -Name "Cluster Advanced Performance History" {
                 #Added by JG
                 #try {
                     #Show-Update "    Gathering Sample 1: CPU, I see you!"
@@ -3137,8 +3137,9 @@ function Get-SddcDiagnosticInfo
 
         Show-Update "Completing background gathers ..." -ForegroundColor Green
         Show-WaitChildJob $JobStatic 30
-        Receive-Job $JobStatic
+	    $JobStatic | ? Name -ne "Cluster Advanced Performance History" | Receive-Job
         Remove-Job $JobStatic
+
 
         if (Get-Member -InputObject $JobStatic ActiveSessions)
         {
