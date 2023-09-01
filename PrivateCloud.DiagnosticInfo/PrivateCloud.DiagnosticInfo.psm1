@@ -392,8 +392,10 @@ $CommonFuncBlock = {
                 $tepl = (Get-Date)
                 if ($QTime) {
                     wevtutil epl $p.LogName $EventFile /q:$QTime /ow:true
+                    #wevtutil epl $p.LogName $EventFile.Replace(".EVTX",".XML") /q:$QTime /ow:true
                 } else {
                     wevtutil epl $p.LogName $EventFile /ow:true
+                    #wevtutil epl $p.LogName $EventFile.Replace(".EVTX",".XML") /ow:true
                 }
                 $tepl = (Get-Date) - $tepl
 
@@ -1956,6 +1958,13 @@ function Get-SddcDiagnosticInfo
                 catch { Show-Warning("Unable to get NetIntent.  `nError="+$_.Exception.Message) }
 
             }
+            $JobStatic += start-job -Name GetClusterFaultDomain {
+                try {
+                    $o = Get-ClusterFaultDomain | ft
+                    $o | Export-Clixml ($using:Path + "GetClusterFaultDomain.XML")
+                }
+                catch { Show-Warning("Unable to get ClusterFaultDomain.  `nError="+$_.Exception.Message) }
+            }
             $JobStatic += start-job -Name NetIntentGlobalOverrides {
                 try {
                     $o = Get-NetIntent -GlobalOverrides -ClusterName $using:AccessNode
@@ -2214,11 +2223,13 @@ function Get-SddcDiagnosticInfo
                 #
                 # Gather SYSTEMINFO.EXE output for a given node
 			$SysInfoOut=(Join-Path (Get-NodePath $using:Path $using:NodeName) "SystemInfo.TXT")
-			Start-Process -FilePath "$env:comspec" -ArgumentList "/c SystemInfo.exe /S $using:NodeName > $SysInfoOut" -WindowStyle Hidden -Wait
+			Start-Process -FilePath "$env:comspec" -ArgumentList "/c SystemInfo.exe /S $using:NodeName > $SysInfoOut" -WindowStyle Hidden # -Wait
 		
 		# Gather MSINFO32.EXE output for a given node
 			#$MSINFO32Out=(Join-Path (Get-NodePath $using:Path $using:NodeName) "MSINFO32.NFO")
 			#Start-Process -FilePath "$env:comspec" -ArgumentList "/c MSINFO32.exe /nfo $MSINFO32Out /Computer $using:NodeName" -WindowStyle Hidden -Wait
+		$LocalFileMsInfo = (Join-Path $LocalNodeDir "\msinfo.nfo")
+		Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computer $using:NodeName /nfo $LocalFileMsInfo" # -Wait
 
                 # Cmdlets to drop in TXT and XML forms
                 #
@@ -2276,9 +2287,9 @@ function Get-SddcDiagnosticInfo
 				'Invoke-Command -ComputerName _C_ {Echo Get-DriverSuiteVersion;Get-ChildItem HKLM:\SOFTWARE\Dell\MUP -Recurse | Get-ItemProperty}',
 				'Invoke-Command -ComputerName _C_ {Echo Get-ChipsetVersion;Get-WmiObject win32_product | ? Name -like "*chipset*"}',
                 'Invoke-Command -ComputerName _C_ {Echo Get-ProcessByService;$aps=GPs;$r=@();$Ass=GWmi Win32_Service;foreach($p in $aps){$ss=$Ass|?{$_.ProcessID -eq $p.Id};IF($ss){$r+=[PSCustomObject]@{Service=$ss.DisplayName;ProcessName=$p.ProcessName;ProcessID=$p.Id}}}$r}',
-                'Invoke-Command -ComputerName _C_ {Echo Get-ClusterFaultDomain;Get-ClusterFaultDomain}',
                 'Get-NetNeighbor -CimSession _C_',
 				'Get-VMNetworkAdapterIsolation -ManagementOS -CimSession _C_'
+                #[System.DirectoryServices.ActiveDirectory.ActiveDirectorySite]::GetComputerSite()
 
                 # These commands are specific to optional modules, add only if present
                 #   - DcbQos: RoCE environments primarily
@@ -2312,6 +2323,7 @@ function Get-SddcDiagnosticInfo
 			$CmdsToLog += "Get-AzureStackHCIArcIntegration"
 		}
 		
+                $nodejobs=@()
                 foreach ($cmd in $CmdsToLog) {
 
                     # truncate cmd string to the cmd itself
@@ -2319,20 +2331,20 @@ function Get-SddcDiagnosticInfo
                     try {
 
                         $cmdex = $cmd -replace '_C_',$using:NodeName -replace '_N_',$using:NodeName -replace '_A_',$using:AccessNode
-                        $out = Invoke-Expression $cmdex
+			$cmdsb = [scriptblock]::Create("$cmdex")
+                        $nodejobs+=Start-Job -Name $LocalFile -ScriptBlock $cmdsb
+                        #$out = Invoke-Expression $cmdex
 
                         # capture as txt and xml for quick analysis according to taste
-                        $out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
-                        $out | Export-Clixml -Path "$LocalFile.xml"
+                        #$out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
+                        #$out | Export-Clixml -Path "$LocalFile.xml"
 
-                    } catch {
-                        Show-Warning "'$cmdex' failed for node $Node ($($_.Exception.Message))"
-                    }
+                    } catch {}
                 }
 
+
+
 		#Add MSInfo32
-		$LocalFile = (Join-Path $LocalNodeDir "\msinfo.nfo")
-		Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computer $using:NodeName /nfo $LocalFile" -Wait
 
                 $NodeSystemRootPath = Invoke-Command -ComputerName $using:NodeName -ConfigurationName $using:SessionConfigurationName { $env:SystemRoot }
 
@@ -2401,6 +2413,25 @@ function Get-SddcDiagnosticInfo
                         catch { Show-Warning "Could not copy report file $($_.FullName)" }
                     }
                 }
+                Do {
+                    Sleep 1
+                    Foreach ($myjob in ($nodejobs | ? Name -notmatch "JOBDONE" | ? State -eq "Completed")) {
+			$LocalFile=$myJob.Name
+                        $out = Receive-Job $myjob
+
+                        # capture as txt and xml for quick analysis according to taste
+                        $out | ft -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath "$LocalFile.txt"
+                        $out | Export-Clixml -Path "$LocalFile.xml"
+                        $myjob.Name=$myjob.Name+":JOBDONE"
+			$myjob.Dispose()
+                    }
+                    $nodejobs | fl * | Out-File -FilePath (Join-Path $LocalNodeDir "NodeJobsStatus.txt")
+
+                } while ($nodejobs.State -contains "Running")
+                Foreach ($myjob in ($nodejobs | State -ne "Completed")) {
+                    Show-Warning "'$myjob' failed for node $Node ($(Receive-Job $myjob))"
+                }
+                $nodejobs | Remove-Job
             }
         }
 
