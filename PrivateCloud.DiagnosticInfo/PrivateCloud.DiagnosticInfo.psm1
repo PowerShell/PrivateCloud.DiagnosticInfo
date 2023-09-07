@@ -1885,7 +1885,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterGroup -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterGroup.XML")
                 }
-                catch { Show-Warning("Unable to get Cluster Groups. `nError="+$_.Exception.Message) }
+                catch { Write-Warning "Unable to get Cluster Groups. `nError=$($_.Exception.Message)" }
             }
 
             $JobStatic += start-job -Name ClusterNetwork {
@@ -1893,7 +1893,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterNetwork -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterNetwork.XML")
                 }
-                catch { Show-Warning("Could not get Cluster Nodes. `nError="+$_.Exception.Message) }
+                catch { Write-Warning "Could not get Cluster Nodes. `nError=$($_.Exception.Message)" }
             }	    
 
             $JobStatic += start-job -Name ClusterNetworkLiveMigrationInformation {
@@ -1901,7 +1901,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterResourceType -Name 'Virtual Machine' -Cluster $using:AccessNode | Get-ClusterParameter
                     $o | Export-Clixml ($using:Path + "ClusterNetworkLiveMigration.XML")
                 }
-                catch { Show-Warning("Could not get Cluster Network Live Migration Information. `nError="+$_.Exception.Message) }
+                catch { Write-Warning "Could not get Cluster Network Live Migration Information. `nError=$($_.Exception.Message)" }
             }	
 
             $JobStatic += start-job -Name ClusterResource {
@@ -1909,7 +1909,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterResource -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterResource.XML")
                 }
-                catch { Show-Warning("Unable to get Cluster Resources.  `nError="+$_.Exception.Message) }
+                catch { Write-Warning "Unable to get Cluster Resources.  `nError=$($_.Exception.Message)" }
 
             }
 
@@ -1918,7 +1918,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterResource -Cluster $using:AccessNode | Get-ClusterParameter
                     $o | Export-Clixml ($using:Path + "GetClusterResourceParameters.XML")
                 }
-                catch { Show-Warning("Unable to get Cluster Resource Parameters.  `nError="+$_.Exception.Message) }
+                catch { Write-Warning "Unable to get Cluster Resource Parameters.  `nError=$($_.Exception.Message)" }
             }
 
             $JobStatic += start-job -Name ClusterSharedVolume {
@@ -1926,18 +1926,7 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterSharedVolume -Cluster $using:AccessNode
                     $o | Export-Clixml ($using:Path + "GetClusterSharedVolume.XML")
                 }
-                catch { Show-Warning("Unable to get Cluster Shared Volumes.  `nError="+$_.Exception.Message) }
-
-            }
-	    
-	    Show-Update "Start gather of Network ATC information..."
-	    
-            $JobStatic += start-job -Name NetIntentStatus {
-                try {
-                    $o = Get-NetIntentStatus -ClusterName $using:AccessNode
-                    $o | Export-Clixml ($using:Path + "GetNetIntentStatus.XML")
-                }
-                catch { Show-Warning("Unable to get NetIntentStatus.  `nError="+$_.Exception.Message) }
+                catch { Write-Warning "Unable to get Cluster Shared Volumes.  `nError=$($_.Exception.Message)" }
 
             }
             $JobStatic += start-job -Name GetClusterFaultDomain {
@@ -1945,36 +1934,47 @@ function Get-SddcDiagnosticInfo
                     $o = Get-ClusterFaultDomain | select name,type,parentname,childrennames,location
                     $o | Export-Clixml ($using:Path + "GetClusterFaultDomain.XML")
                 }
-                catch { #Show-Warning("Unable to get ClusterFaultDomain.  `nError="+$_.Exception.Message) 
-			    }
+                catch { Write-Warning "Unable to get ClusterFaultDomain.  `nError=$($_.Exception.Message)" }
             }
-	    $JobStatic += start-job -Name NetIntentStatusGlobalOverrides {
-                try {
-                    $o = Get-NetIntentStatus -GlobalOverrides -ClusterName $using:AccessNode
-                    $o | Export-Clixml ($using:Path + "GetNetIntentStatusGlobalOverrides.XML")
-                }
-                catch { Show-Warning("Unable to get NetIntentStatus -GlobalOverrides.  `nError="+$_.Exception.Message) }
+	    
+	        if ((Get-WindowsFeature NetworkATC).installed) {
+               Show-Update "Start gather of Network ATC information..."
+	    
+               $JobStatic += start-job -Name NetIntentStatus {
+                   try {
+                       $o = Get-NetIntentStatus -ClusterName $using:AccessNode
+                       $o | Export-Clixml ($using:Path + "GetNetIntentStatus.XML")
+                   }
+                   catch { Write-Warning "Unable to get NetIntentStatus.  `nError=$($_.Exception.Message)" }
+                      
+               }
+ 	           $JobStatic += start-job -Name NetIntentStatusGlobalOverrides {
+                   try {
+                       $o = Get-NetIntentStatus -GlobalOverrides -ClusterName $using:AccessNode
+                       $o | Export-Clixml ($using:Path + "GetNetIntentStatusGlobalOverrides.XML")
+                   }
+                   catch { Write-Warning "Unable to get NetIntentStatus -GlobalOverrides.  `nError=$($_.Exception.Message)" }
+                      
+               }	       
+               $JobStatic += start-job -Name NetIntent {
+                   try {
+                       $o = Get-NetIntent -ClusterName $using:AccessNode
+                       $o | Export-Clixml ($using:Path + "GetNetIntent.XML")
+                   }
+                   catch { Write-Warning "Unable to get NetIntent.  `nError=$($_.Exception.Message)" }
 
-            }	    
-            $JobStatic += start-job -Name NetIntent {
-                try {
-                    $o = Get-NetIntent -ClusterName $using:AccessNode
-                    $o | Export-Clixml ($using:Path + "GetNetIntent.XML")
-                }
-                catch { Show-Warning("Unable to get NetIntent.  `nError="+$_.Exception.Message) }
-
-            }
-            $JobStatic += start-job -Name NetIntentGlobalOverrides {
-                try {
-                    $o = Get-NetIntent -GlobalOverrides -ClusterName $using:AccessNode
-                    $o | Export-Clixml ($using:Path + "GetNetIntentGlobalOverrides.XML")
-                }
-                catch { Show-Warning("Unable to get NetIntent -GlobalOverrides.  `nError="+$_.Exception.Message) }
-            }
-        } else {
+               }
+               $JobStatic += start-job -Name NetIntentGlobalOverrides {
+                   try {
+                       $o = Get-NetIntent -GlobalOverrides -ClusterName $using:AccessNode
+                       $o | Export-Clixml ($using:Path + "GetNetIntentGlobalOverrides.XML")
+                   }
+                   catch { Write-Warning "Unable to get NetIntent -GlobalOverrides.  `nError=$($_.Exception.Message)" }
+               }
+           }} else {
             Show-Update "... Skip gather of cluster configuration since cluster is not available"
         }
-
+        
         if ($IncludeClusterPerformanceHistory) {
 
             Show-Update "Starting ClusterPerformanceHistory log collection ..."
@@ -1983,7 +1983,7 @@ function Get-SddcDiagnosticInfo
                 try {
                     Get-Clusterlog -ExportClusterPerformanceHistory -Destination $using:Path -PerformanceHistoryTimeFrame $using:PerformanceHistoryTimeFrame -Node $using:ClusterNodes.Name
                 }
-                catch { Show-Warning("Could not get ClusterPerformanceHistory. `nError="+$_.Exception.Message) }
+                catch { Write-Warning "Could not get ClusterPerformanceHistory. `nError=$($_.Exception.Message)" }
             }
         }
 
@@ -1995,7 +1995,7 @@ function Get-SddcDiagnosticInfo
 
             $JobStatic += start-job -Name "Driver Information: $node" {
                 try { $o = Get-CimInstance -ClassName Win32_PnPSignedDriver -ComputerName $using:node }
-                catch { Show-Error("Unable to get Drivers on $using:node. `nError="+$_.Exception.Message) }
+                catch { Write-Error "Unable to get Drivers on $using:node. `nError=$($_.Exception.Message)" }
                 $o | Export-Clixml (Join-Path (Join-Path $using:Path "Node_$using:node") "GetDrivers.XML")
             }
         }
