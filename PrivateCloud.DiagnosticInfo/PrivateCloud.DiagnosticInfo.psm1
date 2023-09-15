@@ -1936,8 +1936,9 @@ function Get-SddcDiagnosticInfo
                 }
                 catch { Write-Warning "Unable to get ClusterFaultDomain.  `nError=$($_.Exception.Message)" }
             }
-	    
-	        if ((Get-WindowsFeature NetworkATC).installed) {
+	        $NetworkATC=$False
+            $NetworkATC=try {(Get-WindowsFeature NetworkATC).installed} catch {$False}
+	        if ($NetworkATC) {
                Show-Update "Start gather of Network ATC information..."
 	    
                $JobStatic += start-job -Name NetIntentStatus {
@@ -3237,7 +3238,7 @@ function Get-SddcDiagnosticInfo
         } else {
 
             Show-Update "Get counter sets"
-            $set = Get-Counter -ListSet "Cluster Storage*","Cluster CSV*","Storage Spaces*","Refs","Cluster Disk Counters","PhysicalDisk","RDMA*","Mellanox*","Marvell*","Hyper-V Hypervisor Virtual Processor" -ComputerName $ClusterNodes.Name -ErrorAction SilentlyContinue
+            $set = Get-Counter -ListSet "Cluster Storage*","Cluster CSV*","Storage Spaces*","Refs","Cluster Disk Counters","PhysicalDisk","RDMA*","Mellanox*","Marvell*","Hyper-V Hypervisor Virtual Processor","Hyper-V Hypervisor Logical Processor","Hyper-V Hypervisor Root Virtual Processor" -ComputerName $ClusterNodes.Name -ErrorAction SilentlyContinue
             Show-Update "Start monitoring ($($PerfSamples)s)"
             $PerfRaw = Get-Counter -Counter $set.Paths -SampleInterval 1 -MaxSamples $PerfSamples -ErrorAction Ignore -WarningAction Ignore
             Show-Update "Exporting counters"
