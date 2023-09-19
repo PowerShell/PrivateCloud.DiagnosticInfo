@@ -2886,7 +2886,7 @@ function Get-SddcDiagnosticInfo
 							Param (
 								$RawValue
 							)
-							$i = 0 ; $Labels = ("s", "ms", "μs", "ns") # Petabits, just in case!
+							$i = 0 ; $Labels = ("s", "ms", "Î¼s", "ns") # Petabits, just in case!
 							Do { $RawValue *= 1000 ; $i++ } While ( $RawValue -Lt 1 )
 							# Return
 							[String][Math]::Round($RawValue, 2) + " " + $Labels[$i]
