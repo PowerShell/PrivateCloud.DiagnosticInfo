@@ -2246,7 +2246,7 @@ Start-Process -FilePath "$env:comspec" -ArgumentList "/c SystemInfo.exe /S $usin
 #$MSINFO32Out=(Join-Path (Get-NodePath $using:Path $using:NodeName) "MSINFO32.NFO")
 #Start-Process -FilePath "$env:comspec" -ArgumentList "/c MSINFO32.exe /nfo $MSINFO32Out /Computer $using:NodeName" -WindowStyle Hidden -Wait
 $LocalFileMsInfo = (Join-Path $LocalNodeDir "\msinfo.nfo")
-Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computer $using:NodeName /nfo $LocalFileMsInfo" # -Wait
+$msinfo=Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computer $using:NodeName /nfo $LocalFileMsInfo" -PassThru # -Wait
 
                 # Cmdlets to drop in TXT and XML forms
                 #
@@ -2455,6 +2455,7 @@ $RepFiles |% {
                     
 
                 }
+                While (-not ($msinfo.HasExited)) {Sleep -Milliseconds 100}
 
             }
         }
