@@ -2455,7 +2455,7 @@ $RepFiles |% {
                     
 
                 }
-                While (-not ($msinfo.HasExited)) {Sleep -Milliseconds 100}
+                While ((Get-Process msinfo32 -ErrorAction SilentlyContinue).count) {Sleep -Milliseconds 100}
 
             }
         }
@@ -3528,7 +3528,7 @@ Get-Counter -Counter ($using:set).Paths -SampleInterval 1 -MaxSamples $using:Per
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
 
     } catch {
-        Show-Error "$($Error[0])"
+        Show-Warning "Error=$($_.Exception.Message)"
         Show-Error "Error creating the ZIP file!`nContent remains available at $Path"
     }
 
