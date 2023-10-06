@@ -3528,7 +3528,8 @@ Get-Counter -Counter ($using:set).Paths -SampleInterval 1 -MaxSamples $using:Per
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
 
     } catch {
-        Show-Error "Error creating the ZIP file!`nContent remains available at $Path" $Error[1]
+        Show-Error "$($Error[0])"
+        Show-Error "Error creating the ZIP file!`nContent remains available at $Path"
     }
 
     Show-Update "Cleaning up CimSessions"
