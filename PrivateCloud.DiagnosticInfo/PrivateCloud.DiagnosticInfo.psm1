@@ -2881,7 +2881,6 @@ Show-Update "Cluster Performance History"
                     $Cluster = Get-cluster
                     $ClusterNodes = Get-ClusterNode -Cluster $Cluster -ErrorAction SilentlyContinue
                     $o = Invoke-Command $ClusterNodes.Name {
-
 Function Format-Latency {
 Param (
 $RawValue
@@ -2909,6 +2908,7 @@ $Sign + [String][Math]::Round([Math]::Abs($RawValue), 2)
 $HDD = Get-StorageNode | ?{$ENV:COMPUTERNAME -imatch ($_.name -split '\.')[0]} | Get-PhysicalDisk  -PhysicallyConnected
 
 $Output = $HDD | ForEach-Object {
+
 
                         $Iops = $_ | Get-ClusterPerf -PhysicalDiskSeriesName "PhysicalDisk.Iops.Total" -TimeFrame "LastWeek"
                         $AvgIops = ($Iops | Measure-Object -Property Value -Average).Average
