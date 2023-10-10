@@ -2455,7 +2455,7 @@ $RepFiles |% {
                     
 
                 }
-                While ((Get-Process msinfo32 -ErrorAction SilentlyContinue).count) {Sleep -Milliseconds 100}
+                While ($msinfo.HasExited -ne $True) {Sleep -Milliseconds 100}
 
             }
         }
