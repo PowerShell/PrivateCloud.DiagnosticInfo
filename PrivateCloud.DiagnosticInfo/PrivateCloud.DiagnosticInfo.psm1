@@ -166,6 +166,7 @@ $CommonFuncBlock = {
                 $t = get-date
                 $j |? State -eq Running |% {
                     $job_running += "Running: $($jobname) [$($_.Name) $($_.Location)]: $(TimespanToString ($t - $_.PSBeginTime)) : Start $($_.PSBeginTime.ToString('s'))"
+                    if (($t - $_.PSBeginTime).TotalMinutes -gt 60) {Stop-Job -Name "$($_.Name)";Write-Host "Job $($_.Name) exceeded time limit" -ForegroundColor Yellow}
                 }
             }
         }
