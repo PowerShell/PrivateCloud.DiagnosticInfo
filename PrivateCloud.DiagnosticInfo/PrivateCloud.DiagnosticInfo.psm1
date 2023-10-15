@@ -1166,10 +1166,6 @@ Null if default configuration is to be used.
 
 function Get-SddcDiagnosticInfo
 {
-    #check for Administrator
-    If (-not (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))) {
-        Write-Error "Please run this function as an administrator";exit
-    }
     # aliases usage in this module is idiomatic, only using defaults
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
 
@@ -1625,6 +1621,11 @@ function Get-SddcDiagnosticInfo
         @{Expression={"{0:N2}" -f ($_.SizeRemaining/$_.Size*100)};Label="Avail%";Width=11;Align="Right"}
 
         StartMonitoring
+    }
+
+    #check for Administrator
+    If (-not (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))) {
+        Write-Error "Please run this function as an administrator";exit
     }
 
     if ($MonitoringMode) {
