@@ -1,3 +1,4 @@
+#Requires -RunAsAdministrator
 <###################################################
  #                                                 #
  #  Copyright (c) Microsoft. All rights reserved.  #
@@ -1165,6 +1166,7 @@ Null if default configuration is to be used.
 
 function Get-SddcDiagnosticInfo
 {
+    #Requires -RunAsAdministrator   
     # aliases usage in this module is idiomatic, only using defaults
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
 
