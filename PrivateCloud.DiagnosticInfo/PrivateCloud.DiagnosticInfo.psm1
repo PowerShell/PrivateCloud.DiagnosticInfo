@@ -1166,7 +1166,10 @@ Null if default configuration is to be used.
 
 function Get-SddcDiagnosticInfo
 {
-    #Requires -RunAsAdministrator   
+    #check for Administrator
+    If (-not (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))) {
+        Write-Error "Please run this function as an administrator";exit
+    }
     # aliases usage in this module is idiomatic, only using defaults
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingCmdletAliases", "")]
 
