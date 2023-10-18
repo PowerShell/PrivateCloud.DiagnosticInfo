@@ -3023,10 +3023,10 @@ try {
                                 $LinkSpeed = $_.LinkSpeed
 
                                 $MeasureInbound = $Inbound | Measure-Object -Property Value -Maximum
-                                $MaxInbound = $MeasureInbound.Maximum * 8 # Multiply to bits/sec
+                                $MaxInbound = $MeasureInbound.Maximum
 
                                 $MeasureOutbound = $Outbound | Measure-Object -Property Value -Maximum
-                                $MaxOutbound = $MeasureOutbound.Maximum * 8 # Multiply to bits/sec
+                                $MaxOutbound = $MeasureOutbound.Maximum
 
                                 $Saturated = $False
 
