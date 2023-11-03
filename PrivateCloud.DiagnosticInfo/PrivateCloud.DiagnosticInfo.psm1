@@ -1952,7 +1952,14 @@ Write-host "Dell SDDC Version"
                 catch { Write-Warning "Unable to get ClusterFaultDomain.  `nError=$($_.Exception.Message)"
     }
             }
-   
+             $JobStatic += start-job -Name GetClusterFaultDomain {
+                try {
+                    $o = Get-ClusterAffinityRule | select *
+                    $o | Export-Clixml ($using:Path + "GetClusterAffinityRule.XML")
+                }
+                catch { Write-Warning "Unable to get ClusterFaultDomain.  `nError=$($_.Exception.Message)"
+    }
+            }
       Show-Update "Start gather of Network ATC information..."
           $NetworkATC=$False
           $NetworkATC=try {(Get-WindowsFeature NetworkATC).installed} catch {$False}
