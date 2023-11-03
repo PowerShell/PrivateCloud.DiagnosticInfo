@@ -1957,7 +1957,7 @@ Write-host "Dell SDDC Version"
                     $o = Get-ClusterAffinityRule | select *
                     $o | Export-Clixml ($using:Path + "GetClusterAffinityRule.XML")
                 }
-                catch { Write-Warning "Unable to get ClusterFaultDomain.  `nError=$($_.Exception.Message)"
+                catch { Write-Warning "Unable to get ClusterAffinityRule.  `nError=$($_.Exception.Message)"
     }
             }
       Show-Update "Start gather of Network ATC information..."
