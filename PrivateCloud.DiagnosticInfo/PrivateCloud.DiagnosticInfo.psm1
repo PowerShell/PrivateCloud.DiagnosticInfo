@@ -1,3 +1,4 @@
+#Requires -RunAsAdministrator
 <###################################################
  #                                                 #
  #  Copyright (c) Microsoft. All rights reserved.  #
@@ -166,6 +167,7 @@ $CommonFuncBlock = {
                 $t = get-date
                 $j |? State -eq Running |% {
                     $job_running += "Running: $($jobname) [$($_.Name) $($_.Location)]: $(TimespanToString ($t - $_.PSBeginTime)) : Start $($_.PSBeginTime.ToString('s'))"
+                    if (($t - $_.PSBeginTime).TotalMinutes -gt 60) {Stop-Job -Name "$($_.Name)";Write-Host "Job $jobname exceeded time limit" -ForegroundColor Yellow}
                 }
             }
         }
@@ -1621,6 +1623,11 @@ function Get-SddcDiagnosticInfo
         StartMonitoring
     }
 
+    #check for Administrator
+    If (-not (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))) {
+        Write-Error "Please run this function as an administrator";exit
+    }
+
     if ($MonitoringMode) {
         StartMonitoring
     }
@@ -1945,7 +1952,14 @@ Write-host "Dell SDDC Version"
                 catch { Write-Warning "Unable to get ClusterFaultDomain.  `nError=$($_.Exception.Message)"
     }
             }
-   
+             $JobStatic += start-job -Name GetlusterAffinityRule {
+                try {
+                    $o = Get-ClusterAffinityRule | select *
+                    $o | Export-Clixml ($using:Path + "GetClusterAffinityRule.XML")
+                }
+                catch { Write-Warning "Unable to get ClusterAffinityRule.  `nError=$($_.Exception.Message)"
+    }
+            }
       Show-Update "Start gather of Network ATC information..."
           $NetworkATC=$False
           $NetworkATC=try {(Get-WindowsFeature NetworkATC).installed} catch {$False}
@@ -2246,7 +2260,7 @@ Start-Process -FilePath "$env:comspec" -ArgumentList "/c SystemInfo.exe /S $usin
 #$MSINFO32Out=(Join-Path (Get-NodePath $using:Path $using:NodeName) "MSINFO32.NFO")
 #Start-Process -FilePath "$env:comspec" -ArgumentList "/c MSINFO32.exe /nfo $MSINFO32Out /Computer $using:NodeName" -WindowStyle Hidden -Wait
 $LocalFileMsInfo = (Join-Path $LocalNodeDir "\msinfo.nfo")
-Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computer $using:NodeName /nfo $LocalFileMsInfo" # -Wait
+$msinfo=Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computer $using:NodeName /nfo $LocalFileMsInfo" -PassThru # -Wait
 
                 # Cmdlets to drop in TXT and XML forms
                 #
@@ -2455,6 +2469,7 @@ $RepFiles |% {
                     
 
                 }
+                While ($msinfo.HasExited -ne $True) {Sleep -Milliseconds 100}
 
             }
         }
@@ -2881,6 +2896,7 @@ Show-Update "Cluster Performance History"
                     $Cluster = Get-cluster
                     $ClusterNodes = Get-ClusterNode -Cluster $Cluster -ErrorAction SilentlyContinue
                     $o = Invoke-Command $ClusterNodes.Name {
+
 Function Format-Latency {
 Param (
 $RawValue
@@ -2908,7 +2924,6 @@ $Sign + [String][Math]::Round([Math]::Abs($RawValue), 2)
 $HDD = Get-StorageNode | ?{$ENV:COMPUTERNAME -imatch ($_.name -split '\.')[0]} | Get-PhysicalDisk  -PhysicallyConnected
 
 $Output = $HDD | ForEach-Object {
-
 
                         $Iops = $_ | Get-ClusterPerf -PhysicalDiskSeriesName "PhysicalDisk.Iops.Total" -TimeFrame "LastWeek"
                         $AvgIops = ($Iops | Measure-Object -Property Value -Average).Average
@@ -3145,7 +3160,7 @@ Show-Warning("Unable to get AzureStack HCI info.  `nError="+$_.Exception.Message
 
         Show-Update "Completing background gathers ..." -ForegroundColor Green
         Show-Update "Start monitoring $($PerfSamples)s" -ForegroundColor Green
-        $PerfProc = Start-Process -WindowStyle Hidden -FilePath "powershell.exe" -ArgumentList @("-Command", """& {Get-Counter -Counter (Get-Counter -ListSet 'Cluster Storage*','Cluster CSV*','Storage Spaces*','Refs','Cluster Disk Counters','PhysicalDisk','RDMA*','Mellanox*','Marvell*','Hyper-V Hypervisor Virtual Processor','Hyper-V Hypervisor Logical Processor','Hyper-V Hypervisor Root Virtual Processor' -ComputerName (Get-ClusterNode).Name -ErrorAction SilentlyContinue).paths -SampleInterval 1 -MaxSamples $PerfSamples -ErrorAction Ignore -WarningAction Ignore | Export-counter -Path ('$Path' + '\GetCounters.blg') -Force -FileFormat BLG}""") -Passthru
+        $PerfProc = Start-Process -WindowStyle Hidden -FilePath "powershell.exe" -ArgumentList @("-Command", """& {Get-Counter -Counter (Get-Counter -ListSet 'Cluster Storage*','Cluster CSV*','Storage Spaces*','Storage Replica*','Refs','Cluster Disk Counters','PhysicalDisk','RDMA*','Mellanox WinOF-2 Port Traffic*','Mellanox WinOF-2 Congestion Control*','Mellanox WinOF-2 Diagnostics Ext 1*','Marvell*','Hyper-V Hypervisor Virtual Processor','Hyper-V Hypervisor Logical Processor','Hyper-V Hypervisor Root Virtual Processor' -ComputerName (Get-ClusterNode).Name -ErrorAction SilentlyContinue).paths -SampleInterval 1 -MaxSamples $PerfSamples -ErrorAction Ignore -WarningAction Ignore | Export-counter -Path ('$Path' + '\GetCounters.blg') -Force -FileFormat BLG}""") -Passthru
         Show-WaitChildJob $JobStatic 30
 $JobStatic | % {if ($_.Name -ne "Cluster Performance History" -and $_.Name -notlike "ClusterLogs*") { $o=Receive-Job $_; If ($o) {Write-Host "Job $($_.Name) Output:";$o}}}
         Remove-Job $JobStatic
@@ -3527,7 +3542,8 @@ Get-Counter -Counter ($using:set).Paths -SampleInterval 1 -MaxSamples $using:Per
         Remove-Item -Path $Path -ErrorAction SilentlyContinue -Recurse
 
     } catch {
-        Show-Error("Error creating the ZIP file!`nContent remains available at $Path")
+        Show-Warning "Error=$($_.Exception.Message)"
+        Show-Error "Error creating the ZIP file!`nContent remains available at $Path"
     }
 
     Show-Update "Cleaning up CimSessions"
