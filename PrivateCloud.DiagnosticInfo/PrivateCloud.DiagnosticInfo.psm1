@@ -1952,7 +1952,7 @@ Write-host "Dell SDDC Version"
                 catch { Write-Warning "Unable to get ClusterFaultDomain.  `nError=$($_.Exception.Message)"
     }
             }
-             $JobStatic += start-job -Name GetlusterAffinityRule {
+             $JobStatic += start-job -Name GetClusterAffinityRule {
                 try {
                     $o = Get-ClusterAffinityRule | select *
                     $o | Export-Clixml ($using:Path + "GetClusterAffinityRule.XML")
