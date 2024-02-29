@@ -2261,6 +2261,8 @@ Start-Process -FilePath "$env:comspec" -ArgumentList "/c SystemInfo.exe /S $usin
 #Start-Process -FilePath "$env:comspec" -ArgumentList "/c MSINFO32.exe /nfo $MSINFO32Out /Computer $using:NodeName" -WindowStyle Hidden -Wait
 $LocalFileMsInfo = (Join-Path $LocalNodeDir "\msinfo.nfo")
 $msinfo=Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computer $using:NodeName /nfo $LocalFileMsInfo" -PassThru # -Wait
+#$LocalFileFWInfo = (Join-Path $LocalNodeDir "\FirewallRules.xml")
+#netsh wfp show filters file = "$LocalFileFWInfo"
 
                 # Cmdlets to drop in TXT and XML forms
                 #
@@ -2317,6 +2319,7 @@ $msinfo=Start-Process C:\Windows\System32\msinfo32.exe -ArgumentList  "/computer
 'Invoke-Command -ComputerName _C_ {Echo Get-MSDSMSupportedHW;IF((Get-WindowsFeature -Name "Multipath-IO").Installed -eq "True"){Get-MSDSMSupportedHW  -CimSession _C_}}',
 'Invoke-Command -ComputerName _C_ {Echo Get-DriverSuiteVersion;Get-ChildItem HKLM:\SOFTWARE\Dell\MUP -Recurse | Get-ItemProperty}',
 'Invoke-Command -ComputerName _C_ {Echo Get-ChipsetVersion;Get-WmiObject win32_product | ? Name -like "*chipset*"}',
+'Invoke-Command -ComputerName _C_ {Echo Get-NetFirewallRule;Get-NetFirewallRule -All}',
                 'Invoke-Command -ComputerName _C_ {Echo Get-ProcessByService;$aps=GPs;$r=@();$Ass=GWmi Win32_Service;foreach($p in $aps){$ss=$Ass|?{$_.ProcessID -eq $p.Id};IF($ss){$r+=[PSCustomObject]@{Service=$ss.DisplayName;ProcessName=$p.ProcessName;ProcessID=$p.Id}}}$r}',
                 'Get-NetNeighbor -CimSession _C_',
 'Get-VMNetworkAdapterIsolation -ManagementOS -CimSession _C_'
