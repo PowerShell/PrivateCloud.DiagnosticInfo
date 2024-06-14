@@ -432,3 +432,11 @@ The Sddc Diagnostic Archive is a series of timestamped ZIP containing a per-day 
 - **Set-SddcDiagnosticArchiveJobParameters** : adjust garbage collection parameters for the diagnostic archive (days of, size, path)
 
 See individual per-command help for more details.
+
+## Code of Conduct
+
+Please see our [Code of Conduct](.github/CODE_OF_CONDUCT.md) before participating in this project.
+
+## Security Policy
+
+For any security issues, please see our [Security Policy](.github/SECURITY.md).
