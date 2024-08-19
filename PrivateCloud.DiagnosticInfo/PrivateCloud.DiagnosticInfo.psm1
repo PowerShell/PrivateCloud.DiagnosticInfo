@@ -2331,6 +2331,7 @@ function Get-SddcDiagnosticInfo
                 # _C_ token will be replaced with node fqdn for cimsession/computername callouts
                 # _N_ token will be replaced with node non-fqdn
                 $CmdsToLog =
+                            @{ C = 'Get-ClusterResourceType'; F = $null },
                             @{ C = 'Get-CimInstance -ComputerName _C_ Win32_Bios'; F = 'Win32_Bios' },
                             @{ C = 'Get-CimInstance -ComputerName _C_ Win32_ComputerSystem'; F = 'Win32_ComputerSystem' },
                             @{ C = 'Get-CimInstance -ComputerName _C_ Win32_OperatingSystem'; F = 'Win32_OperatingSystem' },
@@ -2371,6 +2372,7 @@ function Get-SddcDiagnosticInfo
                             @{ C = 'Get-SmbServerConfiguration -CimSession _C_'; F = $null },
                             @{ C = 'Get-SmbServerNetworkInterface -CimSession _C_'; F = $null },
                             @{ C = 'Get-StorageFaultDomain -CimSession _A_ -Type StorageScaleUnit |? FriendlyName -eq _N_ | Get-StorageFaultDomain -CimSession _A_'; F = $null },
+                            @{ C = 'Get-VMHost'; F = $null },
                             @{ C = 'Get-WindowsFeature -ComputerName _C_'; F = $null }
 
                     # These commands are specific to optional modules, add only if present
