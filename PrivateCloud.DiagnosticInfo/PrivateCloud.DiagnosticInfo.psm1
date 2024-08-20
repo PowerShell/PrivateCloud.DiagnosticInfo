@@ -180,7 +180,8 @@ $CommonFuncBlock = {
 
     function Show-WaitChildJob(
         [object[]] $jobs,
-        [int] $tick = 5
+        [int] $tick = 5,
+        [nullable[DateTime]] $EndTime
         )
     {
         # remember parent job names of all children for output
@@ -194,12 +195,17 @@ $CommonFuncBlock = {
         }
 
         $tout_c = $tick
-        $ttick = get-date
+        $ttick = Get-Date
 
         # set up trackers. Note that jwait will slice to all child jobs on all input jobs.
         $jdone = @()
         $jwait = $jobs.ChildJobs
         $jtimeout = $false
+
+        if($null -ne $EndTime)
+        {
+            Write-Host "Job timeout specified, will wait until $EndTime for jobs to complete"
+        }
 
         do {
 
@@ -215,7 +221,9 @@ $CommonFuncBlock = {
                 # write-host -ForegroundColor Yellow "waiting additional $tout_c s (tout $tout and so-far $($td.TotalSeconds))"
 
                 $jdone += $jdone_c
-                $jwait = $jwait |? { $_ -notin $jdone_c }
+                $jwait = $jwait | Where-Object { $_ -notin $jdone_c }
+
+                $jtimeout = $false
 
             } else {
 
@@ -230,15 +238,23 @@ $CommonFuncBlock = {
                 Show-JobRuntime $jwait $jhash -Running
             }
 
+            if($null -ne $EndTime -and
+               ((Get-Date) -gt $EndTime))
+            {
+                break;
+            }
         } while ($jwait)
 
         # consume parent waits, which should be complete (all children complete)
-        $null = Wait-Job $jobs
+        if(-not $jtimeout)
+        {
+            $null = Wait-Job $jobs
+        }
 
         # only do a total summary if we hit a timeout and did a running summary
-
         if ($jtimeout) {
-            write-host "Job Summary" -ForegroundColor Green
+            Write-host "Timeout hit while waiting for jobs, several jobs not complete" -ForegroundColor Green
+            Write-host "Job Summary" -ForegroundColor Green
             Show-JobRuntime $jobs
         }
     }
@@ -1248,11 +1264,6 @@ function Get-SddcDiagnosticInfo
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [ValidateNotNullOrEmpty()]
-        [bool] $IncludePerformance = $true,
-
-        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [ValidateRange(1,3600)]
         [int] $PerfSamples = 30,
 
@@ -1319,6 +1330,10 @@ function Get-SddcDiagnosticInfo
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [switch] $IncludeClusterPerformanceHistory,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [switch] $IncludeDumps,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
@@ -1327,15 +1342,32 @@ function Get-SddcDiagnosticInfo
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [switch] $SkipVM,
-
-        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [switch] $IncludeHealthReport,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [switch] $IncludeClusterPerformanceHistory,
+        [switch] $IncludeLiveDump,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [bool] $IncludePerformance = $true,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [switch] $IncludeProcessDump,
+        
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [switch] $IncludeReliabilityCounters,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [switch] $IncludeStorDiag,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [switch] $SkipVM,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
@@ -1344,23 +1376,7 @@ function Get-SddcDiagnosticInfo
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [switch] $IncludeLiveDump,
-
-        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [switch] $IncludeStorDiag,
-
-        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [switch] $IncludeProcessDump,
-
-        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [string] $Processlists = "",
-
-        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
-        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [switch] $IncludeReliabilityCounters,
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
@@ -1376,7 +1392,11 @@ function Get-SddcDiagnosticInfo
 
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
-        [bool] $ExcludeLocaleMetadata = $false
+        [bool] $ExcludeLocaleMetadata = $false,
+
+        [parameter(ParameterSetName="WriteC", Mandatory=$false)]
+        [parameter(ParameterSetName="WriteN", Mandatory=$false)]
+        [TimeSpan] $Phase1Timeout = [TimeSpan]::Zero
         )
 
     #
@@ -2318,6 +2338,8 @@ function Get-SddcDiagnosticInfo
 
                     $LocalNodeDir = Get-NodePath $using:Path $using:NodeName
 
+                    $transcript = "$LocalNodeDir\transcript-SystemInfo.log"
+                    "$(Get-Date -f o) Gathering systeminfo.exe" > $transcript
                     # Text-only conventional commands
                     #
                     # Gather SYSTEMINFO.EXE output for a given node
@@ -2392,6 +2414,8 @@ function Get-SddcDiagnosticInfo
 
                     foreach ($cmd in $CmdsToLog) {
 
+                         "$(Get-Date -f o) Gathering $($cmd.C)" >> $transcript
+
                         $cmdstr = $cmd.C
                         $file = $cmd.F
 
@@ -2426,7 +2450,7 @@ function Get-SddcDiagnosticInfo
                         ##
                         # Minidumps
                         ##
-
+                        "$(Get-Date -f o) Copying dumps" >> $transcript
                         try {
                             # Use the registry key value if it exists.
                             if ($NodeMinidumpsPath) {
@@ -2441,13 +2465,15 @@ function Get-SddcDiagnosticInfo
                         catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $using:NodeName" }
 
                         $DmpFiles |% {
-                            try { Copy-Item $_.FullName $LocalNodeDir }
+                            try { "$(Get-Date -f o) Copying $($_.FullName)" >> $transcript;
+                            Copy-Item $_.FullName $LocalNodeDir }
                             catch { Show-Warning("Could not copy minidump file $_.FullName") }
                         }
 
                         ##
                         # Live Kernel Reports
                         ##
+                        "$(Get-Date -f o) Copying live kernel reports" >> $transcript
 
                         try {
                             # Use the registry key value if it exists.
@@ -2463,11 +2489,13 @@ function Get-SddcDiagnosticInfo
                         catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $using:NodeName" }
 
                         $DmpFiles |% {
-                            try { Copy-Item $_.FullName $LocalNodeDir }
+                            try { "$(Get-Date -f o) Copying $($_.FullName)" >> $transcript;
+                            Copy-Item $_.FullName $LocalNodeDir }
                             catch { Show-Warning "Could not copy LiveKernelReports file $($_.FullName)" }
                         }
                     }
 
+                    "$(Get-Date -f o) Copying cluster reports" >> $transcript
                     try {
                         $RPath = (Get-AdminSharePathFromLocal $using:NodeName "$NodeSystemRootPath\Cluster\Reports\*.*")
                         $RepFiles = Get-ChildItem -Path $RPath -Recurse -ErrorAction SilentlyContinue }
@@ -2479,7 +2507,8 @@ function Get-SddcDiagnosticInfo
                     # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
                     $RepFiles |% {
                         if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
-                            try { Copy-Item $_.FullName $LocalReportDir }
+                            try { "$(Get-Date -f o) Copying $($_.FullName)" >> $transcript;
+                            Copy-Item $_.FullName $LocalReportDir }
                             catch { Show-Warning "Could not copy report file $($_.FullName)" }
                         }
                     }
@@ -2920,22 +2949,32 @@ function Get-SddcDiagnosticInfo
         ####
         # Now receive the jobs requiring remote copyout
         ####
+        if($Phase1Timeout -gt [TimeSpan]::Zero)
+        {
+            $Phase1EndTime = (Get-Date) + $Phase1Timeout
+        }
+        else
+        {
+            $Phase1EndTime = $null
+        }
 
         if ($JobGather.Count) {
 
             Show-Update "Completing jobs with remote copyout ..." -ForegroundColor Green
-            Show-WaitChildJob $JobGather 120
+            Show-WaitChildJob -Jobs $JobGather -Tick 120 -EndTime $Phase1EndTime
             Show-Update "Starting remote copyout ..."
 
             # keep parallelizing on receive at the individual node/child job level
             $JobCopy = $JobGather | Start-CopyJob $Path
+            $JobGather | Stop-Job
             Remove-Job $JobGather
             $JobGather | RemoveCommonJobSession
             $JobGather = @()
 
             # receive any copyout errors for logging/triage
-            Show-WaitChildJob $JobCopy 30
+            Show-WaitChildJob -Jobs $JobCopy -Tick 30
             Receive-Job $JobCopy
+            $JobCopy | Stop-Job
             Remove-Job $JobCopy
 
             Show-Update "All remote copyout complete" -ForegroundColor Green
@@ -2946,9 +2985,10 @@ function Get-SddcDiagnosticInfo
         ####
 
         Show-Update "Completing background gathers ..." -ForegroundColor Green
-        Show-WaitChildJob $JobStatic 30
+        Show-WaitChildJob -Jobs $JobStatic -Tick 30 -EndTime $Phase1EndTime
         Receive-Job $JobStatic
 
+        $JobStatic | Stop-Job
         Remove-Job $JobStatic
         $JobStatic | RemoveCommonJobSession
         $JobStatic = @()
