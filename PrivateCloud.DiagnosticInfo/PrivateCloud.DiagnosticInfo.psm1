@@ -2466,9 +2466,15 @@ function Get-SddcDiagnosticInfo
                         catch { $DmpFiles = ""; Show-Warning "Unable to get minidump files for node $using:NodeName" }
 
                         $DmpFiles |% {
-                            try { Show-Update "Copying $($_.FullName)";
-                            Copy-Item $_.FullName $LocalNodeDir }
-                            catch { Show-Warning("Could not copy minidump file $_.FullName") }
+                            try
+                            {
+                                Show-Update "Copying $($_.FullName)";
+                                Copy-Item $_.FullName $LocalNodeDir
+                            }
+                            catch
+                            {
+                                Show-Warning("Could not copy minidump file $_.FullName")
+                            }
                         }
 
                         ##
@@ -2490,9 +2496,15 @@ function Get-SddcDiagnosticInfo
                         catch { $DmpFiles = ""; Show-Warning "Unable to get LiveKernelReports files for node $using:NodeName" }
 
                         $DmpFiles |% {
-                            try { Show-Update "Copying $($_.FullName)";
-                            Copy-Item $_.FullName $LocalNodeDir }
-                            catch { Show-Warning "Could not copy LiveKernelReports file $($_.FullName)" }
+                            try
+                            {
+                                Show-Update "Copying $($_.FullName)";
+                                Copy-Item $_.FullName $LocalNodeDir
+                            }
+                            catch
+                            {
+                                Show-Warning "Could not copy LiveKernelReports file $($_.FullName)"
+                            }
                         }
                     }
 
@@ -2508,9 +2520,15 @@ function Get-SddcDiagnosticInfo
                     # Copy logs from the Report directory; exclude cluster/health logs which we're getting seperately
                     $RepFiles |% {
                         if (($_.Name -notlike "Cluster.log") -and ($_.Name -notlike "ClusterHealth.log")) {
-                            try { Show-Update "Copying $($_.FullName)";
-                            Copy-Item $_.FullName $LocalReportDir }
-                            catch { Show-Warning "Could not copy report file $($_.FullName)" }
+                            try
+                            {
+                                Show-Update "Copying $($_.FullName)";
+                                Copy-Item $_.FullName $LocalReportDir
+                            }
+                            catch
+                            {
+                                Show-Warning "Could not copy report file $($_.FullName)"
+                            }
                         }
                     }
                 }
