@@ -96,6 +96,76 @@ $CommonFuncBlock = {
         }
     }
 
+    #
+    # Post-process XML files in the root folder to generate human-readable TXT format
+    # Skips files that already have corresponding TXT files
+    # All exceptions are caught to ensure this doesn't affect the main procedure
+    #
+    function Convert-SddcXmlToTxt(
+        [string] $SourcePath
+    )
+    {
+        try {
+            if (-not (Test-Path $SourcePath)) {
+                Show-Warning "Cannot convert XML to TXT: Path not found: $SourcePath"
+                return
+            }
+
+            Show-Update "Converting root-level XML files to TXT format..."
+
+            $successCount = 0
+            $skipCount = 0
+            $failCount = 0
+
+            # Only process XML files in the root directory (not in subfolders)
+            # Node_* folders already have TXT files generated during collection
+            $xmlFiles = Get-ChildItem -Path $SourcePath -Filter "*.xml" -File -ErrorAction SilentlyContinue
+
+            if ($null -eq $xmlFiles -or $xmlFiles.Count -eq 0) {
+                Show-Update "No root-level XML files found to convert"
+                return
+            }
+
+            $totalFiles = $xmlFiles.Count
+            Show-Update "Found $totalFiles root-level XML files to process"
+
+            foreach ($xmlFile in $xmlFiles) {
+                try {
+                    $txtPath = $xmlFile.FullName -replace '\.xml$', '.txt'
+
+                    # Skip if TXT already exists (don't overwrite)
+                    if (Test-Path $txtPath) {
+                        $skipCount++
+                        continue
+                    }
+
+                    $data = Import-Clixml -Path $xmlFile.FullName -ErrorAction Stop
+
+                    if ($null -ne $data) {
+                        $data | Format-Table -AutoSize | Out-File -Width 9999 -Encoding ascii -FilePath $txtPath -ErrorAction Stop
+                        $successCount++
+                    } else {
+                        $skipCount++
+                    }
+                }
+                catch {
+                    $failCount++
+                }
+            }
+
+            if ($failCount -eq 0 -and $skipCount -eq 0) {
+                Show-Update "Successfully converted $successCount XML files to TXT" -ForegroundColor Green
+            } elseif ($failCount -eq 0) {
+                Show-Update "Converted $successCount XML files to TXT ($skipCount already had TXT)" -ForegroundColor Green
+            } else {
+                Show-Update "Converted $successCount XML files to TXT ($skipCount skipped, $failCount failed)" -ForegroundColor Yellow
+            }
+        }
+        catch {
+            Show-Warning "XML to TXT conversion encountered an error: $($_.Exception.Message)"
+        }
+    }
+
     function TimespanToString
     {
         param(
@@ -1357,7 +1427,7 @@ function Get-SddcDiagnosticInfo
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [switch] $IncludeProcessDump,
-        
+
         [parameter(ParameterSetName="WriteC", Mandatory=$false)]
         [parameter(ParameterSetName="WriteN", Mandatory=$false)]
         [switch] $IncludeReliabilityCounters,
@@ -2340,7 +2410,7 @@ function Get-SddcDiagnosticInfo
                     $LocalNodeDir = Get-NodePath $using:Path $using:NodeName
 
                     Start-Transcript "$LocalNodeDir\transcript-SystemInfo.log"
-                    Show-Update "Gathering systeminfo.exe" 
+                    Show-Update "Gathering systeminfo.exe"
                     # Text-only conventional commands
                     #
                     # Gather SYSTEMINFO.EXE output for a given node
@@ -3325,6 +3395,15 @@ function Get-SddcDiagnosticInfo
         Show-SddcDiagnosticReport -Report Summary -ReportLevel Full $Path
     } finally {
         Stop-Transcript
+    }
+
+    # Post-process: Convert root-level XML files to TXT format for quick analysis
+    Show-Update "<<< Converting XML to TXT >>>" -ForegroundColor Cyan
+    try {
+        Convert-SddcXmlToTxt -SourcePath $Path
+    }
+    catch {
+        Show-Warning "XML to TXT post-processing failed: $($_.Exception.Message)"
     }
 
     #
